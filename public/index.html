@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GVD LIVE</title>
+  <link rel="stylesheet" href="/styles.css?v=13.0">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+  <meta name="apple-mobile-web-app-title" content="GVD">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#ffffff">
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="app-header" id="appHeader" style="display: none;">
+    <div class="brand-container">
+      <img id="appLogoImg" class="app-logo-img" src="/gvd-logo.png" alt="GVD Logo">
+      <span class="app-title" id="appTitleText">GVD LIVE</span>
+    </div>
+
+    <nav class="nav-menu" id="navMenu">
+      <!-- Admin & Manager Links -->
+      <button class="nav-item manager-admin-only" data-target="view-planner" id="navPlannerBtn">📅 Planner</button>
+      <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn">🏗️ Sites & Projects</button>
+      <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn">📊 Labour Sheet</button>
+      <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn">⚙️ Admin Settings <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
+      
+      <!-- Operative Links -->
+      <button class="nav-item op-only" data-target="view-my-shifts" id="navMyShiftsBtn">📋 My Shifts</button>
+      <button class="nav-item op-only" data-target="view-projects" id="navMyProjectsBtn">🏗️ Sites & Projects</button>
+    </nav>
+
+    <div class="user-status-bar" id="userStatusBar">
+      <button class="bell-btn" id="btnHeaderNotificationBell" title="Enable Mobile Push Notifications" aria-label="Notifications">
+        🔔<span class="bell-dot" id="bellStatusDot"></span>
+      </button>
+      <span class="badge-role" id="userRoleBadge">Role</span>
+      <span id="userNameText" style="font-weight: 600;">User Name</span>
+      <button class="btn btn-outline btn-sm" id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+
+    <!-- ------------------------------------------------------------- -->
+    <!-- AUTHENTICATION VIEWS -->
+    <!-- ------------------------------------------------------------- -->
+    <!-- Login View -->
+    <div id="view-login" class="auth-wrapper" style="display: none;">
+      <div class="auth-header">
+        <h2 id="loginTitleText">Works Planner</h2>
+        <p>Sign in to access your work schedule</p>
+      </div>
+      <div id="loginAlert" class="alert-box alert-error" style="display: none;"></div>
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="loginEmail">Email Address</label>
+          <input type="email" id="loginEmail" class="form-control" required placeholder="name@company.com">
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" class="form-control" required placeholder="••••••••">
+        </div>
+        <button type="submit" class="btn btn-primary" id="loginSubmitBtn">Sign In</button>
+      </form>
+      <div class="auth-links">
+        <a href="#" id="linkForgotPassword">Forgot Password?</a>
+        <a href="#" id="linkRegister">Need an account? Register here</a>
+      </div>
+    </div>
+
+    <!-- Registration View -->
+    <div id="view-register" class="auth-wrapper" style="display: none;">
+      <div class="auth-header">
+        <h2>Register Account</h2>
+        <p>Create an account to join your workforce planner</p>
+      </div>
+      <div id="registerAlert" class="alert-box alert-error" style="display: none;"></div>
+      <form id="registerForm">
+        <div class="form-group">
+          <label for="regFullName">Full Name</label>
+          <input type="text" id="regFullName" class="form-control" required placeholder="John Smith">
+        </div>
+        <div class="form-group">
+          <label for="regEmail">Email Address</label>
+          <input type="email" id="regEmail" class="form-control" required placeholder="john@example.com">
+        </div>
+        <div class="form-group">
+          <label for="regPhone">Phone Number</label>
+          <input type="tel" id="regPhone" class="form-control" required placeholder="07700 900000">
+        </div>
+        <div class="form-group">
+          <label for="regRole">Role</label>
+          <select id="regRole" class="form-control">
+            <option value="Operative" selected>Operative</option>
+            <option value="Manager">Manager</option>
+            <option value="Admin">Admin</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="regPassword">Password</label>
+          <input type="password" id="regPassword" class="form-control" required placeholder="At least 6 characters">
+        </div>
+        <button type="submit" class="btn btn-primary" id="registerSubmitBtn">Register</button>
+      </form>
+      <div class="auth-links">
+        <a href="#" id="linkBackToLogin">Back to Sign In</a>
+      </div>
+    </div>
+
+    <!-- Awaiting Approval View -->
+    <div id="view-awaiting-approval" class="auth-wrapper" style="display: none; text-align: center;">
+      <div style="font-size: 3rem; margin-bottom: 12px;">⏳</div>
+      <h2>Awaiting Approval</h2>
+      <p style="margin: 16px 0; color: var(--text-muted);">
+        Your account registration has been received successfully and is awaiting administrator approval before you can access the app.
+      </p>
+      <button class="btn btn-outline" id="btnCheckApproval">Check Approval Status</button>
+      <button class="btn btn-secondary" id="btnBackToLoginFromApproval" style="margin-top: 10px;">Back to Sign In</button>
+    </div>
+
+    <!-- Forgot / Reset Password View -->
+    <div id="view-forgot-password" class="auth-wrapper" style="display: none;">
+      <div class="auth-header">
+        <h2>Reset Password</h2>
+        <p>Enter your email address to request a password reset</p>
+      </div>
+      <div id="forgotAlert" class="alert-box alert-info" style="display: none;"></div>
+      <form id="forgotForm">
+        <div class="form-group">
+          <label for="forgotEmail">Email Address</label>
+          <input type="email" id="forgotEmail" class="form-control" required placeholder="name@company.com">
+        </div>
+        <button type="submit" class="btn btn-primary" id="forgotSubmitBtn">Send Reset Link</button>
+      </form>
+      <div class="auth-links">
+        <a href="#" id="linkBackToLoginFromForgot">Back to Sign In</a>
+      </div>
+    </div>
+
+    <!-- Reset Password Form (with token) -->
+    <div id="view-reset-password" class="auth-wrapper" style="display: none;">
+      <div class="auth-header">
+        <h2>Set New Password</h2>
+        <p>Enter your new password below</p>
+      </div>
+      <div id="resetAlert" class="alert-box alert-error" style="display: none;"></div>
+      <form id="resetForm">
+        <input type="hidden" id="resetToken">
+        <div class="form-group">
+          <label for="resetNewPassword">New Password</label>
+          <input type="password" id="resetNewPassword" class="form-control" required placeholder="New password">
+        </div>
+        <button type="submit" class="btn btn-primary">Update Password</button>
+      </form>
+    </div>
+
+    <!-- ------------------------------------------------------------- -->
+    <!-- ADMIN PLANNER VIEW (WEEKLY MATRIX & PHONE DAY VIEW) -->
+    <!-- ------------------------------------------------------------- -->
+    <div id="view-planner" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Weekly Works Planner</h2>
+          <p>Drag operatives onto site dates or tap cell on phone to assign shifts</p>
+        </div>
+        <div class="date-controls" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-secondary btn-sm" id="plannerPrevWeekBtn">← Previous Week</button>
+          <button class="btn btn-outline btn-sm" id="plannerCurrentWeekBtn">Current Week</button>
+          <button class="btn btn-secondary btn-sm" id="plannerNextWeekBtn">Next Week →</button>
+          <button class="btn btn-outline btn-sm manager-admin-only" id="btnPlannerDownloadPdf">📄 Download shifts PDF</button>
+          <button class="btn btn-sm manager-admin-only" id="btnTogglePlanningMode" style="font-weight: 700; transition: all 0.3s ease;"></button>
+          <span class="current-week-label" id="plannerWeekRangeLabel"></span>
+        </div>
+      </div>
+
+      <!-- Active Operatives Drag & Drop Dock (Desktop & Tablet) -->
+      <div class="op-dock desktop-only">
+        <h4>Active Operatives (Drag onto planner grid)</h4>
+        <div class="op-chips" id="activeOperativesDock">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <!-- Mobile Day Selector (Phones) -->
+      <div class="mobile-day-selector mobile-only" id="mobileDaySelector">
+        <!-- Mon - Sun day buttons -->
+      </div>
+
+      <!-- Desktop Weekly Planner Matrix -->
+      <div class="planner-container desktop-only">
+        <table class="planner-table" id="desktopPlannerTable">
+          <thead>
+            <tr id="plannerTableHeaderRow">
+              <th class="site-col">Site / Address</th>
+              <!-- Mon-Sun headers inserted dynamically -->
+            </tr>
+          </thead>
+          <tbody id="plannerTableBody">
+            <!-- Site rows dynamically generated -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Mobile Day-by-Day Layout (Phones) -->
+      <div class="mobile-only" id="mobilePlannerContainer">
+        <!-- Rendered day view with clear tap controls -->
+      </div>
+    </div>
+
+    <!-- ------------------------------------------------------------- -->
+    <!-- OPERATIVE "MY SHIFTS" VIEW -->
+    <!-- ------------------------------------------------------------- -->
+    <div id="view-my-shifts" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>My Upcoming Shifts</h2>
+          <p>Your assigned work schedule in date order</p>
+        </div>
+        <div>
+          <button class="btn btn-primary btn-sm op-only" id="btnMyShiftsDownloadPdf">📱 Download Mobile Shift Card</button>
+        </div>
+      </div>
+
+      <div class="card-grid" id="myShiftsContainer">
+        <!-- Rendered operative shifts -->
+      </div>
+    </div>
+
+    <!-- ------------------------------------------------------------- -->
+    <!-- SITES & PROJECT PAGES VIEW -->
+    <!-- ------------------------------------------------------------- -->
+    <div id="view-projects" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Sites & Project Pages</h2>
+          <p>Manage site details, construction types, photos, PDFs and customer QR cards</p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <div style="display: flex; gap: 4px; background: rgba(255,255,255,0.05); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <button class="btn btn-primary btn-sm" id="btnFilterActiveSites" style="font-size: 0.8rem; padding: 4px 10px;">Active Sites</button>
+            <button class="btn btn-outline btn-sm" id="btnFilterArchivedSites" style="font-size: 0.8rem; padding: 4px 10px;">📦 Archived Sites</button>
+          </div>
+          <button class="btn btn-primary btn-sm admin-only" id="btnOpenCreateSiteModal">+ Create New Site</button>
+        </div>
+      </div>
+
+      <div class="card-grid" id="sitesListContainer">
+        <!-- Sites list cards -->
+      </div>
+
+      <!-- Single Project Page Detail View -->
+      <div id="projectPageContainer" style="display: none; margin-top: 20px;">
+        <button class="btn btn-outline btn-sm" id="btnBackToSites" style="margin-bottom: 16px;">← Back to Sites List</button>
+        
+        <div class="site-card" style="margin-bottom: 20px;">
+          <div class="site-card-header">
+            <div>
+              <span class="site-badge" id="projSiteIdBadge">Site #1</span>
+              <h3 class="site-card-address" id="projSiteAddress">Property Address</h3>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+              <span class="site-type-badge" id="projSiteTypeBadge">Concrete</span>
+              <div id="projectPageActions" class="admin-only" style="display: flex; gap: 6px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Project Page Navigation Tabs -->
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="tab-proj-planner" id="tabPlannerBtn">📅 Site Planner</button>
+          <button class="tab-btn" data-tab="tab-proj-photos" id="tabPhotosBtn">📷 Live Photos</button>
+          <button class="tab-btn" data-tab="tab-proj-pdfs" id="tabPdfsBtn">📄 PDF Documents</button>
+          <button class="tab-btn admin-only" data-tab="tab-proj-customer" id="tabCustomerBtn">🏷️ Customer QR & Printout</button>
+        </div>
+
+        <!-- Tab 1: Site Specific Planner -->
+        <div id="tab-proj-planner" class="project-tab-content">
+          <div id="sitePlannerShiftsList" class="card-grid"></div>
+        </div>
+
+        <!-- Tab 2: Live Photos -->
+        <div id="tab-proj-photos" class="project-tab-content" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <p style="color: var(--text-muted);">Upload site photos from your phone or computer</p>
+            <div>
+              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('photoFileInput').click()">➕ Upload Photo</button>
+              <input type="file" id="photoFileInput" accept="image/*" style="display: none;">
+            </div>
+          </div>
+          <div class="gallery-grid" id="photoGalleryContainer"></div>
+        </div>
+
+        <!-- Tab 3: PDF Files -->
+        <div id="tab-proj-pdfs" class="project-tab-content" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <p style="color: var(--text-muted);">Upload project documents (PDF files only)</p>
+            <div>
+              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('pdfFileInput').click()">📄 Upload PDF File</button>
+              <input type="file" id="pdfFileInput" accept="application/pdf" style="display: none;">
+            </div>
+          </div>
+          <div class="pdf-list" id="pdfListContainer"></div>
+        </div>
+
+        <!-- Tab 4: Admin-Only Customer QR & A4 Printout -->
+        <div id="tab-proj-customer" class="project-tab-content admin-only" style="display: none;">
+          <div class="customer-tab-container">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;">
+              <div>
+                <h3>Customer QR Code & A4 Printout Setup</h3>
+                <p style="color: var(--text-muted); font-size: 0.9rem;">
+                  Select admin members whose contact details should appear on the printed A4 customer document.
+                </p>
+              </div>
+              <button class="btn btn-primary btn-sm no-print" id="btnPrintA4">🖨️ Print / Save A4 PDF</button>
+            </div>
+
+            <div style="margin-bottom: 24px;" class="no-print">
+              <label style="font-weight: 600; display: block; margin-bottom: 8px;">Selected Admin Contacts for Printout:</label>
+              <div id="adminContactsChecklist" style="display: flex; flex-wrap: wrap; gap: 16px;">
+                <!-- Checkboxes populated dynamically -->
+              </div>
+            </div>
+
+            <!-- Single-Page A4 Customer Print Preview -->
+            <div class="customer-print-preview" id="a4PrintContainer">
+              <div class="print-header" style="text-align: center; margin-bottom: 24px;">
+                <img id="printLogoImg" src="/gvd-logo.png" alt="Company Logo" style="max-height: 140px; max-width: 420px; width: 100%; object-fit: contain; display: block; margin: 0 auto 12px auto;">
+                <div class="print-app-title" id="printAppName" style="font-size: 0.9rem; font-weight: 600; color: #64748b; letter-spacing: 0.05em; text-transform: uppercase;">GVD LIVE</div>
+              </div>
+
+              <div class="print-body" style="text-align: center;">
+                <div class="print-address" id="printSiteAddress" style="font-size: 1.75rem; font-weight: 800; color: #0f172a; margin-bottom: 24px; line-height: 1.2;">Property Address Here</div>
+                
+                <div class="qr-code-box" style="background: #ffffff; border: 2px solid #e2e8f0; border-radius: 16px; padding: 24px; display: inline-block; box-shadow: 0 10px 25px rgba(0,0,0,0.06); margin-bottom: 20px;">
+                  <div id="qrCodeContainer"></div>
+                </div>
+
+                <div class="print-instruction" style="font-size: 1.05rem; font-weight: 600; color: #334155; max-width: 520px; margin: 0 auto 24px auto; line-height: 1.5;">
+                  Scan this QR code using your phone camera to view the live, real-time works schedule for this property.
+                </div>
+              </div>
+
+              <div class="print-contacts" style="border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 20px; text-align: center;">
+                <div class="print-contacts-title" style="text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.85rem; font-weight: 700; color: #64748b; margin-bottom: 14px;">Authorized Admin Contacts</div>
+                <div class="print-contacts-grid" id="printContactsGrid" style="display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;">
+                  <!-- Selected Admin contacts inserted here -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ------------------------------------------------------------- -->
+    <!-- LABOUR SHEET VIEW (ADMIN ONLY) -->
+    <!-- ------------------------------------------------------------- -->
+    <div id="view-labour-sheet" class="app-view admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Operative Labour Sheet</h2>
+          <p>Operatives down rows, dates across columns. Default next week view, navigate up to 1 month ahead.</p>
+        </div>
+        <div class="date-controls">
+          <button class="btn btn-secondary btn-sm" id="labourPrevWeekBtn">← Prev Week</button>
+          <button class="btn btn-outline btn-sm" id="labourNextWeekNavBtn">Next Week</button>
+          <button class="btn btn-secondary btn-sm" id="labourNextWeekBtn">Next Week →</button>
+          <span class="current-week-label" id="labourWeekRangeLabel"></span>
+        </div>
+      </div>
+
+      <div class="labour-table-wrapper">
+        <table class="labour-table">
+          <thead>
+            <tr id="labourHeaderRow">
+              <th class="op-name-col">Operative</th>
+              <!-- Dates Mon-Sun header columns -->
+            </tr>
+          </thead>
+          <tbody id="labourTableBody">
+            <!-- Operative rows dynamically rendered -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ------------------------------------------------------------- -->
+    <!-- ADMIN SETTINGS VIEW (USERS, ROLES, ACCESS, LOGO & APP NAME) -->
+    <!-- ------------------------------------------------------------- -->
+    <div id="view-admin" class="app-view admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Admin Settings & User Controls</h2>
+          <p>Manage user access, roles, app branding and system settings</p>
+        </div>
+      </div>
+
+      <!-- App Branding Settings Card -->
+      <div class="site-card" style="margin-bottom: 24px;">
+        <h3 style="margin-bottom: 16px;">App Name & Logo Branding</h3>
+        <form id="settingsBrandingForm">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 16px;">
+            <div class="form-group">
+              <label for="settingsAppNameInput">Application Name</label>
+              <input type="text" id="settingsAppNameInput" class="form-control" required placeholder="Works Planner">
+            </div>
+            <div class="form-group">
+              <label for="settingsLogoInput">Upload / Replace Logo (Image file)</label>
+              <input type="file" id="settingsLogoInput" class="form-control" accept="image/*">
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 500;">
+                <input type="checkbox" id="settingsIncludeManagementInput" style="width: 18px; height: 18px; cursor: pointer;">
+                Include Owners, Admins & Managers in Operative selection dropdowns when creating shifts
+              </label>
+              <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                By default, only Operative accounts appear in planning dropdowns. Tick this box if management roles should also be assigned to site shifts.
+              </small>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" style="width: auto;">Save Settings & Branding Changes</button>
+        </form>
+      </div>
+
+      <!-- Default Customer QR Admin Contacts Card -->
+      <div class="site-card" style="margin-bottom: 24px;">
+        <h3 style="margin-bottom: 8px;">Default Customer QR Admin Contacts</h3>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;">
+          Select which management team members should be included by default on printed A4 customer QR documents.
+        </p>
+        <div id="defaultAdminContactsChecklist" style="display: flex; flex-wrap: wrap; gap: 16px;">
+          <!-- Dynamically populated in renderAdminSettingsView -->
+        </div>
+      </div>
+
+
+      <!-- User Database Control Table -->
+      <div class="site-card">
+        <h3 style="margin-bottom: 16px;">User Account Database</h3>
+        <div style="overflow-x: auto;">
+          <table class="planner-table" style="min-width: 700px;">
+            <thead>
+              <tr>
+                <th>Full Name</th>
+                <th>Job Title</th>
+                <th>Email Address</th>
+                <th>Phone Number</th>
+                <th>Role</th>
+                <th>Account Access Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="adminUserTableBody">
+              <!-- User rows -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ------------------------------------------------------------- -->
+    <!-- PUBLIC READ-ONLY CUSTOMER SCHEDULE VIEW (QR CODE TARGET) -->
+    <!-- ------------------------------------------------------------- -->
+    <div id="view-customer-public" style="display: none; max-width: 800px; margin: 20px auto;">
+      <div class="customer-print-preview" style="box-shadow: var(--shadow-lg);">
+        <div class="print-header">
+          <div>
+            <img id="custPubLogoImg" src="/gvd-logo.png" alt="Company Logo" style="max-height: 44px; max-width: 160px; object-fit: contain; display: block; margin-bottom: 6px;">
+            <div class="print-app-title" id="custPubAppName">Works Planner</div>
+            <div style="font-size: 0.85rem; color: #64748b;">Live Schedule Portal</div>
+          </div>
+          <div class="print-site-badge" id="custPubSiteId">Site #1</div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+          <h2 style="font-size: 1.4rem; font-weight: 700;" id="custPubAddress">Property Address</h2>
+          <span class="site-type-badge" id="custPubTypeBadge">Concrete</span>
+        </div>
+
+        <h4 style="margin-bottom: 12px; color: #334155; font-size: 0.95rem; text-transform: uppercase;">Live Works Schedule</h4>
+        <div class="card-grid" id="custPubShiftsContainer">
+          <!-- Live schedule cards -->
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ------------------------------------------------------------- -->
+  <!-- MODAL DIALOGS -->
+  <!-- ------------------------------------------------------------- -->
+
+  <!-- Modal: Create Site -->
+  <div class="modal-overlay" id="modalCreateSite">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Create New Site</h3>
+        <button class="close-btn" data-close="modalCreateSite">&times;</button>
+      </div>
+      <form id="createSiteForm">
+        <div class="form-group">
+          <label for="siteAddressInput">Full Property Address</label>
+          <input type="text" id="siteAddressInput" class="form-control" required placeholder="14 High Street, London EC1A 1BB">
+        </div>
+        <div class="form-group">
+          <label>Construction Type (Simple Tick Selection)</label>
+          <div style="display: flex; gap: 20px; margin-top: 8px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="radio" name="constructionType" value="Concrete" checked> Concrete
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="radio" name="constructionType" value="Timber"> Timber
+            </label>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="margin-top: 12px;">Create Site</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Create / Edit Shift -->
+  <div class="modal-overlay" id="modalShift">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalShiftTitle">Assign Shift</h3>
+        <button class="close-btn" data-close="modalShift">&times;</button>
+      </div>
+      <form id="shiftForm">
+        <input type="hidden" id="shiftIdInput">
+        <div class="form-group">
+          <label for="shiftSiteSelect">Target Site</label>
+          <select id="shiftSiteSelect" class="form-control" required></select>
+        </div>
+        <div class="form-group">
+          <label for="shiftOpSelect">Assigned Operative</label>
+          <select id="shiftOpSelect" class="form-control" required></select>
+        </div>
+        <div class="form-group">
+          <label for="shiftDateInput">Shift Date</label>
+          <input type="date" id="shiftDateInput" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label>Shift Timing / Period</label>
+          <div style="display: flex; gap: 16px; margin-top: 6px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9rem;">
+              <input type="radio" name="shiftPeriod" value="all_day" checked> ☀️ All Day
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9rem;">
+              <input type="radio" name="shiftPeriod" value="am"> 🌅 AM
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9rem;">
+              <input type="radio" name="shiftPeriod" value="pm"> 🌙 PM
+            </label>
+          </div>
+        </div>
+        <div class="form-group" id="shiftDuplicateGroup" style="margin-top: 14px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
+            <input type="checkbox" id="shiftDuplicateChk"> 🔁 Duplicate shift across consecutive days
+          </label>
+          <div id="shiftDuplicateDaysContainer" style="display: none; margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px; border: 1px solid var(--border-color);">
+            <label for="shiftDuplicateDaysInput" style="font-size: 0.85rem; margin-bottom: 6px; display: block; color: var(--text-muted);">Number of consecutive days (including start date):</label>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input type="number" id="shiftDuplicateDaysInput" class="form-control" min="2" max="30" value="2" style="width: 90px; padding: 6px 10px;">
+              <span style="font-size: 0.85rem; color: #94a3b8;" id="shiftDuplicateDaysLabel">2 consecutive days</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="shiftTaskInput">Task Description</label>
+          <textarea id="shiftTaskInput" class="form-control" rows="3" required placeholder="Short description of task to be performed"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button type="submit" class="btn btn-primary">Save Shift</button>
+          <button type="button" class="btn btn-danger" id="btnDeleteShift" style="display: none;">Remove Shift</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Shift Detail View (Operative Click Handler - Triggers Seen Status Timestamp) -->
+  <div class="modal-overlay" id="modalShiftDetail">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Shift Details</h3>
+        <button class="close-btn" data-close="modalShiftDetail">&times;</button>
+      </div>
+      <div>
+        <div style="margin-bottom: 12px;">
+          <span class="site-badge" id="detailSiteId">Site #1</span>
+          <span class="shift-seen-status" id="detailSeenBadge">Not seen</span>
+        </div>
+        <h4 style="font-size: 1.1rem; margin-bottom: 6px;" id="detailAddress">Property Address</h4>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;" id="detailDate">Date</p>
+        <div style="background-color: var(--bg-primary); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
+          <strong style="font-size: 0.85rem; color: var(--text-muted);">Assigned Task:</strong>
+          <p style="margin-top: 4px; font-size: 0.95rem;" id="detailTask">Task description</p>
+        </div>
+        <button class="btn btn-outline" id="btnGoToProjectPage" style="width: 100%; margin-bottom: 10px;">🏗️ View Site & Project Page</button>
+        <button class="btn btn-primary" data-close="modalShiftDetail" style="width: 100%;">Close Details</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: PDF Document Preview & Download -->
+  <div class="modal-overlay" id="modalPdfPreview">
+    <div class="modal-card" style="max-width: 850px; width: 95%; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <h3 id="pdfPreviewTitle" style="font-size: 1.15rem; font-weight: 700;">📄 Shift Schedule PDF</h3>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; margin-left: auto;">
+          <button class="btn btn-primary btn-sm" id="btnDownloadPdfFile">📥 Save / Download PDF</button>
+          <button class="btn btn-secondary btn-sm" id="btnPrintPdfFile">🖨️ Print</button>
+          <button class="close-btn" data-close="modalPdfPreview" title="Exit Preview" style="font-size: 1.8rem; padding: 0 6px; line-height: 1;">&times;</button>
+        </div>
+      </div>
+      <div id="pdfPreviewBody" style="flex: 1; overflow-y: auto; padding: 12px; background: #ffffff; color: #0f172a; border-radius: var(--radius-md);">
+        <!-- Beautiful PDF preview document inserted dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Photo Lightbox Enlarge & Download -->
+  <div class="modal-overlay" id="modalPhotoLightbox">
+    <div class="modal-card" style="max-width: 800px; width: 95%; text-align: center;">
+      <div class="modal-header">
+        <h3 id="lightboxTitle">📷 Site Photo Preview</h3>
+        <button class="close-btn" data-close="modalPhotoLightbox">&times;</button>
+      </div>
+      <div style="padding: 10px 0;">
+        <img id="lightboxImg" src="" style="max-width: 100%; max-height: 65vh; border-radius: 8px; object-fit: contain; margin-bottom: 16px; border: 1px solid var(--border-color);" alt="Enlarged Site Photo">
+        <div id="lightboxMeta" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;"></div>
+        <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+          <a id="lightboxDownloadBtn" href="#" download="Site_Photo.png" class="btn btn-primary" style="width: auto;">📥 Save / Download Photo</a>
+          <button id="lightboxDeleteBtn" class="btn btn-danger" style="width: auto; display: none;">🗑️ Delete Photo</button>
+          <button class="btn btn-secondary" data-close="modalPhotoLightbox" style="width: auto;">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="/qrcode.min.js?v=17.0"></script>
+  <script src="/jspdf.umd.min.js"></script>
+  <script src="/jspdf.plugin.autotable.min.js"></script>
+  <script src="/app.js?v=17.0"></script>
+</body>
+</html>

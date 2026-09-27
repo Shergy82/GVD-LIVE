@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+functions/node_modules/
+
+# Temporary / Database files
+database.sqlite
+cloudflared.exe
+*.log
+.firebase/
+.DS_Store
+Thumbs.db
