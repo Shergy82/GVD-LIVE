@@ -1,4 +1,6 @@
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onRequest } = require('firebase-functions/v2/https');
+const { getStorage } = require('firebase-admin/storage');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
@@ -101,4 +103,30 @@ exports.sendDiaryReminders = onSchedule({ schedule: '0 7 * * *', timeZone: 'Euro
   });
   await Promise.all(writes);
   console.log(`Diary reminders sent for ${today}: ${writes.length}`);
+});
+
+// Serves site documents from our own domain (/files/<pdfDocId>) so phones treat them as normal downloads.
+exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (req, res) => {
+  try {
+    const id = decodeURIComponent((req.path || '').split('/').filter(Boolean).pop() || '');
+    if (!id) return res.status(400).send('Missing file id');
+    const snap = await db.collection('pdfs').doc(id).get();
+    const d = snap.exists ? snap.data() : null;
+    if (!d || !d.storage_path) return res.status(404).send('File not found');
+
+    const bucketName = String(d.storage_bucket || '').replace(/^gs:\/\//, '');
+    const file = bucketName ? getStorage().bucket(bucketName).file(d.storage_path) : getStorage().bucket().file(d.storage_path);
+    const [meta] = await file.getMetadata();
+    const isPdf = /\.pdf$/i.test(d.filename || '');
+    res.set('Content-Type', isPdf ? 'application/pdf' : (meta.contentType || 'application/octet-stream'));
+    res.set('Content-Disposition', `${isPdf ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.filename || 'file')}`);
+    if (meta.size) res.set('Content-Length', String(meta.size));
+    res.set('Cache-Control', 'private, max-age=300');
+    file.createReadStream()
+      .on('error', err => { console.error('siteFile stream error', err.message); if (!res.headersSent) res.status(500).send('Could not read file'); else res.end(); })
+      .pipe(res);
+  } catch (err) {
+    console.error('siteFile error', err.message);
+    if (!res.headersSent) res.status(500).send('Could not open file');
+  }
 });

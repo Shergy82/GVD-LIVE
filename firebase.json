@@ -35,6 +35,13 @@
     ],
     "rewrites": [
       {
+        "source": "/files/**",
+        "function": {
+          "functionId": "siteFile",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }

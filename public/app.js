@@ -2203,9 +2203,18 @@ function openPhotoLightbox(photo) {
       btn.addEventListener('click', () => {
         const pdfId = String(btn.dataset.pdfId);
         const pdf = allPdfs.find(p => String(p.id) === pdfId);
-        if (pdf && pdf.file_url) {
+        if (pdf && pdf.storage_path) {
+          // Served from our own domain via the siteFile function so phones download it normally
+          const link = document.createElement('a');
+          link.href = `/files/${encodeURIComponent(pdf.id)}`;
+          if (!/\.pdf$/i.test(pdf.filename || '')) link.download = pdf.filename || 'file';
+          else link.target = '_blank';
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => link.remove(), 1000);
+        } else if (pdf && pdf.file_url) {
           const win = window.open(pdf.file_url, '_blank');
-          if (!win) window.location.href = pdf.file_url; // popup blocked (some phones / installed apps)
+          if (!win) window.location.href = pdf.file_url;
         } else if (pdf) {
           forceDownloadFile(pdf.filename, pdf.data_url, /\.pdf$/i.test(pdf.filename || '') ? 'application/pdf' : 'application/octet-stream');
         }
