@@ -687,6 +687,11 @@ function formatUKDate(dateInput) {
   return `${dayStr}/${monthStr}/${yearStr}`;
 }
 
+function formatShortUKDayDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return formatDateShort(new Date(y, m - 1, d));
+}
+
 function formatDateShort(d) {
   const dayName = d.toLocaleDateString('en-GB', { weekday: 'short' });
   return `${dayName} ${formatUKDate(d)}`;
@@ -1293,6 +1298,41 @@ async function triggerShiftNotification(shift, title, body = null, forcePublish 
 }
 
 // -------------------------------------------------------------------
+// SITE FINISH DATE + PLANNER ORDERING
+// Finish = the last Fixtures & Fittings shift, or the Decoration shift that falls the day after
+// a Fixtures & Fittings shift. Sites with no such ending shift have no finish date.
+// -------------------------------------------------------------------
+const FIXTURES_RE = /fixtures?\s*(&|and|\/|\+)?\s*fittings?/i;
+const DECORATION_RE = /decorat/i;
+
+function addDaysISO(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return diaryDateKey(new Date(y, m - 1, d + n));
+}
+
+function getSiteFinish(siteId) {
+  const shifts = allShifts.filter(sh => parseInt(sh.site_id) === parseInt(siteId));
+  const fixtures = shifts.filter(sh => FIXTURES_RE.test(sh.task || '')).map(sh => sh.shift_date).filter(Boolean);
+  if (fixtures.length === 0) return null;
+  const decorations = new Set(shifts.filter(sh => DECORATION_RE.test(sh.task || '')).map(sh => sh.shift_date));
+  const candidates = [...fixtures];
+  fixtures.forEach(f => { const next = addDaysISO(f, 1); if (decorations.has(next)) candidates.push(next); });
+  const date = candidates.sort().pop();
+  return { date, completed: date < diaryDateKey(new Date()) };
+}
+
+// Sites finishing soonest first, then sites with no finish date yet, then completed sites last
+function getPlannerSites() {
+  const sites = allSites.filter(site => !site.is_archived);
+  const info = new Map(sites.map(site => [site.id, getSiteFinish(site.id)]));
+  const rank = site => { const f = info.get(site.id); return !f ? 1 : f.completed ? 2 : 0; };
+  return sites
+    .map((site, i) => ({ site, i, f: info.get(site.id), r: rank(site) }))
+    .sort((a, b) => a.r - b.r || (a.r === 0 || a.r === 2 ? a.f.date.localeCompare(b.f.date) : 0) || a.i - b.i)
+    .map(x => x.site);
+}
+
+// -------------------------------------------------------------------
 // DESKTOP & PHONE PLANNER VIEWS
 // -------------------------------------------------------------------
 function getAssignableOperatives() {
@@ -1348,7 +1388,7 @@ function renderPlannerView() {
   `;
 
   const tbody = document.getElementById('plannerTableBody');
-  const activeSites = allSites.filter(site => !site.is_archived);
+  const activeSites = getPlannerSites();
   if (activeSites.length === 0) {
     tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">No active sites available. Go to Sites & Projects to create a site.</td></tr>`;
     return;
@@ -1390,11 +1430,18 @@ function renderPlannerView() {
       `;
     }).join('');
 
+    const finish = getSiteFinish(site.id);
+    const finishHtml = finish
+      ? (finish.completed
+        ? `<div class="site-completed-badge">✅ COMPLETED - finished ${formatShortUKDayDate(finish.date)}</div>${isOwnerOrAdminUser(currentUser) ? `<button type="button" class="btn btn-outline btn-sm archive-site-btn" data-site-id="${site.id}" style="margin-top: 4px;">📦 Archive site</button>` : ''}`
+        : `<div class="site-finish-badge">🏁 Finishes ${formatShortUKDayDate(finish.date)}</div>`)
+      : '';
     return `
-      <tr>
+      <tr class="${finish && finish.completed ? 'site-completed' : ''}">
         <td class="site-cell-header">
           <span class="site-badge">${formatSiteId(site.id)}</span>
           <strong>${site.address}</strong>
+          ${finishHtml}
           <span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>
           ${siteInfoEditorHtml(site)}
         </td>
@@ -1402,6 +1449,12 @@ function renderPlannerView() {
       </tr>
     `;
   }).join('');
+
+  tbody.querySelectorAll('.archive-site-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('Archive this completed site? It will move to the archive list.')) handleArchiveSite(parseInt(btn.dataset.siteId));
+    });
+  });
 
   tbody.querySelectorAll('.site-info-input').forEach(input => {
     input.addEventListener('change', () => saveSiteInfo(input.dataset.siteId, input.dataset.field, input.value.trim()));
@@ -1504,7 +1557,7 @@ function renderMobilePlannerView(weekDays) {
   const container = document.getElementById('mobilePlannerContainer');
   const dayShifts = allShifts.filter(s => s.shift_date === dateStr);
 
-  const activeSites = allSites.filter(site => !site.is_archived);
+  const activeSites = getPlannerSites();
   let html = `<h3 style="margin-bottom: 16px;">Schedule for ${formatDateShort(selectedDay)}</h3>`;
 
   if (activeSites.length === 0) {
@@ -1519,6 +1572,7 @@ function renderMobilePlannerView(weekDays) {
             <div>
               <span class="site-badge">${formatSiteId(site.id)}</span>
               <strong style="display: block; margin-top: 4px;">${site.address}</strong>
+              ${(() => { const f = getSiteFinish(site.id); return f ? `<div class="${f.completed ? 'site-completed-badge' : 'site-finish-badge'}">${f.completed ? '✅ COMPLETED' : '🏁 Finishes'} ${formatShortUKDayDate(f.date)}</div>` : ''; })()}
             </div>
             <div>
               <button class="btn btn-primary btn-sm mobile-add-shift-btn" data-site-id="${site.id}" data-date="${dateStr}">+ Shift</button>

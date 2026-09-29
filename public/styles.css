@@ -1187,3 +1187,12 @@ body {
     box-shadow: 0 1px 0 var(--border-color), 0 2px 4px rgba(0, 0, 0, 0.4);
   }
 }
+
+/* Site finish + completed rows */
+.site-finish-badge { font-size: 0.75rem; font-weight: 700; color: #fbbf24; }
+.site-completed-badge { font-size: 0.8rem; font-weight: 800; color: #ffffff; background: #059669; padding: 4px 8px; border-radius: 4px; }
+.planner-table tr.site-completed td,
+.planner-table tr.site-completed td.planner-day-cell {
+  background-color: rgba(16, 185, 129, 0.22) !important;
+  border-color: rgba(16, 185, 129, 0.5);
+}
