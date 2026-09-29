@@ -2204,7 +2204,8 @@ function openPhotoLightbox(photo) {
         const pdfId = String(btn.dataset.pdfId);
         const pdf = allPdfs.find(p => String(p.id) === pdfId);
         if (pdf && pdf.file_url) {
-          window.open(pdf.file_url, '_blank');
+          const win = window.open(pdf.file_url, '_blank');
+          if (!win) window.location.href = pdf.file_url; // popup blocked (some phones / installed apps)
         } else if (pdf) {
           forceDownloadFile(pdf.filename, pdf.data_url, /\.pdf$/i.test(pdf.filename || '') ? 'application/pdf' : 'application/octet-stream');
         }
@@ -3570,7 +3571,8 @@ async function handlePdfUpload(e) {
       return;
     }
   }
-  allPdfs.push(newPdf);
+  // The live database listener may already have added this file, so only add it if it is missing
+  if (!allPdfs.some(p => String(p.id) === String(newPdf.id))) allPdfs.push(newPdf);
   saveLocalStorageData();
   input.value = '';
   showGreenToast(isPdf ? '📄 PDF document uploaded successfully!' : '📊 Excel file uploaded successfully!');
