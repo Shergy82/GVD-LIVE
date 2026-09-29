@@ -1160,7 +1160,7 @@ body {
 /* Planner (desktop): title, controls, operatives and date headings stay put; only the site rows scroll */
 @media screen and (min-width: 769px) {
   #view-planner {
-    display: flex;
+    display: flex !important;
     flex-direction: column;
     height: calc(100vh - 132px);
     height: calc(100dvh - 132px);
