@@ -786,6 +786,17 @@ async function registerDevicePushSubscription(forceInteractive = false) {
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
 
+    // A subscription made with a different (old) VAPID key can never be delivered to: drop it and re-subscribe.
+    if (sub && sub.options && sub.options.applicationServerKey) {
+      const current = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+      const existing = new Uint8Array(sub.options.applicationServerKey);
+      const same = existing.length === current.length && existing.every((b, i) => b === current[i]);
+      if (!same) {
+        await sub.unsubscribe().catch(() => null);
+        sub = null;
+      }
+    }
+
     if (!sub && (Notification.permission === 'granted' || forceInteractive)) {
       if (Notification.permission !== 'granted') {
         const perm = await Notification.requestPermission();
