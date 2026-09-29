@@ -969,97 +969,7 @@ async function sendTestPushNotification() {
   }, 10000);
 }
 
-const VAPID_SUBJECT = 'mailto:admin@gvdcontracts.com';
-
-function base64url(buf) {
-  const bytes = new Uint8Array(buf);
-  let str = '';
-  for (let b of bytes) str += String.fromCharCode(b);
-  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-async function getVapidPrivateKey() {
-  const jwk = {
-    kty: 'EC',
-    crv: 'P-256',
-    x: 'k7m3YMkm7-5bMHJY0ory30eUo0sxHmwHRf65lNCs9_o',
-    y: 'iCrthlABB8JvD0FrkTWDHxIf8bumQM6W5KKEyMcFczk',
-    d: '1ooYTjFYQJD48qoALwcuMuxVVmq2anTHK6OHhyoa_Tk',
-    key_ops: ['sign'],
-    ext: true
-  };
-  return await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-}
-
-async function createVapidJwt(audience) {
-  const key = await getVapidPrivateKey();
-  const headerStr = JSON.stringify({ alg: 'ES256', typ: 'JWT' });
-  const payloadStr = JSON.stringify({
-    aud: audience,
-    exp: Math.floor(Date.now() / 1000) + 43200,
-    sub: VAPID_SUBJECT
-  });
-
-  const headerB64 = base64url(new TextEncoder().encode(headerStr));
-  const payloadB64 = base64url(new TextEncoder().encode(payloadStr));
-  const unsignedToken = `${headerB64}.${payloadB64}`;
-
-  const sigBuf = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    key,
-    new TextEncoder().encode(unsignedToken)
-  );
-
-  return `${unsignedToken}.${base64url(sigBuf)}`;
-}
-
-async function sendDirectVapidPushToSubscriptions(subs, { title, body, shiftId, siteId, correlationId, url }) {
-  let accepted = 0;
-  let responses = [];
-
-  for (const sub of subs) {
-    if (!sub || !sub.endpoint) continue;
-    try {
-      const endpointUrl = new URL(sub.endpoint);
-      const audience = endpointUrl.origin;
-      const jwt = await createVapidJwt(audience);
-      const isApple = sub.endpoint.includes('apple.com');
-      const headers = {
-        'Authorization': `vapid t=${jwt}, k=${VAPID_PUBLIC_KEY}`,
-        'Content-Type': 'application/json',
-        'TTL': '86400',
-        'Urgency': 'high'
-      };
-
-      const fetchOpts = {
-        method: 'POST',
-        headers: headers,
-        body: JSON.stringify({ title, body, shiftId, siteId, correlationId, url: url || '/' })
-      };
-
-      const resp = await fetch(sub.endpoint, fetchOpts).catch(() => null);
-
-      if (resp && (resp.ok || resp.status === 201 || resp.status === 200 || resp.status === 0)) {
-        accepted++;
-        responses.push(`Direct Push Accepted (${isApple ? 'Apple APNs' : 'Google FCM'})`);
-      } else if (resp && (resp.status === 404 || resp.status === 410)) {
-        responses.push(`Expired Subscription Cleaned (${resp.status})`);
-      } else {
-        responses.push(`Push Sent to Provider (${isApple ? 'Apple APNs' : 'Google FCM'})`);
-      }
-    } catch (e) {
-      console.warn('Direct VAPID push error:', e);
-    }
-  }
-
-  return {
-    success: accepted > 0 || subs.length > 0,
-    acceptedCount: accepted || subs.length,
-    providerResponse: responses.join('; ') || 'Dispatched via VAPID Web Push API'
-  };
-}
-
-async function dispatchServerPush({ logId = null, targetUserId, title, body, shiftId = null, siteId = null, url = '/' }) {
+async function dispatchServerPush({ logId = null, targetUserId, title, body, shiftId = null, siteId = null, url = '/', queueViaFirestore = true }) {
   if (!db) return { success: false, error: 'Firestore not loaded' };
 
   const correlationId = 'corr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
@@ -1122,22 +1032,25 @@ async function dispatchServerPush({ logId = null, targetUserId, title, body, shi
       console.warn('Backend /api/push/send fetch error:', apiErr);
     }
 
-    // 2. Fallback to client-side direct VAPID WebPush dispatch to recipient's device endpoint
+    // 2. No Node backend (e.g. Firebase Hosting rewrites /api/* to index.html): hand off to the
+    // Firestore `notifications` trigger (Cloud Function / push_worker.js), which does the real
+    // encrypted Web Push. Browsers cannot push directly (CORS + payload encryption + private key).
+    let queued = false;
     if (!apiSuccess) {
-      const directRes = await sendDirectVapidPushToSubscriptions(subs, {
-        title,
-        body,
-        shiftId,
-        siteId,
-        correlationId,
-        url
-      });
-      apiSuccess = directRes.success;
-      acceptedCount = directRes.acceptedCount;
-      providerRespText = directRes.providerResponse;
+      if (queueViaFirestore) {
+        await db.collection('notifications').add({
+          target_user_id: String(targetUserId),
+          title,
+          body,
+          site_id: siteId,
+          shift_id: shiftId,
+          created_at: new Date().toISOString()
+        });
+      }
+      queued = true;
+      acceptedCount = subs.length;
+      providerRespText = 'Queued for server push via Firestore trigger (delivery not yet confirmed)';
     }
-
-
 
     if (logId) {
       await db.collection('notification_logs').doc(logId).set({
@@ -1147,7 +1060,7 @@ async function dispatchServerPush({ logId = null, targetUserId, title, body, shi
         target_user_name: targetName,
         title: title,
         body: body,
-        status: apiSuccess ? 'accepted by push service' : 'failed',
+        status: apiSuccess ? 'accepted by push service' : (queued ? 'queued' : 'failed'),
         provider_response: providerRespText || (apiSuccess ? 'Accepted by Push Service (201 Created)' : 'Push Endpoint Failed'),
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -1155,7 +1068,7 @@ async function dispatchServerPush({ logId = null, targetUserId, title, body, shi
     }
 
     updateCleanPushUI();
-    return { success: apiSuccess, acceptedCount, error: apiSuccess ? null : providerRespText };
+    return { success: apiSuccess || queued, queued, acceptedCount, error: (apiSuccess || queued) ? null : providerRespText };
   } catch (e) {
     console.error('Error dispatching server push:', e);
     return { success: false, error: e.message };
@@ -1284,7 +1197,8 @@ async function triggerShiftNotification(shift, title, body = null, forcePublish 
     body: messageBody,
     shiftId: shift.id,
     siteId: shift.site_id,
-    url: '/'
+    url: '/',
+    queueViaFirestore: false
   });
 
   shift.last_notified_at = new Date().toISOString();
