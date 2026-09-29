@@ -1353,7 +1353,7 @@ function renderPlannerView() {
   const dock = document.getElementById('activeOperativesDock');
   const activeStaff = getAssignableOperatives();
 
-  dock.innerHTML = activeStaff.map(op => `
+  dock.innerHTML = `<div class="op-chip drying-chip" draggable="true" data-drying="1" style="border-left: 6px solid #f59e0b;">⏳ Drying Day</div>` + activeStaff.map(op => `
     <div class="op-chip" draggable="true" data-op-id="${op.id}" data-op-name="${op.full_name}" style="border-left: 6px solid ${userColor(op)};">
       👤 ${op.full_name}${op.role && op.role !== 'Operative' ? ` (${op.role})` : ''}
     </div>
@@ -1361,8 +1361,8 @@ function renderPlannerView() {
 
   dock.querySelectorAll('.op-chip').forEach(chip => {
     chip.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('type', 'NEW_OPERATIVE');
-      e.dataTransfer.setData('opId', chip.dataset.opId);
+      e.dataTransfer.setData('type', chip.dataset.drying ? 'NEW_DRYING_DAY' : 'NEW_OPERATIVE');
+      e.dataTransfer.setData('opId', chip.dataset.opId || '');
       chip.classList.add('dragging');
     });
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
@@ -1408,6 +1408,7 @@ function renderPlannerView() {
         const seenText = s.seen_at ? `Seen — ${formatUKDateTime(s.seen_at)}` : 'Not seen';
 
         const periodBadge = formatShiftPeriodBadge(s.shift_period);
+        if (s.is_drying_day) return dryingCardHtml(s);
         return `
           <div class="shift-card" draggable="true" data-shift-id="${s.id}" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
             <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
@@ -1489,7 +1490,9 @@ function setupPlannerTableDragAndDrop() {
       const targetDate = cell.dataset.date;
       const type = e.dataTransfer.getData('type');
 
-      if (type === 'NEW_OPERATIVE') {
+      if (type === 'NEW_DRYING_DAY') {
+        await createDryingDay(targetSiteId, targetDate);
+      } else if (type === 'NEW_OPERATIVE') {
         const opId = e.dataTransfer.getData('opId');
         openCreateShiftModal(targetSiteId, opId, targetDate);
       } else if (type === 'EXISTING_SHIFT') {
@@ -1519,7 +1522,7 @@ function setupPlannerTableDragAndDrop() {
               showGreenToast('🛠️ Shift Moved (Draft Mode — Notifications Paused)');
             } else {
               triggerShiftNotification(shift, `📅 Shift Date Changed to ${targetDate}`);
-              showGreenToast('⚡ Live Cloud Updated — Operative Notified!');
+              showGreenToast(shift.operative_id ? '⚡ Live Cloud Updated — Operative Notified!' : '⏳ Drying Day Moved');
             }
           }
         }
@@ -1528,7 +1531,46 @@ function setupPlannerTableDragAndDrop() {
   });
 }
 
+function dryingCardHtml(s) {
+  return `<div class="shift-card drying-card" draggable="true" data-shift-id="${s.id}">
+    <div class="shift-op-name">⏳ Drying Day</div>
+    <div class="shift-card-actions no-print">
+      <button class="btn btn-outline btn-sm remove-drying-btn" data-shift-id="${s.id}" style="padding: 2px 6px; font-size: 0.7rem;">Remove</button>
+    </div>
+  </div>`;
+}
+
+async function createDryingDay(siteId, dateStr) {
+  const id = allShifts.length > 0 ? Math.max(...allShifts.map(x => parseInt(x.id) || 0)) + 1 : 1;
+  const shift = {
+    id, site_id: siteId, operative_id: null, shift_date: dateStr,
+    task: '⏳ Drying Day', shift_period: 'all_day', is_drying_day: true,
+    seen_at: null, draft_pending: false, created_at: new Date().toISOString()
+  };
+  if (db) await db.collection('shifts').doc(String(id)).set(shift).catch(err => alert('Could not save: ' + err.message));
+  allShifts.push(shift);
+  deduplicateShifts();
+  saveLocalStorageData();
+  renderActiveView();
+  showGreenToast('⏳ Drying Day added');
+}
+
+async function removeDryingDay(shiftId) {
+  if (!confirm('Remove this drying day?')) return;
+  if (db) await db.collection('shifts').doc(String(shiftId)).delete().catch(console.warn);
+  allShifts = allShifts.filter(x => parseInt(x.id) !== parseInt(shiftId));
+  saveLocalStorageData();
+  renderActiveView();
+}
+
 function setupPlannerClickHandlers() {
+  document.querySelectorAll('.remove-drying-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeDryingDay(btn.dataset.shiftId);
+    });
+  });
+
   document.querySelectorAll('.edit-shift-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1584,6 +1626,7 @@ function renderMobilePlannerView(weekDays) {
               const op = allUsers.find(u => String(u.id) === String(s.operative_id));
               const seenText = s.seen_at ? `Seen — ${formatUKDateTime(s.seen_at)}` : 'Not seen';
               const periodBadge = formatShiftPeriodBadge(s.shift_period);
+              if (s.is_drying_day) return dryingCardHtml(s);
               return `
                 <div class="shift-card" style="margin-top: 8px; border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
                   <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
@@ -2008,6 +2051,9 @@ function renderProjectTabContent(site) {
   } else {
     plannerContainer.innerHTML = siteShifts.map(s => {
       const op = allUsers.find(u => String(u.id) === String(s.operative_id));
+      if (s.is_drying_day) {
+        return `<div class="site-card"><div class="site-card-header"><strong>⏳ Drying Day</strong></div><p style="color: var(--primary); font-weight: 600;">📅 ${formatUKDate(s.shift_date)}</p></div>`;
+      }
       const seenText = s.seen_at ? `Seen — ${formatUKDateTime(s.seen_at)}` : 'Not seen';
       const seenBadgeHtml = isManagementUser(currentUser) ? `<span class="shift-seen-status ${s.seen_at ? 'seen' : 'not-seen'}">${seenText}</span>` : '';
       return `
@@ -2516,6 +2562,9 @@ function loadCustomerPublicView(token) {
     container.innerHTML = siteShifts.map(s => {
       const op = allUsers.find(u => String(u.id) === String(s.operative_id));
       const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
+      if (s.is_drying_day) {
+        return `<div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;"><strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)}</strong><div style="margin-top: 6px; font-weight: 600;">⏳ Drying Day</div></div>`;
+      }
       return `
         <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;">
           <strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
@@ -3098,7 +3147,7 @@ async function exportShiftsPDF(operativeOnly = false) {
       return [
         formatUKDate(s.shift_date),
         `${formatSiteId(s.site_id)} - ${site ? site.address : 'Site Address'}`,
-        op ? op.full_name : 'Unassigned',
+        op ? op.full_name : (s.is_drying_day ? 'Drying Day' : 'Unassigned'),
         periodBadge,
         s.task || 'General Works',
         seenStr

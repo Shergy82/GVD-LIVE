@@ -1196,3 +1196,5 @@ body {
   background-color: rgba(16, 185, 129, 0.22) !important;
   border-color: rgba(16, 185, 129, 0.5);
 }
+
+.shift-card.drying-card { border-left-color: #f59e0b; background-color: rgba(245, 158, 11, 0.18); }
