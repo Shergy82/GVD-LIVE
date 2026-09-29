@@ -28,6 +28,8 @@ self.addEventListener('push', (event) => {
     badge: '/icon-192.png',
     vibrate: [300, 100, 300],
     tag: data.shiftId ? `gvd-shift-${data.shiftId}` : `gvd-push-${Date.now()}`,
+    renotify: true,
+    silent: false,
     data: {
       url: data.url || '/',
       shiftId: data.shiftId || null,
