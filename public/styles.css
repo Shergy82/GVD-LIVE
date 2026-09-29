@@ -429,6 +429,16 @@ body {
   text-align: center;
 }
 
+.planner-table th.date-col.weekend-narrow,
+.planner-table td.weekend-narrow {
+  width: 46px;
+  min-width: 0;
+  max-width: 46px;
+  padding: 6px 2px;
+  font-size: 0.65rem;
+  text-align: center;
+}
+
 .planner-table th.weekend-col-header {
   background: linear-gradient(180deg, #5b21b6, #3b0764);
   color: #ede9fe;

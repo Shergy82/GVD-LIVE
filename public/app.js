@@ -1279,13 +1279,20 @@ function renderPlannerView() {
 
   const todayISO = formatDateISO(new Date());
 
+  // Weekend days stay thin unless someone is working that day
+  const activeSiteIds = new Set(allSites.filter(site => !site.is_archived).map(site => parseInt(site.id)));
+  const isNarrowWeekendDay = (d) => isWeekendDay(d) &&
+    !allShifts.some(sh => sh.shift_date === formatDateISO(d) && activeSiteIds.has(parseInt(sh.site_id)));
+
   const headerRow = document.getElementById('plannerTableHeaderRow');
   headerRow.innerHTML = `
     <th class="site-col">Site / Property</th>
     ${weekDays.map(d => {
       const dStr = formatDateISO(d);
       const isToday = dStr === todayISO;
-      return `<th class="date-col ${isWeekendDay(d) ? 'weekend-col-header' : ''} ${isToday ? 'today-col-header' : ''}">${formatDateShort(d)}</th>`;
+      const narrow = isNarrowWeekendDay(d);
+      const label = narrow ? `${d.toLocaleDateString('en-GB', { weekday: 'short' })}<br>${formatUKDate(d).slice(0, 5)}` : formatDateShort(d);
+      return `<th class="date-col ${isWeekendDay(d) ? 'weekend-col-header' : ''} ${narrow ? 'weekend-narrow' : ''} ${isToday ? 'today-col-header' : ''}">${label}</th>`;
     }).join('')}
   `;
 
@@ -1326,7 +1333,7 @@ function renderPlannerView() {
       }).join('');
 
       return `
-        <td class="planner-day-cell ${isWeekendDay(day) ? 'weekend-day-cell' : ''} ${isToday ? 'today-day-cell' : ''}" data-site-id="${site.id}" data-date="${dateStr}">
+        <td class="planner-day-cell ${isWeekendDay(day) ? 'weekend-day-cell' : ''} ${isNarrowWeekendDay(day) ? 'weekend-narrow' : ''} ${isToday ? 'today-day-cell' : ''}" data-site-id="${site.id}" data-date="${dateStr}">
           ${cardsHtml}
         </td>
       `;
