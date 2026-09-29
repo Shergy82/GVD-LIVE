@@ -687,6 +687,10 @@ function formatUKDate(dateInput) {
   return `${dayStr}/${monthStr}/${yearStr}`;
 }
 
+function siteTypeBadgeHtml(site) {
+  return site.construction_type ? `<span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>` : '';
+}
+
 function formatShortUKDayDate(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   return formatDateShort(new Date(y, m - 1, d));
@@ -1443,7 +1447,7 @@ function renderPlannerView() {
           <span class="site-badge">${formatSiteId(site.id)}</span>
           <strong>${site.address}</strong>
           ${finishHtml}
-          <span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>
+          ${siteTypeBadgeHtml(site)}
           ${siteInfoEditorHtml(site)}
         </td>
         ${cellsHtml}
@@ -1865,7 +1869,7 @@ function renderSitesList() {
         <div>
           <div class="site-card-header">
             <span class="site-badge">${formatSiteId(site.id)} ${site.is_archived ? '(Archived)' : ''}</span>
-            <span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>
+            ${siteTypeBadgeHtml(site)}
           </div>
           <h3 class="site-card-address">${site.address}</h3>
         </div>
@@ -1921,8 +1925,20 @@ function loadProjectPage(siteId) {
 
   document.getElementById('projSiteIdBadge').textContent = `${formatSiteId(site.id)}${site.is_archived ? ' (Archived)' : ''}`;
   document.getElementById('projSiteAddress').textContent = site.address;
-  document.getElementById('projSiteTypeBadge').textContent = site.construction_type;
-  document.getElementById('projSiteTypeBadge').className = `site-type-badge ${site.construction_type.toLowerCase()}`;
+  const projTypeBadge = document.getElementById('projSiteTypeBadge');
+  const canEditType = isManagementUser(currentUser);
+  projTypeBadge.textContent = site.construction_type || (canEditType ? '+ Set type' : '');
+  projTypeBadge.className = `site-type-badge ${(site.construction_type || '').toLowerCase()}`;
+  projTypeBadge.style.display = (site.construction_type || canEditType) ? '' : 'none';
+  projTypeBadge.style.cursor = canEditType ? 'pointer' : '';
+  projTypeBadge.title = canEditType ? 'Click to change: Concrete, Timber or none' : '';
+  projTypeBadge.onclick = canEditType ? async () => {
+    const order = ['', 'Concrete', 'Timber'];
+    site.construction_type = order[(order.indexOf(site.construction_type || '') + 1) % order.length];
+    if (db) await db.collection('sites').doc(String(site.id)).update({ construction_type: site.construction_type }).catch(console.warn);
+    saveLocalStorageData();
+    loadProjectPage(parseInt(site.id));
+  } : null;
 
   const actionsContainer = document.getElementById('projectPageActions');
   if (actionsContainer) {
@@ -2550,8 +2566,9 @@ function loadCustomerPublicView(token) {
   document.getElementById('custPubAppName').textContent = appSettings.app_name || 'GVD LIVE';
   document.getElementById('custPubSiteId').textContent = formatSiteId(site.id);
   document.getElementById('custPubAddress').textContent = site.address;
-  document.getElementById('custPubTypeBadge').textContent = site.construction_type;
-  document.getElementById('custPubTypeBadge').className = `site-type-badge ${site.construction_type.toLowerCase()}`;
+  document.getElementById('custPubTypeBadge').textContent = site.construction_type || '';
+  document.getElementById('custPubTypeBadge').className = `site-type-badge ${(site.construction_type || '').toLowerCase()}`;
+  document.getElementById('custPubTypeBadge').style.display = site.construction_type ? '' : 'none';
 
   const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
   const container = document.getElementById('custPubShiftsContainer');
@@ -2715,7 +2732,16 @@ function setupEventListeners() {
 
   document.getElementById('photoFileInput').addEventListener('change', handlePhotoUpload);
   document.getElementById('pdfFileInput').addEventListener('change', handlePdfUpload);
-  document.getElementById('btnOpenCreateSiteModal').addEventListener('click', () => openModal('modalCreateSite'));
+  document.getElementById('btnOpenCreateSiteModal').addEventListener('click', () => {
+    document.querySelectorAll('input[name="constructionType"]').forEach(c => { c.checked = false; });
+    openModal('modalCreateSite');
+  });
+  // Tick boxes act like radio buttons but can be unticked
+  document.querySelectorAll('input[name="constructionType"]').forEach(box => {
+    box.addEventListener('change', () => {
+      if (box.checked) document.querySelectorAll('input[name="constructionType"]').forEach(o => { if (o !== box) o.checked = false; });
+    });
+  });
   document.getElementById('btnPrintA4').addEventListener('click', () => window.print());
 
   document.querySelectorAll('[data-close]').forEach(btn => {
@@ -3216,7 +3242,8 @@ async function handleCreateSite(e) {
     const address = document.getElementById('siteAddressInput').value.trim();
     if (!address) return;
 
-    const construction_type = document.querySelector('input[name="constructionType"]:checked').value;
+    const typeTick = document.querySelector('input[name="constructionType"]:checked');
+    const construction_type = typeTick ? typeTick.value : '';
     const nextSiteId = Math.floor(10000 + Math.random() * 90000);
     const customer_token = 'token_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
