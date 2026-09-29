@@ -1,4 +1,4 @@
-// GVD LIVE PWA Service Worker (v4.0)
+// GVD LIVE PWA Service Worker (v5.0)
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

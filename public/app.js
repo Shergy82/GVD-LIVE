@@ -479,7 +479,7 @@ function onUserAuthenticated() {
 }
 
 async function performVersionedResetMigration() {
-  const RESET_VERSION = 'gvd_pwa_reset_v4';
+  const RESET_VERSION = 'gvd_pwa_reset_v5';
   if (localStorage.getItem(RESET_VERSION) === 'completed') return;
 
   try {
@@ -747,7 +747,7 @@ function updateHeaderBellUI() {
   }
 }
 
-const VAPID_PUBLIC_KEY = 'BJO5t2DJJu_uWzByWNKK8t9HlKNLMR5sB0X-uZTQrPf6iCrthlABB8JvD0FrkTWDHxIf8bumQM6W5KKEyMcFczk';
+const VAPID_PUBLIC_KEY = 'BAxW9LYu7tAuFQvd30x8Gw1adQDV27hFKnf3DikRxr9SajdzXNUwKrzaMgZk32Qwta7YGr4qAVf7b6qAkShifPM';
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);

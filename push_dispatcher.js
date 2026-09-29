@@ -1,7 +1,7 @@
 const webpush = require('web-push');
 
-const VAPID_PUBLIC_KEY = 'BJO5t2DJJu_uWzByWNKK8t9HlKNLMR5sB0X-uZTQrPf6iCrthlABB8JvD0FrkTWDHxIf8bumQM6W5KKEyMcFczk';
-const VAPID_PRIVATE_KEY = '1ooYTjFYQJD48qoALwcuMuxVVmq2anTHK6OHhyoa_Tk';
+const VAPID_PUBLIC_KEY = 'BAxW9LYu7tAuFQvd30x8Gw1adQDV27hFKnf3DikRxr9SajdzXNUwKrzaMgZk32Qwta7YGr4qAVf7b6qAkShifPM';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 const VAPID_SUBJECT = 'mailto:admin@gvdcontracts.com';
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
