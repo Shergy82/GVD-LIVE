@@ -58,7 +58,9 @@ exports.onNotificationCreated = onDocumentCreated({ document: 'notifications/{no
         const res = await webpush.sendNotification(sub, payload, options);
         console.log(`Push sent to device ${doc.id}: HTTP ${res.statusCode}`);
       } catch (err) {
-        console.warn(`Push failed for device ${doc.id}: ${err.statusCode || err.message}`);
+        let host = 'unknown';
+        try { host = new URL(sub.endpoint).host; } catch (e) {}
+        console.warn(`Push failed for device ${doc.id} (${host}, updated ${doc.data().updated_at}): ${err.statusCode || err.message} body=${String(err.body || '').slice(0, 300)}`);
         if (err.statusCode === 404 || err.statusCode === 410) {
           console.log(`Cleaning expired subscription ${doc.id}`);
           await doc.ref.delete().catch(() => null);
