@@ -460,6 +460,7 @@ function onUserAuthenticated() {
   updatePendingUsersBadge();
   registerDevicePushSubscription(false);
   updateCleanPushUI();
+  if (isOwnerOrAdmin) startDiarySync();
 
   if (isManagerOrHigher) {
     showView('view-planner');
@@ -561,6 +562,8 @@ function renderActiveView() {
     renderLabourSheetView();
   } else if (viewId === 'view-admin') {
     renderAdminSettingsView();
+  } else if (viewId === 'view-diary') {
+    renderDiaryView();
   }
 }
 
@@ -2601,6 +2604,8 @@ function setupEventListeners() {
   document.querySelectorAll('[data-close]').forEach(btn => {
     btn.addEventListener('click', () => closeModal(btn.dataset.close));
   });
+
+  setupDiaryListeners();
 }
 
 // REGISTER HANDLER (FIRESTORE: FIRST USER EVER REGISTERED OR phil@gvdcontracts.com = ACTIVE OWNER)
@@ -2746,6 +2751,7 @@ async function handleLogout() {
       await db.collection('users').doc(String(currentUser.id)).collection('subscriptions').doc(devId).delete().catch(console.warn);
     }
   }
+  stopDiarySync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
   localStorage.removeItem('gvd_push_subscribed');
@@ -3371,4 +3377,182 @@ function openModal(id) {
 }
 function closeModal(id) {
   document.getElementById(id).classList.remove('active');
+}
+
+
+// -------------------------------------------------------------------
+// DIARY (Owner / Admin only). Entries live in Firestore `diary`.
+// Assignees are notified on save via the `notifications` collection; a scheduled
+// Cloud Function (functions/index.js) sends the 7am reminder on the day.
+// -------------------------------------------------------------------
+let allDiary = [];
+let diaryUnsub = null;
+let diaryMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+
+function diaryEsc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function diaryDateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function startDiarySync() {
+  if (diaryUnsub || !db || !currentUser || !isOwnerOrAdminUser(currentUser)) return;
+  diaryUnsub = db.collection('diary').onSnapshot(snapshot => {
+    allDiary = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+    const el = document.getElementById('view-diary');
+    if (el && el.style.display !== 'none') renderDiaryView();
+  }, err => console.warn('Firestore diary error:', err));
+}
+
+function stopDiarySync() {
+  if (diaryUnsub) diaryUnsub();
+  diaryUnsub = null;
+  allDiary = [];
+}
+
+function renderDiaryView() {
+  if (!currentUser || !isOwnerOrAdminUser(currentUser)) return;
+  const year = diaryMonth.getFullYear();
+  const month = diaryMonth.getMonth();
+  document.getElementById('diaryMonthLabel').textContent = diaryMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
+  const todayKey = diaryDateKey(new Date());
+  const byDate = {};
+  allDiary.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  Object.values(byDate).forEach(list => list.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
+
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7; // Monday first
+  let html = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<div class="diary-dow">${d}</div>`).join('');
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(year, month, 1 - startOffset + i);
+    const key = diaryDateKey(d);
+    const chips = (byDate[key] || []).map(e =>
+      `<span class="diary-chip" data-entry="${diaryEsc(e.id)}">${diaryEsc(e.time ? e.time + ' ' : '')}${diaryEsc(e.title)}</span>`).join('');
+    html += `<div class="diary-cell${d.getMonth() !== month ? ' other-month' : ''}${key === todayKey ? ' today' : ''}" data-date="${key}"><div class="diary-daynum">${d.getDate()}</div>${chips}</div>`;
+  }
+  const grid = document.getElementById('diaryGrid');
+  grid.innerHTML = html;
+  grid.querySelectorAll('.diary-cell').forEach(cell => {
+    cell.addEventListener('click', (ev) => {
+      const chip = ev.target.closest('.diary-chip');
+      if (chip) openDiaryModal(chip.dataset.entry);
+      else openDiaryModal(null, cell.dataset.date);
+    });
+  });
+
+  const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`;
+  const monthEntries = allDiary.filter(e => (e.date || '').startsWith(prefix))
+    .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+  const agenda = document.getElementById('diaryAgenda');
+  if (monthEntries.length === 0) {
+    agenda.innerHTML = '<p style="color: var(--text-muted);">Nothing in the diary this month.</p>';
+    return;
+  }
+  agenda.innerHTML = monthEntries.map(e => {
+    const site = allSites.find(s => String(s.id) === String(e.site_id));
+    const names = (e.assignee_ids || []).map(id => {
+      const u = allUsers.find(x => String(x.id) === String(id));
+      return u ? u.full_name : 'Unknown';
+    }).join(', ');
+    return `<div class="diary-agenda-item" data-entry="${diaryEsc(e.id)}">
+      <strong>${diaryEsc(formatUKDate(e.date))}${e.time ? ' ' + diaryEsc(e.time) : ''} - ${diaryEsc(e.title)}</strong>
+      <div style="font-size: 0.85rem; color: var(--text-muted);">${site ? '🏗️ ' + diaryEsc(site.address) + ' · ' : ''}${names ? '👤 ' + diaryEsc(names) : 'No one notified'}${e.reminder_7am ? ' · ⏰ 7am reminder' : ''}</div>
+      ${e.notes ? `<div style="font-size: 0.85rem; margin-top: 4px;">${diaryEsc(e.notes)}</div>` : ''}
+    </div>`;
+  }).join('');
+  agenda.querySelectorAll('.diary-agenda-item').forEach(el => {
+    el.addEventListener('click', () => openDiaryModal(el.dataset.entry));
+  });
+}
+
+function openDiaryModal(entryId, presetDate = null) {
+  const entry = entryId ? allDiary.find(e => e.id === entryId) : null;
+  document.getElementById('modalDiaryTitle').textContent = entry ? 'Edit Diary Entry' : 'Add Diary Entry';
+  document.getElementById('diaryIdInput').value = entry ? entry.id : '';
+  document.getElementById('diaryTitleInput').value = entry ? entry.title : '';
+  document.getElementById('diaryDateInput').value = entry ? entry.date : (presetDate || diaryDateKey(new Date()));
+  document.getElementById('diaryTimeInput').value = entry ? (entry.time || '') : '';
+  document.getElementById('diaryNotesInput').value = entry ? (entry.notes || '') : '';
+  document.getElementById('diaryReminderChk').checked = entry ? entry.reminder_7am !== false : true;
+
+  const siteSel = document.getElementById('diarySiteSelect');
+  siteSel.innerHTML = '<option value="">No site</option>' + allSites
+    .filter(s => !s.is_archived)
+    .map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
+  siteSel.value = entry && entry.site_id != null ? String(entry.site_id) : '';
+
+  const selected = new Set((entry ? entry.assignee_ids || [] : []).map(String));
+  document.getElementById('diaryAssigneeList').innerHTML = allUsers
+    .filter(u => u.status === 'Active')
+    .map(u => `<label style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer;">
+      <input type="checkbox" class="diary-assignee" value="${diaryEsc(u.id)}"${selected.has(String(u.id)) ? ' checked' : ''}> ${diaryEsc(u.full_name)} <span style="color: var(--text-muted);">(${diaryEsc(u.role)})</span></label>`).join('');
+
+  document.getElementById('btnDeleteDiary').style.display = entry ? '' : 'none';
+  openModal('modalDiary');
+}
+
+async function handleSaveDiary(e) {
+  e.preventDefault();
+  if (!db || !currentUser || !isOwnerOrAdminUser(currentUser)) return;
+
+  const existingId = document.getElementById('diaryIdInput').value;
+  const previous = existingId ? allDiary.find(x => x.id === existingId) : null;
+  const assignee_ids = Array.from(document.querySelectorAll('.diary-assignee:checked')).map(c => String(c.value));
+  const siteVal = document.getElementById('diarySiteSelect').value;
+  const entry = {
+    title: document.getElementById('diaryTitleInput').value.trim(),
+    date: document.getElementById('diaryDateInput').value,
+    time: document.getElementById('diaryTimeInput').value || '',
+    site_id: siteVal || null,
+    notes: document.getElementById('diaryNotesInput').value.trim(),
+    assignee_ids,
+    reminder_7am: document.getElementById('diaryReminderChk').checked,
+    created_by: previous ? previous.created_by : String(currentUser.id),
+    updated_at: new Date().toISOString()
+  };
+  const id = existingId || 'diary_' + Date.now();
+
+  try {
+    await db.collection('diary').doc(id).set({ id, ...entry });
+  } catch (err) {
+    alert('Could not save diary entry: ' + err.message);
+    return;
+  }
+
+  // Push to anyone newly added, or everyone if the date/time changed
+  const changed = !previous || previous.date !== entry.date || previous.time !== entry.time;
+  const already = new Set(previous ? (previous.assignee_ids || []).map(String) : []);
+  const toNotify = assignee_ids.filter(uid => changed || !already.has(uid));
+  const site = allSites.find(s => String(s.id) === String(entry.site_id));
+  const body = `${formatUKDate(entry.date)}${entry.time ? ' at ' + entry.time : ''}${site ? '\nSite: ' + site.address : ''}${entry.notes ? '\n' + entry.notes : ''}`;
+  await Promise.all(toNotify.map(uid => db.collection('notifications').add({
+    target_user_id: uid,
+    title: (previous ? '📖 Diary updated: ' : '📖 Diary: ') + entry.title,
+    body,
+    created_at: new Date().toISOString()
+  }).catch(err => console.warn('Diary notification failed:', err))));
+
+  closeModal('modalDiary');
+  showGreenToast(toNotify.length ? `📖 Diary saved - ${toNotify.length} notified` : '📖 Diary saved');
+}
+
+async function handleDeleteDiary() {
+  const id = document.getElementById('diaryIdInput').value;
+  if (!id || !db || !confirm('Delete this diary entry?')) return;
+  await db.collection('diary').doc(id).delete().catch(err => alert('Delete failed: ' + err.message));
+  closeModal('modalDiary');
+}
+
+function setupDiaryListeners() {
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+  on('diaryPrevMonthBtn', () => { diaryMonth = new Date(diaryMonth.getFullYear(), diaryMonth.getMonth() - 1, 1); renderDiaryView(); });
+  on('diaryNextMonthBtn', () => { diaryMonth = new Date(diaryMonth.getFullYear(), diaryMonth.getMonth() + 1, 1); renderDiaryView(); });
+  on('diaryTodayBtn', () => { const n = new Date(); diaryMonth = new Date(n.getFullYear(), n.getMonth(), 1); renderDiaryView(); });
+  on('diaryAddBtn', () => openDiaryModal(null));
+  on('btnDeleteDiary', handleDeleteDiary);
+  const form = document.getElementById('diaryForm');
+  if (form) form.addEventListener('submit', handleSaveDiary);
 }

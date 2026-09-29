@@ -1,4 +1,5 @@
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
@@ -72,4 +73,25 @@ exports.onNotificationCreated = onDocumentCreated({ document: 'notifications/{no
   } catch (err) {
     console.error(`Error in onNotificationCreated: ${err.message}`, err);
   }
+});
+
+// 7am (UK time) diary reminders: one notification per assignee, which onNotificationCreated then pushes.
+exports.sendDiaryReminders = onSchedule({ schedule: '0 7 * * *', timeZone: 'Europe/London' }, async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(new Date());
+  const snap = await db.collection('diary').where('date', '==', today).get();
+  const writes = [];
+  snap.docs.forEach(doc => {
+    const e = doc.data();
+    if (e.reminder_7am === false) return;
+    (e.assignee_ids || []).forEach(uid => {
+      writes.push(db.collection('notifications').add({
+        target_user_id: String(uid),
+        title: '⏰ Today: ' + (e.title || 'Diary entry'),
+        body: `${e.time ? 'At ' + e.time : 'Today'}${e.notes ? '\n' + e.notes : ''}`,
+        created_at: new Date().toISOString()
+      }));
+    });
+  });
+  await Promise.all(writes);
+  console.log(`Diary reminders sent for ${today}: ${writes.length}`);
 });

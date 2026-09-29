@@ -26,6 +26,7 @@
       <button class="nav-item manager-admin-only" data-target="view-planner" id="navPlannerBtn">📅 Planner</button>
       <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn">🏗️ Sites & Projects</button>
       <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn">📊 Labour Sheet</button>
+      <button class="nav-item admin-only" data-target="view-diary" id="navDiaryBtn">📖 Diary</button>
       <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn">⚙️ Admin Settings <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
       <!-- Operative Links -->
@@ -392,6 +393,25 @@
     <!-- ------------------------------------------------------------- -->
     <!-- ADMIN SETTINGS VIEW (USERS, ROLES, ACCESS, LOGO & APP NAME) -->
     <!-- ------------------------------------------------------------- -->
+    <div id="view-diary" class="app-view admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Diary</h2>
+          <p>Site visits and appointments. Assigned people get a push notification straight away and a reminder at 7am on the day.</p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-secondary btn-sm" id="diaryPrevMonthBtn">←</button>
+          <strong id="diaryMonthLabel" style="min-width: 140px; text-align: center;"></strong>
+          <button class="btn btn-secondary btn-sm" id="diaryNextMonthBtn">→</button>
+          <button class="btn btn-outline btn-sm" id="diaryTodayBtn">Today</button>
+          <button class="btn btn-primary btn-sm" id="diaryAddBtn">+ Add Entry</button>
+        </div>
+      </div>
+      <div id="diaryGrid" class="diary-grid"></div>
+      <h3 style="margin: 20px 0 10px;">This month</h3>
+      <div id="diaryAgenda"></div>
+    </div>
+
     <div id="view-admin" class="app-view admin-only" style="display: none;">
       <div class="section-header">
         <div class="section-title-group">
@@ -582,6 +602,52 @@
     </div>
   </div>
 
+  <!-- Modal: Diary Entry -->
+  <div class="modal-overlay" id="modalDiary">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalDiaryTitle">Add Diary Entry</h3>
+        <button class="close-btn" data-close="modalDiary">&times;</button>
+      </div>
+      <form id="diaryForm">
+        <input type="hidden" id="diaryIdInput">
+        <div class="form-group">
+          <label for="diaryTitleInput">Title</label>
+          <input type="text" id="diaryTitleInput" class="form-control" required placeholder="e.g. Site visit - survey">
+        </div>
+        <div class="form-group">
+          <label for="diaryDateInput">Date</label>
+          <input type="date" id="diaryDateInput" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="diaryTimeInput">Time (optional)</label>
+          <input type="time" id="diaryTimeInput" class="form-control">
+        </div>
+        <div class="form-group">
+          <label for="diarySiteSelect">Site (optional)</label>
+          <select id="diarySiteSelect" class="form-control"></select>
+        </div>
+        <div class="form-group">
+          <label>Notify</label>
+          <div id="diaryAssigneeList" style="display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; margin-top: 6px;"></div>
+        </div>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
+            <input type="checkbox" id="diaryReminderChk" checked> ⏰ Send a reminder at 7am on the day
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="diaryNotesInput">Notes (optional)</label>
+          <textarea id="diaryNotesInput" class="form-control" rows="3"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button type="submit" class="btn btn-primary">Save Entry</button>
+          <button type="button" class="btn btn-danger" id="btnDeleteDiary" style="display: none;">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: Shift Detail View (Operative Click Handler - Triggers Seen Status Timestamp) -->
   <div class="modal-overlay" id="modalShiftDetail">
     <div class="modal-card">
@@ -650,6 +716,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=17.0"></script>
+  <script src="/app.js?v=18.0"></script>
 </body>
 </html>
