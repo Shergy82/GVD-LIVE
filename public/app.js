@@ -452,12 +452,13 @@ function onUserAuthenticated() {
   const isManagerOrHigher = isManagementUser(currentUser);
 
   // Role permissions UI visibility
-  document.querySelectorAll('.admin-only').forEach(el => {
-    el.style.display = isOwnerOrAdmin ? '' : 'none';
-  });
-  document.querySelectorAll('.manager-admin-only').forEach(el => {
-    el.style.display = isManagerOrHigher ? '' : 'none';
-  });
+  // Tab panels are shown/hidden by the tab buttons, so only ever force-hide them here
+  const applyRoleVisibility = (el, allowed) => {
+    if (allowed && el.classList.contains('project-tab-content')) return;
+    el.style.display = allowed ? '' : 'none';
+  };
+  document.querySelectorAll('.admin-only').forEach(el => applyRoleVisibility(el, isOwnerOrAdmin));
+  document.querySelectorAll('.manager-admin-only').forEach(el => applyRoleVisibility(el, isManagerOrHigher));
   document.querySelectorAll('.op-only').forEach(el => {
     el.style.display = (!isManagerOrHigher) ? '' : 'none';
   });
@@ -2202,7 +2203,9 @@ function openPhotoLightbox(photo) {
       btn.addEventListener('click', () => {
         const pdfId = String(btn.dataset.pdfId);
         const pdf = allPdfs.find(p => String(p.id) === pdfId);
-        if (pdf) {
+        if (pdf && pdf.file_url) {
+          window.open(pdf.file_url, '_blank');
+        } else if (pdf) {
           forceDownloadFile(pdf.filename, pdf.data_url, /\.pdf$/i.test(pdf.filename || '') ? 'application/pdf' : 'application/octet-stream');
         }
       });
@@ -2212,6 +2215,10 @@ function openPhotoLightbox(photo) {
       btn.addEventListener('click', async () => {
         if (confirm('Delete this file?')) {
           const pdfId = String(btn.dataset.pdfId);
+          const doomed = allPdfs.find(p => String(p.id) === pdfId);
+          if (doomed && doomed.storage_path && typeof firebase.storage === 'function') {
+            await getStorageForBucket(doomed.storage_bucket || STORAGE_BUCKETS[0]).ref(doomed.storage_path).delete().catch(console.warn);
+          }
           if (db) await db.collection('pdfs').doc(pdfId).delete();
           allPdfs = allPdfs.filter(pdf => String(pdf.id) !== pdfId);
           saveLocalStorageData();
@@ -3474,8 +3481,31 @@ function handlePhotoUpload(e) {
   reader.readAsDataURL(file);
 }
 
-function handlePdfUpload(e) {
-  const file = e.target.files[0];
+const STORAGE_BUCKETS = ['gs://gvd-live.firebasestorage.app', 'gs://gvd-live.appspot.com'];
+const MAX_SITE_FILE_MB = 30;
+
+function getStorageForBucket(bucketUrl) {
+  return firebase.app().storage(bucketUrl);
+}
+
+// Uploads to Firebase Storage, trying the project's possible default buckets in turn
+async function uploadSiteFile(path, file) {
+  let lastErr = null;
+  for (const bucket of STORAGE_BUCKETS) {
+    try {
+      const ref = getStorageForBucket(bucket).ref(path);
+      await ref.put(file);
+      return { bucket, url: await ref.getDownloadURL() };
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+async function handlePdfUpload(e) {
+  const input = e.target;
+  const file = input.files[0];
   if (!file || !activeSiteId) return;
 
   const lowerName = file.name.toLowerCase();
@@ -3483,44 +3513,68 @@ function handlePdfUpload(e) {
   const isExcel = /\.(xlsx|xlsm|xls|csv)$/.test(lowerName);
   if (!isPdf && !isExcel) {
     alert('Only PDF or Excel (.xlsx, .xls, .csv) files are accepted.');
+    input.value = '';
     return;
   }
-  if (file.size > 700 * 1024) {
-    alert(`This file is ${(file.size / 1024 / 1024).toFixed(1)}MB. Files must be under about 0.7MB to be stored. Please save a smaller copy (for Excel, remove unused sheets or images).`);
-    e.target.value = '';
+  if (file.size > MAX_SITE_FILE_MB * 1024 * 1024) {
+    alert(`This file is ${(file.size / 1024 / 1024).toFixed(1)}MB. The limit is ${MAX_SITE_FILE_MB}MB.`);
+    input.value = '';
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = async (evt) => {
-    const nextPdfId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-    const newPdf = {
-      id: nextPdfId,
-      site_id: String(activeSiteId),
-      uploader_id: currentUser.id,
-      uploader_name: currentUser.full_name,
-      filename: file.name,
-      data_url: evt.target.result,
-      file_type: isPdf ? 'pdf' : 'excel',
-      created_at: new Date().toISOString()
-    };
-
-    if (db) {
-      try {
-        await db.collection('pdfs').doc(nextPdfId).set(newPdf);
-      } catch (err) {
-        alert('Could not save the file: ' + err.message);
-        e.target.value = '';
-        return;
-      }
-    }
-    allPdfs.push(newPdf);
-    saveLocalStorageData();
-    e.target.value = '';
-    showGreenToast(isPdf ? '📄 PDF document uploaded successfully!' : '📊 Excel file uploaded successfully!');
-    loadProjectPage(activeSiteId);
+  const nextPdfId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const newPdf = {
+    id: nextPdfId,
+    site_id: String(activeSiteId),
+    uploader_id: currentUser.id,
+    uploader_name: currentUser.full_name,
+    filename: file.name,
+    file_type: isPdf ? 'pdf' : 'excel',
+    created_at: new Date().toISOString()
   };
-  reader.readAsDataURL(file);
+
+  showGreenToast(`⏳ Uploading ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)...`);
+  let storageError = null;
+  try {
+    if (typeof firebase === 'undefined' || typeof firebase.storage !== 'function') throw new Error('Firebase Storage is not loaded');
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const up = await uploadSiteFile(`site_files/${activeSiteId}/${nextPdfId}_${safeName}`, file);
+    newPdf.file_url = up.url;
+    newPdf.storage_bucket = up.bucket;
+    newPdf.storage_path = `site_files/${activeSiteId}/${nextPdfId}_${safeName}`;
+  } catch (err) {
+    storageError = err;
+  }
+
+  if (storageError) {
+    // Fall back to storing small files directly in the database
+    if (file.size > 700 * 1024) {
+      alert('Could not upload this file: ' + storageError.message + '\n\nFirebase Storage may not be switched on yet.');
+      input.value = '';
+      return;
+    }
+    newPdf.data_url = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = evt => resolve(evt.target.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  if (db) {
+    try {
+      await db.collection('pdfs').doc(nextPdfId).set(newPdf);
+    } catch (err) {
+      alert('Could not save the file: ' + err.message);
+      input.value = '';
+      return;
+    }
+  }
+  allPdfs.push(newPdf);
+  saveLocalStorageData();
+  input.value = '';
+  showGreenToast(isPdf ? '📄 PDF document uploaded successfully!' : '📊 Excel file uploaded successfully!');
+  loadProjectPage(activeSiteId);
 }
 
 async function handleSaveBranding(e) {
