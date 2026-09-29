@@ -301,7 +301,7 @@ function initFirestoreSync() {
   db.collection('photos').onSnapshot(snapshot => {
     allPhotos = snapshot.docs.map(doc => {
       const d = doc.data();
-      return { ...d, id: parseInt(d.id || doc.id) };
+      return { ...d, id: String(d.id || doc.id) };
     });
     saveLocalStorageData();
     if (activeSiteId) loadProjectPage(activeSiteId);
@@ -311,7 +311,7 @@ function initFirestoreSync() {
   db.collection('pdfs').onSnapshot(snapshot => {
     allPdfs = snapshot.docs.map(doc => {
       const d = doc.data();
-      return { ...d, id: parseInt(d.id || doc.id) };
+      return { ...d, id: String(d.id || doc.id) };
     });
     saveLocalStorageData();
     if (activeSiteId) loadProjectPage(activeSiteId);
