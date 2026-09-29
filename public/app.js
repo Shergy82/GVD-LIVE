@@ -585,6 +585,39 @@ function getWeekDays(weekOffset = 0) {
   return days;
 }
 
+const SITE_INFO_FIELDS = [
+  ['info_tiling', 'Tiling', '🔲'],
+  ['info_flooring', 'Flooring', '🪵'],
+  ['info_paint', 'Paint', '🎨']
+];
+
+// Read-only info boxes (only the ones that have been filled in) shown to operatives
+function siteInfoHtml(site) {
+  if (!site) return '';
+  const rows = SITE_INFO_FIELDS.filter(([key]) => (site[key] || '').trim())
+    .map(([key, label, icon]) => `<div style="background-color: var(--bg-primary); padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 8px;">
+      <strong style="font-size: 0.8rem; color: var(--text-muted);">${icon} ${label.toUpperCase()}</strong>
+      <div style="font-size: 0.9rem; margin-top: 2px; white-space: pre-wrap;">${diaryEsc(site[key])}</div>
+    </div>`).join('');
+  return rows ? `<div style="margin-bottom: 12px;">${rows}</div>` : '';
+}
+
+// Editable info boxes in the planner's site column (managers/admins)
+function siteInfoEditorHtml(site) {
+  return `<div class="site-info-editor" style="margin-top: 10px;">${SITE_INFO_FIELDS.map(([key, label, icon]) => `
+    <label style="display: block; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); margin-top: 6px;">${icon} ${label.toUpperCase()}</label>
+    <textarea class="form-control site-info-input" data-site-id="${site.id}" data-field="${key}" rows="2" placeholder="Not set" style="font-size: 0.8rem; padding: 4px 6px; min-height: 0; resize: vertical;">${diaryEsc(site[key] || '')}</textarea>`).join('')}</div>`;
+}
+
+async function saveSiteInfo(siteId, field, value) {
+  const site = allSites.find(s => parseInt(s.id) === parseInt(siteId));
+  if (!site || (site[field] || '') === value) return;
+  site[field] = value;
+  if (db) await db.collection('sites').doc(String(site.id)).update({ [field]: value }).catch(err => alert('Could not save: ' + err.message));
+  saveLocalStorageData();
+  showGreenToast(value ? 'Site info saved - operatives can now see it' : 'Site info cleared');
+}
+
 // Rolling 7-day window starting today (offset moves it 7 days at a time)
 function getRollingDays(offset = 0) {
   const start = new Date();
@@ -1345,11 +1378,16 @@ function renderPlannerView() {
           <span class="site-badge">${formatSiteId(site.id)}</span>
           <strong>${site.address}</strong>
           <span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>
+          ${siteInfoEditorHtml(site)}
         </td>
         ${cellsHtml}
       </tr>
     `;
   }).join('');
+
+  tbody.querySelectorAll('.site-info-input').forEach(input => {
+    input.addEventListener('change', () => saveSiteInfo(input.dataset.siteId, input.dataset.field, input.value.trim()));
+  });
 
   setupPlannerTableDragAndDrop();
   setupPlannerClickHandlers();
@@ -1568,6 +1606,7 @@ function renderMyShiftsView() {
             <strong style="font-size: 0.8rem; color: var(--text-muted);">TASK:</strong>
             <p style="margin-top: 2px; font-size: 0.9rem;">${s.task}</p>
           </div>
+          ${siteInfoHtml(site)}
           <button class="btn btn-secondary btn-sm" style="width: 100%;">View Shift Details & Site Documents →</button>
         </div>
       `;
@@ -1602,6 +1641,7 @@ async function openShiftDetailModal(shiftId) {
   document.getElementById('detailAddress').textContent = site ? site.address : 'Site Address';
   document.getElementById('detailDate').textContent = `Date: ${formatUKDate(shift.shift_date)}`;
   document.getElementById('detailTask').textContent = shift.task;
+  document.getElementById('detailSiteInfo').innerHTML = siteInfoHtml(site);
 
   // Only set seen_at when the authenticated operative explicitly opens and views details
   const isOperativeOwner = currentUser && currentUser.role === 'Operative' && String(shift.operative_id) === String(currentUser.id);
@@ -1791,6 +1831,16 @@ function loadProjectPage(siteId) {
       actionsContainer.style.display = 'none';
     }
   }
+
+  const infoHost = document.getElementById('projSiteAddress').parentElement;
+  let infoEl = document.getElementById('projSiteInfo');
+  if (!infoEl) {
+    infoEl = document.createElement('div');
+    infoEl.id = 'projSiteInfo';
+    infoEl.style.marginTop = '12px';
+    infoHost.appendChild(infoEl);
+  }
+  infoEl.innerHTML = siteInfoHtml(site);
 
   renderProjectTabContent(site);
 }
