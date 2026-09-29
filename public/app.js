@@ -585,6 +585,22 @@ function getWeekDays(weekOffset = 0) {
   return days;
 }
 
+// Rolling 7-day window starting today (offset moves it 7 days at a time)
+function getRollingDays(offset = 0) {
+  const start = new Date();
+  start.setHours(12, 0, 0, 0);
+  start.setDate(start.getDate() + offset * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
+  });
+}
+
+function isWeekendDay(d) {
+  return d.getDay() === 0 || d.getDay() === 6;
+}
+
 function formatDateISO(d) {
   return d.toISOString().split('T')[0];
 }
@@ -1238,7 +1254,7 @@ function getAssignableOperatives() {
 }
 
 function renderPlannerView() {
-  const weekDays = getWeekDays(currentPlannerWeekOffset);
+  const weekDays = getRollingDays(currentPlannerWeekOffset);
   const startDateStr = formatDateShort(weekDays[0]);
   const endDateStr = formatDateShort(weekDays[6]);
   document.getElementById('plannerWeekRangeLabel').textContent = `${startDateStr} — ${endDateStr}`;
@@ -1269,7 +1285,7 @@ function renderPlannerView() {
     ${weekDays.map(d => {
       const dStr = formatDateISO(d);
       const isToday = dStr === todayISO;
-      return `<th class="date-col ${isToday ? 'today-col-header' : ''}">${formatDateShort(d)}</th>`;
+      return `<th class="date-col ${isWeekendDay(d) ? 'weekend-col-header' : ''} ${isToday ? 'today-col-header' : ''}">${formatDateShort(d)}</th>`;
     }).join('')}
   `;
 
@@ -1310,7 +1326,7 @@ function renderPlannerView() {
       }).join('');
 
       return `
-        <td class="planner-day-cell ${isToday ? 'today-day-cell' : ''}" data-site-id="${site.id}" data-date="${dateStr}">
+        <td class="planner-day-cell ${isWeekendDay(day) ? 'weekend-day-cell' : ''} ${isToday ? 'today-day-cell' : ''}" data-site-id="${site.id}" data-date="${dateStr}">
           ${cardsHtml}
         </td>
       `;
@@ -1408,7 +1424,7 @@ function setupPlannerClickHandlers() {
 function renderMobilePlannerView(weekDays) {
   const selector = document.getElementById('mobileDaySelector');
   selector.innerHTML = weekDays.map((d, index) => `
-    <button class="mobile-day-btn ${index === selectedMobileDayIndex ? 'active' : ''}" data-day-index="${index}">
+    <button class="mobile-day-btn ${isWeekendDay(d) ? 'weekend' : ''} ${index === selectedMobileDayIndex ? 'active' : ''}" data-day-index="${index}">
       ${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' })}
     </button>
   `).join('');
@@ -1501,7 +1517,11 @@ function formatShiftPeriodBadge(period) {
 function renderMyShiftsView() {
   const container = document.getElementById('myShiftsContainer');
   if (!currentUser) return;
-  const myShifts = allShifts.filter(s => String(s.operative_id) === String(currentUser.id));
+  const todayKey = diaryDateKey(new Date());
+  const periodRank = { am: 0, all_day: 1, pm: 2 };
+  const myShifts = allShifts
+    .filter(s => String(s.operative_id) === String(currentUser.id) && (s.shift_date || '') >= todayKey)
+    .sort((a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (periodRank[a.shift_period] ?? 1) - (periodRank[b.shift_period] ?? 1));
 
   // Automatically mark shifts as SEEN when operative opens the app / views their shifts
   const nowIso = new Date().toISOString();
@@ -2193,110 +2213,28 @@ function renderAdminSettingsView() {
     });
   }
 
-  const tbody = document.getElementById('adminUserTableBody');
+  const chipsEl = document.getElementById('adminUserChips');
   if (allUsers.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px;">No registered users found.</td></tr>`;
+    chipsEl.innerHTML = '<p style="color: var(--text-muted);">No registered users found.</p>';
+    renderAdminUserPushMonitor();
     return;
   }
 
-  tbody.innerHTML = allUsers.map(user => {
-    const jobTitle = user.job_title || (user.email === 'phil@gvdcontracts.com' ? 'Managing Director' : user.role);
-    return `
-      <tr style="${user.status === 'Pending' ? 'background-color: rgba(245, 158, 11, 0.08);' : ''}">
-        <td>
-          <strong>${user.full_name}</strong>
-          ${user.status === 'Pending' ? '<span style="display: block; font-size: 0.72rem; color: #f59e0b;">⏳ Awaiting Approval</span>' : ''}
-        </td>
-        <td>
-          <input type="text" class="form-control job-title-input" data-user-id="${user.id}" value="${jobTitle}" placeholder="e.g. Managing Director" style="min-height: 36px; padding: 4px 8px; font-size: 0.85rem;">
-        </td>
-        <td>${user.email}</td>
-        <td>${user.phone}</td>
-        <td>
-          <select class="form-control role-select" data-user-id="${user.id}" style="min-height: 36px; padding: 4px 8px; font-size: 0.85rem;">
-            <option value="Operative" ${user.role === 'Operative' ? 'selected' : ''}>Operative</option>
-            <option value="Manager" ${user.role === 'Manager' ? 'selected' : ''}>Manager</option>
-            <option value="Admin" ${user.role === 'Admin' ? 'selected' : ''}>Admin</option>
-            <option value="Owner" ${user.role === 'Owner' ? 'selected' : ''}>Owner</option>
-          </select>
-        </td>
-        <td>
-          <select class="form-control status-select" data-user-id="${user.id}" style="min-height: 36px; padding: 4px 8px; font-size: 0.85rem;">
-            <option value="Pending" ${user.status === 'Pending' ? 'selected' : ''}>Pending</option>
-            <option value="Active" ${user.status === 'Active' ? 'selected' : ''}>Active</option>
-            <option value="Restricted" ${user.status === 'Restricted' ? 'selected' : ''}>Restricted</option>
-          </select>
-        </td>
-        <td>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            ${user.status === 'Pending' ? `<button class="btn btn-primary btn-sm approve-user-btn" data-user-id="${user.id}" style="background-color: #10b981; border-color: #10b981; font-size: 0.8rem; padding: 4px 8px;">✅ Approve</button>` : ''}
-            <button class="btn btn-danger btn-sm remove-user-btn" data-user-id="${user.id}" ${String(user.id) === String(currentUser.id) ? 'disabled' : ''} style="font-size: 0.8rem; padding: 4px 8px;">
-              Remove
-            </button>
-          </div>
-        </td>
-      </tr>
-    `;
+  const groups = [
+    ['Awaiting approval', u => u.status === 'Pending'],
+    ['Owners', u => u.status !== 'Pending' && u.role === 'Owner'],
+    ['Admins', u => u.status !== 'Pending' && u.role === 'Admin'],
+    ['Managers', u => u.status !== 'Pending' && u.role === 'Manager'],
+    ['Operatives', u => u.status !== 'Pending' && !['Owner', 'Admin', 'Manager'].includes(u.role)]
+  ];
+  chipsEl.innerHTML = groups.map(([title, test]) => {
+    const list = allUsers.filter(test).sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+    if (list.length === 0) return '';
+    return `<div class="user-group-title">${title} (${list.length})</div><div class="user-chip-row">${list.map(u =>
+      `<button type="button" class="user-chip${u.status === 'Pending' ? ' pending' : ''}${u.status === 'Restricted' ? ' restricted' : ''}" data-user-id="${diaryEsc(u.id)}">👤 ${diaryEsc(u.full_name)}</button>`).join('')}</div>`;
   }).join('');
-
-  tbody.querySelectorAll('.job-title-input').forEach(input => {
-    input.addEventListener('change', async () => {
-      const user = allUsers.find(u => String(u.id) === input.dataset.userId);
-      if (user) {
-        user.job_title = input.value.trim();
-        if (db) await db.collection('users').doc(String(user.id)).update({ job_title: user.job_title });
-        saveLocalStorageData();
-        showGreenToast(`Updated job title for ${user.full_name}: ${user.job_title}`);
-      }
-    });
-  });
-
-  tbody.querySelectorAll('.approve-user-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const user = allUsers.find(u => String(u.id) === btn.dataset.userId);
-      if (user) {
-        user.status = 'Active';
-        if (db) await db.collection('users').doc(String(user.id)).update({ status: 'Active' });
-        saveLocalStorageData();
-        renderActiveView();
-      }
-    });
-  });
-
-  tbody.querySelectorAll('.role-select').forEach(select => {
-    select.addEventListener('change', async () => {
-      const user = allUsers.find(u => String(u.id) === select.dataset.userId);
-      if (user) {
-        user.role = select.value;
-        if (db) await db.collection('users').doc(String(user.id)).update({ role: select.value });
-        saveLocalStorageData();
-        renderActiveView();
-      }
-    });
-  });
-
-  tbody.querySelectorAll('.status-select').forEach(select => {
-    select.addEventListener('change', async () => {
-      const user = allUsers.find(u => String(u.id) === select.dataset.userId);
-      if (user) {
-        user.status = select.value;
-        if (db) await db.collection('users').doc(String(user.id)).update({ status: select.value });
-        saveLocalStorageData();
-        renderActiveView();
-      }
-    });
-  });
-
-  tbody.querySelectorAll('.remove-user-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (confirm('Remove this user account? Historical shifts will be preserved.')) {
-        const userId = btn.dataset.userId;
-        if (db) await db.collection('users').doc(String(userId)).delete();
-        allUsers = allUsers.filter(u => String(u.id) !== String(userId));
-        saveLocalStorageData();
-        renderActiveView();
-      }
-    });
+  chipsEl.querySelectorAll('.user-chip').forEach(chip => {
+    chip.addEventListener('click', () => openUserModal(chip.dataset.userId));
   });
 
   renderAdminUserPushMonitor();
@@ -2606,6 +2544,8 @@ function setupEventListeners() {
   });
 
   setupDiaryListeners();
+  document.getElementById('btnSaveUser').addEventListener('click', handleSaveUserModal);
+  document.getElementById('btnRemoveUser').addEventListener('click', handleRemoveUserModal);
 }
 
 // REGISTER HANDLER (FIRESTORE: FIRST USER EVER REGISTERED OR phil@gvdcontracts.com = ACTIVE OWNER)
@@ -3575,4 +3515,50 @@ function setupDiaryListeners() {
   on('btnDeleteDiary', handleDeleteDiary);
   const form = document.getElementById('diaryForm');
   if (form) form.addEventListener('submit', handleSaveDiary);
+}
+
+
+// -------------------------------------------------------------------
+// USER ACCOUNT MODAL (Admin Settings)
+// -------------------------------------------------------------------
+function openUserModal(userId) {
+  const user = allUsers.find(u => String(u.id) === String(userId));
+  if (!user) return;
+  document.getElementById('userModalId').value = user.id;
+  document.getElementById('modalUserName').textContent = user.full_name;
+  const contact = [];
+  if (user.phone) contact.push(`<a href="tel:${diaryEsc(user.phone)}" style="color: var(--primary);">📞 ${diaryEsc(user.phone)}</a>`);
+  if (user.email) contact.push(`<a href="mailto:${diaryEsc(user.email)}" style="color: var(--primary); word-break: break-all;">✉️ ${diaryEsc(user.email)}</a>`);
+  document.getElementById('userModalContact').innerHTML = contact.join('');
+  document.getElementById('userModalJob').value = user.job_title || (user.email === 'phil@gvdcontracts.com' ? 'Managing Director' : '');
+  document.getElementById('userModalRole').value = user.role || 'Operative';
+  document.getElementById('userModalStatus').value = user.status || 'Pending';
+  document.getElementById('btnRemoveUser').disabled = String(user.id) === String(currentUser.id);
+  openModal('modalUser');
+}
+
+async function handleSaveUserModal() {
+  const user = allUsers.find(u => String(u.id) === document.getElementById('userModalId').value);
+  if (!user) return;
+  const updates = {
+    job_title: document.getElementById('userModalJob').value.trim(),
+    role: document.getElementById('userModalRole').value,
+    status: document.getElementById('userModalStatus').value
+  };
+  Object.assign(user, updates);
+  if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
+  saveLocalStorageData();
+  closeModal('modalUser');
+  showGreenToast(`Saved ${user.full_name}`);
+  renderActiveView();
+}
+
+async function handleRemoveUserModal() {
+  const userId = document.getElementById('userModalId').value;
+  if (!confirm('Remove this user account? Historical shifts will be preserved.')) return;
+  if (db) await db.collection('users').doc(String(userId)).delete();
+  allUsers = allUsers.filter(u => String(u.id) !== String(userId));
+  saveLocalStorageData();
+  closeModal('modalUser');
+  renderActiveView();
 }
