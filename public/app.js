@@ -1843,6 +1843,7 @@ function loadProjectPage(siteId) {
   infoEl.innerHTML = siteInfoHtml(site);
 
   renderProjectTabContent(site);
+  renderPlasterCalc(site);
 }
 
 async function handleArchiveSite(siteId) {
@@ -2601,6 +2602,8 @@ function setupEventListeners() {
   });
 
   setupDiaryListeners();
+  document.getElementById('plasterRoomForm').addEventListener('submit', handleSavePlasterRoom);
+  document.getElementById('btnDeletePlasterRoom').addEventListener('click', handleDeletePlasterRoom);
   document.getElementById('btnSaveUser').addEventListener('click', handleSaveUserModal);
   document.getElementById('btnRemoveUser').addEventListener('click', handleRemoveUserModal);
 }
@@ -3618,4 +3621,182 @@ async function handleRemoveUserModal() {
   saveLocalStorageData();
   closeModal('modalUser');
   renderActiveView();
+}
+
+
+// -------------------------------------------------------------------
+// PLASTERING MATERIALS CALCULATOR (per site, managers/admins/owners)
+// Rooms + rates are stored on the site doc (plaster_rooms / plaster_settings).
+// Openings are NOT deducted. Contingency is added on top of every material.
+// Tiled (green line) area = moisture board only, no skim. Other walls + ceiling = board and skim.
+// -------------------------------------------------------------------
+const PLASTER_DEFAULTS = {
+  contingency: 10,   // % added to every material
+  sheet_area: 2.88,  // m2 per board (2.4 x 1.2)
+  skim_cover: 12,    // m2 per 25kg bag of multi-finish at ~2mm
+  screws_per_sheet: 30,
+  dab_cover: 8,      // m2 of board fixed per 25kg bag of adhesive
+  pva_cover: 6       // m2 per litre of bonding agent (skim-only areas)
+};
+
+function plasterSettings(site) {
+  return { ...PLASTER_DEFAULTS, ...(site.plaster_settings || {}) };
+}
+
+function calcPlaster(rooms, cfg) {
+  const t = { stdBoard: 0, moistBoard: 0, skim: 0, dab: 0, screwSheets: 0, pva: 0, tape: 0 };
+  const perRoom = rooms.map(r => {
+    const L = +r.length || 0, W = +r.width || 0, H = +r.height || 0;
+    const wallArea = 2 * (L + W) * H;
+    const tiled = Math.min((+r.tiled_len || 0) * (+r.tiled_h || 0), wallArea);
+    const plainWall = wallArea - tiled;
+    const ceil = L * W;
+    const ceilBoard = r.ceiling === 'board_skim' ? ceil : 0;
+    const ceilSkim = r.ceiling === 'board_skim' || r.ceiling === 'skim_only' ? ceil : 0;
+    const ceilPva = r.ceiling === 'skim_only' ? ceil : 0;
+    const std = plainWall + ceilBoard;
+    const wallBoard = plainWall + tiled;
+    const room = {
+      wallArea, tiled, plainWall, ceil,
+      std, moist: tiled, skim: plainWall + ceilSkim,
+      dab: r.wall_type === 'brick' ? wallBoard : 0,
+      screwArea: (r.wall_type === 'brick' ? 0 : wallBoard) + ceilBoard,
+      pva: ceilPva
+    };
+    t.stdBoard += room.std; t.moistBoard += room.moist; t.skim += room.skim;
+    t.dab += room.dab; t.screwSheets += room.screwArea / cfg.sheet_area; t.pva += room.pva;
+    t.tape += room.std + room.moist;
+    return room;
+  });
+  const k = 1 + (cfg.contingency || 0) / 100;
+  const items = [
+    ['Standard plasterboard 12.5mm (2.4 x 1.2m)', Math.ceil(t.stdBoard * k / cfg.sheet_area), 'sheets', `${t.stdBoard.toFixed(1)} m2`],
+    ['Moisture resistant board 12.5mm (2.4 x 1.2m)', Math.ceil(t.moistBoard * k / cfg.sheet_area), 'sheets', `${t.moistBoard.toFixed(1)} m2`],
+    ['Multi-finish plaster 25kg', Math.ceil(t.skim * k / cfg.skim_cover), 'bags', `${t.skim.toFixed(1)} m2 skimmed`],
+    ['Plasterboard screws (box of 1000)', Math.ceil(t.screwSheets * k * cfg.screws_per_sheet / 1000), 'boxes', `${Math.round(t.screwSheets * cfg.screws_per_sheet)} screws`],
+    ['Board adhesive / dab 25kg', Math.ceil(t.dab * k / cfg.dab_cover), 'bags', `${t.dab.toFixed(1)} m2 on brick`],
+    ['Bonding agent / PVA (5 litre)', Math.ceil(t.pva * k / cfg.pva_cover / 5), 'tubs', `${t.pva.toFixed(1)} m2 skim only`],
+    ['Jointing tape (90m roll)', Math.ceil(t.tape * k / 90), 'rolls', `${t.tape.toFixed(0)} m approx`]
+  ].filter(i => i[1] > 0);
+  return { perRoom, items };
+}
+
+function renderPlasterCalc(site) {
+  const host = document.getElementById('plasterCalcContainer');
+  if (!host) return;
+  if (!currentUser || !isManagementUser(currentUser)) { host.innerHTML = ''; return; }
+  const rooms = site.plaster_rooms || [];
+  const cfg = plasterSettings(site);
+  const { perRoom, items } = calcPlaster(rooms, cfg);
+  const wallLabel = { stud: 'Stud', brick: 'Brick' };
+  const ceilLabel = { board_skim: 'Board & skim', skim_only: 'Skim only', none: 'No ceiling work' };
+
+  const roomsHtml = rooms.length === 0
+    ? '<p style="color: var(--text-muted);">No rooms yet. Add a room using the sizes from the Existing / Proposed drawing.</p>'
+    : rooms.map((r, i) => `<div class="diary-agenda-item" data-room="${diaryEsc(r.id)}">
+        <strong>${diaryEsc(r.name)}</strong> - ${r.length} x ${r.width} x ${r.height}m high
+        <div style="font-size: 0.85rem; color: var(--text-muted);">${wallLabel[r.wall_type] || ''} walls · ${ceilLabel[r.ceiling] || ''} · tiled ${perRoom[i].tiled.toFixed(1)} m2 (moisture board only) · board & skim walls ${perRoom[i].plainWall.toFixed(1)} m2</div>
+      </div>`).join('');
+
+  const itemsHtml = items.length === 0 ? '' : `
+    <h4 style="margin: 16px 0 8px;">Materials to order (incl. ${cfg.contingency}% contingency)</h4>
+    <table class="planner-table" style="min-width: 0;"><tbody>${items.map(i =>
+      `<tr><td>${diaryEsc(i[0])}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(i[3])}</div></td><td style="white-space: nowrap;"><strong>${i[1]}</strong> ${i[2]}</td></tr>`).join('')}</tbody></table>
+    <button type="button" class="btn btn-outline btn-sm" id="btnCopyPlasterList" style="margin-top: 10px;">Copy list</button>`;
+
+  const rateInput = (key, label) => `<label style="font-size: 0.8rem; display: block;">${label}<input type="number" step="0.01" min="0" class="form-control plaster-setting" data-key="${key}" value="${cfg[key]}" style="min-height: 32px; padding: 4px 8px;"></label>`;
+
+  host.innerHTML = `<div class="site-card">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+      <h3>🧮 Plastering Materials Calculator</h3>
+      <button type="button" class="btn btn-primary btn-sm" id="btnAddPlasterRoom">+ Add Room</button>
+    </div>
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin: 6px 0 12px;">Green-line tiled walls get moisture board only. All other walls and the ceiling get board and skim. Openings are not deducted.</p>
+    ${roomsHtml}
+    ${itemsHtml}
+    <details style="margin-top: 14px;"><summary style="cursor: pointer; font-size: 0.9rem;">Rates and contingency</summary>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px;">
+        ${rateInput('contingency', 'Contingency %')}
+        ${rateInput('sheet_area', 'Board sheet m2')}
+        ${rateInput('skim_cover', 'Skim m2 per 25kg bag')}
+        ${rateInput('screws_per_sheet', 'Screws per sheet')}
+        ${rateInput('dab_cover', 'Dab m2 per bag')}
+        ${rateInput('pva_cover', 'Bonding m2 per litre')}
+      </div>
+    </details>
+  </div>`;
+
+  host.querySelector('#btnAddPlasterRoom').onclick = () => openPlasterRoomModal(site.id, null);
+  host.querySelectorAll('[data-room]').forEach(el => el.onclick = () => openPlasterRoomModal(site.id, el.dataset.room));
+  host.querySelectorAll('.plaster-setting').forEach(inp => inp.addEventListener('change', async () => {
+    const v = parseFloat(inp.value);
+    if (!(v >= 0)) return;
+    site.plaster_settings = { ...plasterSettings(site), [inp.dataset.key]: v };
+    if (db) await db.collection('sites').doc(String(site.id)).update({ plaster_settings: site.plaster_settings }).catch(console.warn);
+    saveLocalStorageData();
+    renderPlasterCalc(site);
+  }));
+  const copyBtn = host.querySelector('#btnCopyPlasterList');
+  if (copyBtn) copyBtn.onclick = () => {
+    const text = `Plastering materials - ${site.address} (incl. ${cfg.contingency}% contingency)\n` + items.map(i => `${i[1]} ${i[2]} - ${i[0]}`).join('\n');
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => showGreenToast('List copied')).catch(() => alert(text));
+    else alert(text);
+  };
+}
+
+let plasterRoomSiteId = null;
+
+function openPlasterRoomModal(siteId, roomId) {
+  plasterRoomSiteId = siteId;
+  const site = allSites.find(s => parseInt(s.id) === parseInt(siteId));
+  const r = roomId ? (site.plaster_rooms || []).find(x => x.id === roomId) : null;
+  document.getElementById('modalPlasterRoomTitle').textContent = r ? 'Edit Room' : 'Add Room';
+  document.getElementById('plRoomId').value = r ? r.id : '';
+  document.getElementById('plName').value = r ? r.name : '';
+  document.getElementById('plLength').value = r ? r.length : '';
+  document.getElementById('plWidth').value = r ? r.width : '';
+  document.getElementById('plHeight').value = r ? r.height : 2.4;
+  document.getElementById('plTiledLen').value = r ? r.tiled_len : 0;
+  document.getElementById('plTiledHeight').value = r ? r.tiled_h : 2.4;
+  document.getElementById('plWallType').value = r ? r.wall_type : 'stud';
+  document.getElementById('plCeiling').value = r ? r.ceiling : 'board_skim';
+  document.getElementById('btnDeletePlasterRoom').style.display = r ? '' : 'none';
+  openModal('modalPlasterRoom');
+}
+
+async function savePlasterRooms(site, rooms) {
+  site.plaster_rooms = rooms;
+  if (db) await db.collection('sites').doc(String(site.id)).update({ plaster_rooms: rooms }).catch(err => alert('Could not save: ' + err.message));
+  saveLocalStorageData();
+  renderPlasterCalc(site);
+}
+
+async function handleSavePlasterRoom(e) {
+  e.preventDefault();
+  const site = allSites.find(s => parseInt(s.id) === parseInt(plasterRoomSiteId));
+  if (!site) return;
+  const id = document.getElementById('plRoomId').value || 'room_' + Date.now();
+  const room = {
+    id,
+    name: document.getElementById('plName').value.trim(),
+    length: parseFloat(document.getElementById('plLength').value) || 0,
+    width: parseFloat(document.getElementById('plWidth').value) || 0,
+    height: parseFloat(document.getElementById('plHeight').value) || 0,
+    tiled_len: parseFloat(document.getElementById('plTiledLen').value) || 0,
+    tiled_h: parseFloat(document.getElementById('plTiledHeight').value) || 0,
+    wall_type: document.getElementById('plWallType').value,
+    ceiling: document.getElementById('plCeiling').value
+  };
+  const rooms = (site.plaster_rooms || []).filter(r => r.id !== id);
+  rooms.push(room);
+  closeModal('modalPlasterRoom');
+  await savePlasterRooms(site, rooms);
+}
+
+async function handleDeletePlasterRoom() {
+  const site = allSites.find(s => parseInt(s.id) === parseInt(plasterRoomSiteId));
+  const id = document.getElementById('plRoomId').value;
+  if (!site || !id || !confirm('Delete this room?')) return;
+  closeModal('modalPlasterRoom');
+  await savePlasterRooms(site, (site.plaster_rooms || []).filter(r => r.id !== id));
 }

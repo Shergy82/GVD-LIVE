@@ -305,6 +305,7 @@
             </div>
           </div>
           <div class="pdf-list" id="pdfListContainer"></div>
+          <div id="plasterCalcContainer" class="manager-admin-only" style="margin-top: 24px;"></div>
         </div>
 
         <!-- Tab 4: Admin-Only Customer QR & A4 Printout -->
@@ -678,6 +679,37 @@
     </div>
   </div>
 
+  <!-- Modal: Plastering calculator room -->
+  <div class="modal-overlay" id="modalPlasterRoom">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalPlasterRoomTitle">Add Room</h3>
+        <button class="close-btn" data-close="modalPlasterRoom">&times;</button>
+      </div>
+      <form id="plasterRoomForm">
+        <input type="hidden" id="plRoomId">
+        <div class="form-group"><label for="plName">Room name</label><input type="text" id="plName" class="form-control" required placeholder="e.g. Shower room"></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="plLength">Length (m)</label><input type="number" id="plLength" class="form-control" step="0.001" min="0" required></div>
+          <div class="form-group"><label for="plWidth">Width (m)</label><input type="number" id="plWidth" class="form-control" step="0.001" min="0" required></div>
+          <div class="form-group"><label for="plHeight">Ceiling height (m)</label><input type="number" id="plHeight" class="form-control" step="0.001" min="0" required value="2.4"></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="plTiledLen">Tiled (green) wall length (m)</label><input type="number" id="plTiledLen" class="form-control" step="0.001" min="0" value="0"></div>
+          <div class="form-group"><label for="plTiledHeight">Tiled height (m)</label><input type="number" id="plTiledHeight" class="form-control" step="0.001" min="0" value="2.4"></div>
+        </div>
+        <div class="form-group"><label for="plWallType">Walls are</label>
+          <select id="plWallType" class="form-control"><option value="stud">Stud (screw fixed)</option><option value="brick">Brick / block (dab fixed)</option></select></div>
+        <div class="form-group"><label for="plCeiling">Ceiling</label>
+          <select id="plCeiling" class="form-control"><option value="board_skim">Board and skim</option><option value="skim_only">Skim only</option><option value="none">No work</option></select></div>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button type="submit" class="btn btn-primary">Save Room</button>
+          <button type="button" class="btn btn-danger" id="btnDeletePlasterRoom" style="display: none;">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: Shift Detail View (Operative Click Handler - Triggers Seen Status Timestamp) -->
   <div class="modal-overlay" id="modalShiftDetail">
     <div class="modal-card">
@@ -747,6 +779,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=20.0"></script>
+  <script src="/app.js?v=21.0"></script>
 </body>
 </html>
