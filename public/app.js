@@ -2180,17 +2180,18 @@ function openPhotoLightbox(photo) {
   } else {
     pdfList.innerHTML = sitePdfs.map(pdf => {
       const canDelete = isManagementUser(currentUser) || String(pdf.uploader_id) === String(currentUser.id);
+      const isExcelFile = pdf.file_type === 'excel' || /\.(xlsx|xlsm|xls|csv)$/i.test(pdf.filename || '');
       return `
         <div class="pdf-item">
           <div class="pdf-info">
-            <span class="pdf-icon">📄</span>
+            <span class="pdf-icon">${isExcelFile ? '📊' : '📄'}</span>
             <div>
               <div class="pdf-name">${pdf.filename}</div>
               <div class="pdf-meta-details">Uploaded by ${pdf.uploader_name || 'Staff'} on ${formatUKDate(pdf.created_at)}</div>
             </div>
           </div>
           <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary btn-sm download-pdf-btn" data-pdf-id="${pdf.id}">View / Download PDF</button>
+            <button class="btn btn-secondary btn-sm download-pdf-btn" data-pdf-id="${pdf.id}">${isExcelFile ? 'Download Excel' : 'View / Download PDF'}</button>
             ${canDelete ? `<button class="btn btn-danger btn-sm delete-pdf-btn" data-pdf-id="${pdf.id}">Delete</button>` : ''}
           </div>
         </div>
@@ -2202,14 +2203,14 @@ function openPhotoLightbox(photo) {
         const pdfId = String(btn.dataset.pdfId);
         const pdf = allPdfs.find(p => String(p.id) === pdfId);
         if (pdf) {
-          forceDownloadFile(pdf.filename, pdf.data_url, 'application/pdf');
+          forceDownloadFile(pdf.filename, pdf.data_url, /\.pdf$/i.test(pdf.filename || '') ? 'application/pdf' : 'application/octet-stream');
         }
       });
     });
 
     pdfList.querySelectorAll('.delete-pdf-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (confirm('Delete this PDF document?')) {
+        if (confirm('Delete this file?')) {
           const pdfId = String(btn.dataset.pdfId);
           if (db) await db.collection('pdfs').doc(pdfId).delete();
           allPdfs = allPdfs.filter(pdf => String(pdf.id) !== pdfId);
@@ -3477,8 +3478,16 @@ function handlePdfUpload(e) {
   const file = e.target.files[0];
   if (!file || !activeSiteId) return;
 
-  if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
-    alert('Only PDF documents are accepted.');
+  const lowerName = file.name.toLowerCase();
+  const isPdf = lowerName.endsWith('.pdf') || file.type === 'application/pdf';
+  const isExcel = /\.(xlsx|xlsm|xls|csv)$/.test(lowerName);
+  if (!isPdf && !isExcel) {
+    alert('Only PDF or Excel (.xlsx, .xls, .csv) files are accepted.');
+    return;
+  }
+  if (file.size > 700 * 1024) {
+    alert(`This file is ${(file.size / 1024 / 1024).toFixed(1)}MB. Files must be under about 0.7MB to be stored. Please save a smaller copy (for Excel, remove unused sheets or images).`);
+    e.target.value = '';
     return;
   }
 
@@ -3492,14 +3501,23 @@ function handlePdfUpload(e) {
       uploader_name: currentUser.full_name,
       filename: file.name,
       data_url: evt.target.result,
+      file_type: isPdf ? 'pdf' : 'excel',
       created_at: new Date().toISOString()
     };
 
-    if (db) await db.collection('pdfs').doc(nextPdfId).set(newPdf);
+    if (db) {
+      try {
+        await db.collection('pdfs').doc(nextPdfId).set(newPdf);
+      } catch (err) {
+        alert('Could not save the file: ' + err.message);
+        e.target.value = '';
+        return;
+      }
+    }
     allPdfs.push(newPdf);
     saveLocalStorageData();
     e.target.value = '';
-    showGreenToast('📄 PDF document uploaded successfully!');
+    showGreenToast(isPdf ? '📄 PDF document uploaded successfully!' : '📊 Excel file uploaded successfully!');
     loadProjectPage(activeSiteId);
   };
   reader.readAsDataURL(file);
