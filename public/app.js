@@ -424,6 +424,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 function onUserAuthenticated() {
   if (!currentUser) return;
 
+  if (currentUser.must_change_password) {
+    document.getElementById('appHeader').style.display = 'none';
+    showView('view-reset-password');
+    return;
+  }
+
   localStorage.setItem('gvd_current_user_id', currentUser.id);
   document.getElementById('appHeader').style.display = 'flex';
   document.getElementById('userNameText').textContent = currentUser.full_name;
@@ -583,6 +589,18 @@ function getWeekDays(weekOffset = 0) {
     days.push(d);
   }
   return days;
+}
+
+const USER_COLOR_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16', '#06b6d4', '#a855f7', '#eab308'];
+
+// Colour chosen by an admin, otherwise a stable automatic one so everyone is distinguishable
+function userColor(userOrId) {
+  const u = typeof userOrId === 'object' && userOrId ? userOrId : allUsers.find(x => String(x.id) === String(userOrId));
+  if (u && /^#[0-9a-fA-F]{6}$/.test(u.color || '')) return u.color;
+  const key = String(u ? u.id : userOrId || '');
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return USER_COLOR_PALETTE[h % USER_COLOR_PALETTE.length];
 }
 
 const SITE_INFO_FIELDS = [
@@ -1296,7 +1314,7 @@ function renderPlannerView() {
   const activeStaff = getAssignableOperatives();
 
   dock.innerHTML = activeStaff.map(op => `
-    <div class="op-chip" draggable="true" data-op-id="${op.id}" data-op-name="${op.full_name}">
+    <div class="op-chip" draggable="true" data-op-id="${op.id}" data-op-name="${op.full_name}" style="border-left: 6px solid ${userColor(op)};">
       👤 ${op.full_name} (${op.role})
     </div>
   `).join('');
@@ -1351,7 +1369,7 @@ function renderPlannerView() {
 
         const periodBadge = formatShiftPeriodBadge(s.shift_period);
         return `
-          <div class="shift-card" draggable="true" data-shift-id="${s.id}">
+          <div class="shift-card" draggable="true" data-shift-id="${s.id}" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
             <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
               <span>👤 ${opName}</span>
               ${periodBadge}
@@ -1513,7 +1531,7 @@ function renderMobilePlannerView(weekDays) {
               const seenText = s.seen_at ? `Seen — ${formatUKDateTime(s.seen_at)}` : 'Not seen';
               const periodBadge = formatShiftPeriodBadge(s.shift_period);
               return `
-                <div class="shift-card" style="margin-top: 8px;">
+                <div class="shift-card" style="margin-top: 8px; border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
                   <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
                     <span>👤 ${op ? op.full_name : 'Operative'}</span>
                     ${periodBadge}
@@ -2289,7 +2307,7 @@ function renderAdminSettingsView() {
     const list = allUsers.filter(test).sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
     if (list.length === 0) return '';
     return `<div class="user-group-title">${title} (${list.length})</div><div class="user-chip-row">${list.map(u =>
-      `<button type="button" class="user-chip${u.status === 'Pending' ? ' pending' : ''}${u.status === 'Restricted' ? ' restricted' : ''}" data-user-id="${diaryEsc(u.id)}">👤 ${diaryEsc(u.full_name)}</button>`).join('')}</div>`;
+      `<button type="button" class="user-chip${u.status === 'Pending' ? ' pending' : ''}${u.status === 'Restricted' ? ' restricted' : ''}" data-user-id="${diaryEsc(u.id)}"><span style="width: 14px; height: 14px; border-radius: 50%; background: ${userColor(u)}; display: inline-block;"></span> ${diaryEsc(u.full_name)}${!hasUsedApp(u) && u.status === 'Active' ? ' <small style="color: var(--warning);">· not logged in yet</small>' : ''}</button>`).join('')}</div>`;
   }).join('');
   chipsEl.querySelectorAll('.user-chip').forEach(chip => {
     chip.addEventListener('click', () => openUserModal(chip.dataset.userId));
@@ -2602,8 +2620,12 @@ function setupEventListeners() {
   });
 
   setupDiaryListeners();
+  const resetFormEl = document.getElementById('resetForm');
+  if (resetFormEl) resetFormEl.addEventListener('submit', handleSetNewPassword);
   document.getElementById('plasterRoomForm').addEventListener('submit', handleSavePlasterRoom);
   document.getElementById('btnDeletePlasterRoom').addEventListener('click', handleDeletePlasterRoom);
+  document.getElementById('btnEmailLogin').addEventListener('click', () => userModalShareLogin('email'));
+  document.getElementById('btnCopyLogin').addEventListener('click', () => userModalShareLogin('copy'));
   document.getElementById('btnSaveUser').addEventListener('click', handleSaveUserModal);
   document.getElementById('btnRemoveUser').addEventListener('click', handleRemoveUserModal);
 }
@@ -2734,6 +2756,31 @@ async function handleLogin(e) {
   }
 
   currentUser = user;
+  user.last_login_at = new Date().toISOString();
+  if (db) db.collection('users').doc(String(user.id)).update({ last_login_at: user.last_login_at }).catch(console.warn);
+  onUserAuthenticated();
+}
+
+async function handleSetNewPassword(e) {
+  e.preventDefault();
+  const alertEl = document.getElementById('resetAlert');
+  alertEl.style.display = 'none';
+  const pw = document.getElementById('resetNewPassword').value;
+  const pw2 = document.getElementById('resetConfirmPassword').value;
+  const problem = pw.length < 6 ? 'Password must be at least 6 characters.'
+    : pw !== pw2 ? 'The two passwords do not match.'
+    : hashSimple(pw) === currentUser.password_hash ? 'Please choose a different password to your temporary one.' : '';
+  if (problem) {
+    alertEl.textContent = problem;
+    alertEl.style.display = 'block';
+    return;
+  }
+  const updates = { password_hash: hashSimple(pw), must_change_password: false };
+  Object.assign(currentUser, updates);
+  if (db) await db.collection('users').doc(String(currentUser.id)).update(updates).catch(err => alert('Could not save: ' + err.message));
+  saveLocalStorageData();
+  document.getElementById('resetNewPassword').value = '';
+  document.getElementById('resetConfirmPassword').value = '';
   onUserAuthenticated();
 }
 
@@ -3594,6 +3641,16 @@ function openUserModal(userId) {
   document.getElementById('userModalRole').value = user.role || 'Operative';
   document.getElementById('userModalStatus').value = user.status || 'Pending';
   document.getElementById('btnRemoveUser').disabled = String(user.id) === String(currentUser.id);
+  document.getElementById('userModalColor').value = userColor(user);
+
+  // Login sharing is only offered for people who have never used the app
+  const loginBox = document.getElementById('userModalLoginBox');
+  const neverUsed = !hasUsedApp(user);
+  loginBox.style.display = neverUsed ? '' : 'none';
+  document.getElementById('userModalTempPw').value = String(user.full_name || '').trim();
+  document.getElementById('userModalLoginState').textContent = user.must_change_password
+    ? 'Temporary login is set. They will be asked to choose a new password when they first log in.'
+    : 'Not set up yet.';
   openModal('modalUser');
 }
 
@@ -3603,7 +3660,8 @@ async function handleSaveUserModal() {
   const updates = {
     job_title: document.getElementById('userModalJob').value.trim(),
     role: document.getElementById('userModalRole').value,
-    status: document.getElementById('userModalStatus').value
+    status: document.getElementById('userModalStatus').value,
+    color: document.getElementById('userModalColor').value
   };
   Object.assign(user, updates);
   if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
@@ -3799,4 +3857,45 @@ async function handleDeletePlasterRoom() {
   if (!site || !id || !confirm('Delete this room?')) return;
   closeModal('modalPlasterRoom');
   await savePlasterRooms(site, (site.plaster_rooms || []).filter(r => r.id !== id));
+}
+
+
+// -------------------------------------------------------------------
+// LOGIN SHARING for people who have never used the app
+// -------------------------------------------------------------------
+function hasUsedApp(user) {
+  if (user.last_login_at) return true;
+  return allShifts.some(sh => String(sh.operative_id) === String(user.id) && sh.seen_at);
+}
+
+function buildLoginMessage(user, tempPw) {
+  const first = String(user.full_name || '').split(' ')[0];
+  return `Hi ${first},\n\nYour GVD LIVE login:\nWebsite: ${window.location.origin}\nEmail: ${user.email}\nTemporary password: ${tempPw}\n\nThe first time you log in you will be asked to choose your own password.`;
+}
+
+async function applyTempLogin(user, tempPw) {
+  if (user.must_change_password && user.password_hash === hashSimple(tempPw)) return;
+  const updates = { password_hash: hashSimple(tempPw), must_change_password: true };
+  Object.assign(user, updates);
+  if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
+  saveLocalStorageData();
+}
+
+async function userModalShareLogin(mode) {
+  const user = allUsers.find(u => String(u.id) === document.getElementById('userModalId').value);
+  if (!user) return;
+  const tempPw = document.getElementById('userModalTempPw').value.trim();
+  if (tempPw.length < 3) { alert('Enter a temporary password (at least 3 characters).'); return; }
+  if (hasUsedApp(user)) { alert('This person has already used the app, so their password was not changed.'); return; }
+  if (!user.must_change_password && !confirm(`This will set ${user.full_name}'s password to "${tempPw}" and make them choose a new one at first login. Continue?`)) return;
+  await applyTempLogin(user, tempPw);
+  document.getElementById('userModalLoginState').textContent = 'Temporary login is set. They will be asked to choose a new password when they first log in.';
+  const msg = buildLoginMessage(user, tempPw);
+  if (mode === 'email') {
+    window.location.href = `mailto:${encodeURIComponent(user.email)}?subject=${encodeURIComponent('Your GVD LIVE login')}&body=${encodeURIComponent(msg)}`;
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(msg).then(() => showGreenToast('Login details copied')).catch(() => prompt('Copy these login details:', msg));
+  } else {
+    prompt('Copy these login details:', msg);
+  }
 }

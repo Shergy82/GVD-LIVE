@@ -1152,7 +1152,7 @@ body {
 /* Compact user chips */
 .user-group-title { margin: 14px 0 8px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 .user-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
-.user-chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--bg-surface-hover); border: 1px solid var(--border-color); border-radius: 999px; color: var(--text-main); font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+.user-chip { display: inline-flex; align-items: center; gap: 10px; padding: 14px 20px; min-height: 52px; font-size: 1.05rem; background: var(--bg-surface-hover); border: 1px solid var(--border-color); border-radius: 999px; color: var(--text-main); font-weight: 600; cursor: pointer; }
 .user-chip:hover { border-color: var(--primary); }
 .user-chip.pending { border-color: var(--warning); }
 .user-chip.restricted { opacity: 0.6; }

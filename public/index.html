@@ -145,8 +145,8 @@
     <!-- Reset Password Form (with token) -->
     <div id="view-reset-password" class="auth-wrapper" style="display: none;">
       <div class="auth-header">
-        <h2>Set New Password</h2>
-        <p>Enter your new password below</p>
+        <h2>Choose Your Password</h2>
+        <p>Please choose a new password to continue</p>
       </div>
       <div id="resetAlert" class="alert-box alert-error" style="display: none;"></div>
       <form id="resetForm">
@@ -154,6 +154,10 @@
         <div class="form-group">
           <label for="resetNewPassword">New Password</label>
           <input type="password" id="resetNewPassword" class="form-control" required placeholder="New password">
+        </div>
+        <div class="form-group">
+          <label for="resetConfirmPassword">Confirm New Password</label>
+          <input type="password" id="resetConfirmPassword" class="form-control" required placeholder="Type it again">
         </div>
         <button type="submit" class="btn btn-primary">Update Password</button>
       </form>
@@ -672,6 +676,21 @@
           <option value="Restricted">Restricted</option>
         </select>
       </div>
+      <div class="form-group">
+        <label for="userModalColor">Planner colour</label>
+        <input type="color" id="userModalColor" style="width: 64px; height: 40px; padding: 0; border: none; background: none; cursor: pointer;">
+      </div>
+      <div id="userModalLoginBox" style="display: none; margin-top: 8px; padding: 12px; border: 1px dashed var(--warning); border-radius: var(--radius-sm);">
+        <strong style="font-size: 0.9rem;">🔑 Share login details</strong>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin: 4px 0 8px;">For people who have not logged in yet. They log in with their email and this temporary password, then choose their own.</p>
+        <label for="userModalTempPw" style="font-size: 0.8rem;">Temporary password</label>
+        <input type="text" id="userModalTempPw" class="form-control" autocomplete="off">
+        <p id="userModalLoginState" style="font-size: 0.8rem; color: var(--text-muted); margin: 6px 0;"></p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-outline btn-sm" id="btnEmailLogin">✉️ Email login details</button>
+          <button type="button" class="btn btn-outline btn-sm" id="btnCopyLogin">📋 Copy login details</button>
+        </div>
+      </div>
       <div style="display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap;">
         <button type="button" class="btn btn-primary" id="btnSaveUser">Save</button>
         <button type="button" class="btn btn-danger" id="btnRemoveUser">Remove User</button>
@@ -779,6 +798,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=21.0"></script>
+  <script src="/app.js?v=22.0"></script>
 </body>
 </html>
