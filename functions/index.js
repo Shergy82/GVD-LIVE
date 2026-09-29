@@ -75,6 +75,13 @@ exports.onNotificationCreated = onDocumentCreated({ document: 'notifications/{no
   }
 });
 
+function fmtWindow(t) {
+  const m = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(t || '');
+  if (!m) return t;
+  const h = n => { const x = parseInt(n, 10); return (x % 12 || 12) + (x >= 12 ? 'pm' : 'am'); };
+  return `${h(m[1])} and ${h(m[3])}`;
+}
+
 // 7am (UK time) diary reminders: one notification per assignee, which onNotificationCreated then pushes.
 exports.sendDiaryReminders = onSchedule({ schedule: '0 7 * * *', timeZone: 'Europe/London' }, async () => {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(new Date());
@@ -87,7 +94,7 @@ exports.sendDiaryReminders = onSchedule({ schedule: '0 7 * * *', timeZone: 'Euro
       writes.push(db.collection('notifications').add({
         target_user_id: String(uid),
         title: '⏰ Today: ' + (e.title || 'Diary entry'),
-        body: `${e.time ? 'At ' + e.time : 'Today'}${e.notes ? '\n' + e.notes : ''}`,
+        body: `${e.time ? 'Between ' + fmtWindow(e.time) : 'Today'}${e.notes ? '\n' + e.notes : ''}`,
         created_at: new Date().toISOString()
       }));
     });

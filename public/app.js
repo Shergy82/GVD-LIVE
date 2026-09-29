@@ -3393,6 +3393,21 @@ function diaryEsc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function diaryWindowLabel(t) {
+  const m = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(t || '');
+  if (!m) return t || '';
+  const h = n => { const x = parseInt(n, 10); return (x % 12 || 12) + (x >= 12 ? 'pm' : 'am'); };
+  return `${h(m[1])}-${h(m[3])}`;
+}
+
+function diaryAssigneeNames(entry, firstNameOnly) {
+  return (entry.assignee_ids || []).map(id => {
+    const u = allUsers.find(x => String(x.id) === String(id));
+    if (!u) return 'Unknown';
+    return firstNameOnly ? String(u.full_name || '').split(' ')[0] : u.full_name;
+  }).join(', ');
+}
+
 function diaryDateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -3430,7 +3445,7 @@ function renderDiaryView() {
     const d = new Date(year, month, 1 - startOffset + i);
     const key = diaryDateKey(d);
     const chips = (byDate[key] || []).map(e =>
-      `<span class="diary-chip" data-entry="${diaryEsc(e.id)}">${diaryEsc(e.time ? e.time + ' ' : '')}${diaryEsc(e.title)}</span>`).join('');
+      `<span class="diary-chip" data-entry="${diaryEsc(e.id)}"><strong>${diaryEsc(diaryAssigneeNames(e, true) || 'Unassigned')}</strong> ${diaryEsc(diaryWindowLabel(e.time))} ${diaryEsc(e.title)}</span>`).join('');
     html += `<div class="diary-cell${d.getMonth() !== month ? ' other-month' : ''}${key === todayKey ? ' today' : ''}" data-date="${key}"><div class="diary-daynum">${d.getDate()}</div>${chips}</div>`;
   }
   const grid = document.getElementById('diaryGrid');
@@ -3453,13 +3468,11 @@ function renderDiaryView() {
   }
   agenda.innerHTML = monthEntries.map(e => {
     const site = allSites.find(s => String(s.id) === String(e.site_id));
-    const names = (e.assignee_ids || []).map(id => {
-      const u = allUsers.find(x => String(x.id) === String(id));
-      return u ? u.full_name : 'Unknown';
-    }).join(', ');
+    const names = diaryAssigneeNames(e, false);
     return `<div class="diary-agenda-item" data-entry="${diaryEsc(e.id)}">
-      <strong>${diaryEsc(formatUKDate(e.date))}${e.time ? ' ' + diaryEsc(e.time) : ''} - ${diaryEsc(e.title)}</strong>
-      <div style="font-size: 0.85rem; color: var(--text-muted);">${site ? '🏗️ ' + diaryEsc(site.address) + ' · ' : ''}${names ? '👤 ' + diaryEsc(names) : 'No one notified'}${e.reminder_7am ? ' · ⏰ 7am reminder' : ''}</div>
+      <strong>${diaryEsc(formatUKDate(e.date))}${e.time ? ' · ' + diaryEsc(diaryWindowLabel(e.time)) : ''} - ${diaryEsc(e.title)}</strong>
+      <div style="font-size: 0.9rem; margin-top: 2px;">👤 <strong>${names ? diaryEsc(names) : 'No one assigned'}</strong></div>
+      <div style="font-size: 0.85rem; color: var(--text-muted);">${site ? '🏗️ ' + diaryEsc(site.address) : ''}${site && e.reminder_7am ? ' · ' : ''}${e.reminder_7am ? '⏰ 7am reminder' : ''}</div>
       ${e.notes ? `<div style="font-size: 0.85rem; margin-top: 4px;">${diaryEsc(e.notes)}</div>` : ''}
     </div>`;
   }).join('');
@@ -3474,7 +3487,14 @@ function openDiaryModal(entryId, presetDate = null) {
   document.getElementById('diaryIdInput').value = entry ? entry.id : '';
   document.getElementById('diaryTitleInput').value = entry ? entry.title : '';
   document.getElementById('diaryDateInput').value = entry ? entry.date : (presetDate || diaryDateKey(new Date()));
-  document.getElementById('diaryTimeInput').value = entry ? (entry.time || '') : '';
+  const timeSel = document.getElementById('diaryTimeInput');
+  Array.from(timeSel.options).filter(o => o.dataset.legacy).forEach(o => o.remove());
+  if (entry && entry.time && !Array.from(timeSel.options).some(o => o.value === entry.time)) {
+    const legacy = document.createElement('option');
+    legacy.value = entry.time; legacy.textContent = entry.time; legacy.dataset.legacy = '1';
+    timeSel.appendChild(legacy);
+  }
+  timeSel.value = entry ? (entry.time || '') : '';
   document.getElementById('diaryNotesInput').value = entry ? (entry.notes || '') : '';
   document.getElementById('diaryReminderChk').checked = entry ? entry.reminder_7am !== false : true;
 
@@ -3486,7 +3506,7 @@ function openDiaryModal(entryId, presetDate = null) {
 
   const selected = new Set((entry ? entry.assignee_ids || [] : []).map(String));
   document.getElementById('diaryAssigneeList').innerHTML = allUsers
-    .filter(u => u.status === 'Active')
+    .filter(u => u.status === 'Active' && (isManagementUser(u) || selected.has(String(u.id))))
     .map(u => `<label style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer;">
       <input type="checkbox" class="diary-assignee" value="${diaryEsc(u.id)}"${selected.has(String(u.id)) ? ' checked' : ''}> ${diaryEsc(u.full_name)} <span style="color: var(--text-muted);">(${diaryEsc(u.role)})</span></label>`).join('');
 
@@ -3527,7 +3547,7 @@ async function handleSaveDiary(e) {
   const already = new Set(previous ? (previous.assignee_ids || []).map(String) : []);
   const toNotify = assignee_ids.filter(uid => changed || !already.has(uid));
   const site = allSites.find(s => String(s.id) === String(entry.site_id));
-  const body = `${formatUKDate(entry.date)}${entry.time ? ' at ' + entry.time : ''}${site ? '\nSite: ' + site.address : ''}${entry.notes ? '\n' + entry.notes : ''}`;
+  const body = `${formatUKDate(entry.date)}${entry.time ? ' (' + diaryWindowLabel(entry.time) + ')' : ''}${site ? '\nSite: ' + site.address : ''}${entry.notes ? '\n' + entry.notes : ''}`;
   await Promise.all(toNotify.map(uid => db.collection('notifications').add({
     target_user_id: uid,
     title: (previous ? '📖 Diary updated: ' : '📖 Diary: ') + entry.title,
