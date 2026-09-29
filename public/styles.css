@@ -1171,11 +1171,10 @@ body {
     flex: 0 0 auto;
     margin-bottom: 10px;
     padding: 8px 12px;
-    max-height: 112px;
-    overflow-y: auto;
   }
   #view-planner .op-dock h4 { margin-bottom: 6px; font-size: 0.75rem; }
-  #view-planner .op-chip { padding: 4px 12px; font-size: 0.8rem; }
+  #view-planner .op-chips { gap: 6px; }
+  #view-planner .op-chip { padding: 3px 10px; font-size: 0.8rem; }
   #view-planner .planner-container {
     flex: 1 1 auto;
     min-height: 0;

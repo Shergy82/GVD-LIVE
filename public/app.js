@@ -1315,7 +1315,7 @@ function renderPlannerView() {
 
   dock.innerHTML = activeStaff.map(op => `
     <div class="op-chip" draggable="true" data-op-id="${op.id}" data-op-name="${op.full_name}" style="border-left: 6px solid ${userColor(op)};">
-      👤 ${op.full_name} (${op.role})
+      👤 ${op.full_name}${op.role && op.role !== 'Operative' ? ` (${op.role})` : ''}
     </div>
   `).join('');
 
