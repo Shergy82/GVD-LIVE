@@ -1156,3 +1156,35 @@ body {
 .user-chip:hover { border-color: var(--primary); }
 .user-chip.pending { border-color: var(--warning); }
 .user-chip.restricted { opacity: 0.6; }
+
+/* Planner (desktop): title, controls, operatives and date headings stay put; only the site rows scroll */
+@media screen and (min-width: 769px) {
+  #view-planner {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 132px);
+    height: calc(100dvh - 132px);
+  }
+  #view-planner[style*="display: none"] { display: none !important; }
+  #view-planner .section-header { flex: 0 0 auto; margin-bottom: 10px; }
+  #view-planner .op-dock {
+    flex: 0 0 auto;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    max-height: 112px;
+    overflow-y: auto;
+  }
+  #view-planner .op-dock h4 { margin-bottom: 6px; font-size: 0.75rem; }
+  #view-planner .op-chip { padding: 4px 12px; font-size: 0.8rem; }
+  #view-planner .planner-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+  }
+  #view-planner .planner-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    box-shadow: 0 1px 0 var(--border-color), 0 2px 4px rgba(0, 0, 0, 0.4);
+  }
+}
