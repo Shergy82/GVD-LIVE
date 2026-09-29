@@ -460,7 +460,7 @@ function onUserAuthenticated() {
   updatePendingUsersBadge();
   registerDevicePushSubscription(false);
   updateCleanPushUI();
-  if (isOwnerOrAdmin) startDiarySync();
+  if (isManagerOrHigher) startDiarySync();
 
   if (isManagerOrHigher) {
     showView('view-planner');
@@ -3381,7 +3381,7 @@ function closeModal(id) {
 
 
 // -------------------------------------------------------------------
-// DIARY (Owner / Admin only). Entries live in Firestore `diary`.
+// DIARY (Owner / Admin / Manager, not operatives). Entries live in Firestore `diary`.
 // Assignees are notified on save via the `notifications` collection; a scheduled
 // Cloud Function (functions/index.js) sends the 7am reminder on the day.
 // -------------------------------------------------------------------
@@ -3398,7 +3398,7 @@ function diaryDateKey(d) {
 }
 
 function startDiarySync() {
-  if (diaryUnsub || !db || !currentUser || !isOwnerOrAdminUser(currentUser)) return;
+  if (diaryUnsub || !db || !currentUser || !isManagementUser(currentUser)) return;
   diaryUnsub = db.collection('diary').onSnapshot(snapshot => {
     allDiary = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     const el = document.getElementById('view-diary');
@@ -3413,7 +3413,7 @@ function stopDiarySync() {
 }
 
 function renderDiaryView() {
-  if (!currentUser || !isOwnerOrAdminUser(currentUser)) return;
+  if (!currentUser || !isManagementUser(currentUser)) return;
   const year = diaryMonth.getFullYear();
   const month = diaryMonth.getMonth();
   document.getElementById('diaryMonthLabel').textContent = diaryMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
@@ -3496,7 +3496,7 @@ function openDiaryModal(entryId, presetDate = null) {
 
 async function handleSaveDiary(e) {
   e.preventDefault();
-  if (!db || !currentUser || !isOwnerOrAdminUser(currentUser)) return;
+  if (!db || !currentUser || !isManagementUser(currentUser)) return;
 
   const existingId = document.getElementById('diaryIdInput').value;
   const previous = existingId ? allDiary.find(x => x.id === existingId) : null;
