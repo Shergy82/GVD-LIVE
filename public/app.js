@@ -4765,23 +4765,25 @@ function computeSiteFinance(site) {
   const extrasList = financeCosts.filter(c => String(c.site_id) === sid);
   const extras = extrasList.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
 
+  // Only shifts up to and including today count. Future (planned) shifts are shown separately and not costed.
   const todayKey = diaryDateKey(new Date());
   const byOp = {};
-  let labour = 0, labourToDate = 0;
+  let labour = 0, labourPlanned = 0;
   const noRate = new Set();
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
     const frac = sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1;
     const rate = financeRates[String(sh.operative_id)];
     const priceWork = financePay[String(sh.operative_id)] === 'price';
+    const isFuture = (sh.shift_date || '') > todayKey;
+    const cost = priceWork ? 0 : (rate || 0) * frac;
+    if (isFuture) { labourPlanned += cost; return; }
     const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
     const name = u ? u.full_name : 'Unknown';
     if (rate == null && !priceWork) noRate.add(name);
-    const cost = priceWork ? 0 : (rate || 0) * frac;
     const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0, priceWork };
     row.days += frac;
     row.cost += cost;
     labour += cost;
-    if ((sh.shift_date || '') <= todayKey) labourToDate += cost;
   });
 
   const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
@@ -4800,7 +4802,7 @@ function computeSiteFinance(site) {
     const u = allUsers.find(x => String(x.id) === String(id));
     return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
   });
-  return { contractors, value, invoiced, onOrder, labour, labourToDate, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
+  return { contractors, value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -4848,7 +4850,7 @@ function renderSiteFinance(site) {
       <table class="planner-table" style="min-width: 0;"><tbody>
         ${row('Materials invoiced', money(f.invoiced), 'From imported invoices (ex VAT)')}
         ${row('Materials on order', money(f.onOrder), 'POs raised but not yet invoiced (estimates)')}
-        ${row('Labour', money(f.labour), `${money(f.labourToDate)} worked to date, ${money(f.labour - f.labourToDate)} still to come`)}
+        ${row('Labour', money(f.labour), f.labourPlanned > 0 ? `Shifts up to today only. ${money(f.labourPlanned)} of future shifts not counted yet` : 'Shifts up to and including today')}
         ${row('Extra costs', money(f.extras))}
         ${row('<strong>Total cost</strong>', '<strong>' + money(f.totalCost) + '</strong>')}
       </tbody></table>
