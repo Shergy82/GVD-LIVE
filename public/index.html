@@ -735,6 +735,42 @@
     </div>
   </div>
 
+  <!-- Modal: Import supplier invoice -->
+  <div class="modal-overlay" id="modalInvoice">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Import Invoice</h3>
+        <button class="close-btn" data-close="modalInvoice">&times;</button>
+      </div>
+      <div id="invStepPick">
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;">Choose the merchant's invoice (PDF). The app reads it, finds the PO / job and the price excluding VAT, and you confirm.</p>
+        <input type="file" id="invFileInput" accept="application/pdf,.pdf" class="form-control">
+        <p id="invReading" style="display: none; margin-top: 12px;">⏳ Reading invoice...</p>
+      </div>
+      <form id="invForm" style="display: none;">
+        <div id="invFoundNote" style="font-size: 0.85rem; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-primary); border: 1px solid var(--border-color); margin-bottom: 12px;"></div>
+        <div class="form-group">
+          <label for="invSiteSelect">Job / site</label>
+          <select id="invSiteSelect" class="form-control" required></select>
+        </div>
+        <div class="form-group">
+          <label for="invPoSelect">Purchase order</label>
+          <select id="invPoSelect" class="form-control"></select>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="invMerchant">Merchant</label><input type="text" id="invMerchant" class="form-control"></div>
+          <div class="form-group"><label for="invNo">Invoice no.</label><input type="text" id="invNo" class="form-control"></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="invNet">Net £ (ex VAT)</label><input type="number" id="invNet" class="form-control" step="0.01" min="0" required></div>
+          <div class="form-group"><label for="invVat">VAT £</label><input type="number" id="invVat" class="form-control" step="0.01" min="0"></div>
+          <div class="form-group"><label for="invGross">Total £</label><input type="number" id="invGross" class="form-control" step="0.01" min="0"></div>
+        </div>
+        <button type="submit" class="btn btn-primary" id="btnConfirmInvoice" style="width: 100%;">Attach invoice &amp; set job cost</button>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: Request Purchase Order -->
   <div class="modal-overlay" id="modalPO">
     <div class="modal-card">
@@ -840,6 +876,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=26.0"></script>
+  <script src="/app.js?v=27.0"></script>
 </body>
 </html>

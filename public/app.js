@@ -2206,7 +2206,7 @@ function openPhotoLightbox(photo) {
             <span class="pdf-icon">${isExcelFile ? '📊' : '📄'}</span>
             <div>
               <div class="pdf-name">${pdf.filename}</div>
-              <div class="pdf-meta-details">Uploaded by ${pdf.uploader_name || 'Staff'} on ${formatUKDate(pdf.created_at)}</div>
+              <div class="pdf-meta-details">Uploaded by ${pdf.uploader_name || 'Staff'} on ${formatUKDate(pdf.created_at)}${pdf.invoice_net != null && isManagementUser(currentUser) ? ` · Invoice ${diaryEsc(pdf.po_number || '')} ${diaryEsc(formatPounds(pdf.invoice_net))} ex VAT` : ''}</div>
             </div>
           </div>
           <div style="display: flex; gap: 8px;">
@@ -2786,6 +2786,9 @@ function setupEventListeners() {
 
   setupDiaryListeners();
   document.getElementById('poForm').addEventListener('submit', handleRequestPO);
+  document.getElementById('invFileInput').addEventListener('change', handleInvoiceFilePicked);
+  document.getElementById('invForm').addEventListener('submit', handleConfirmInvoice);
+  document.getElementById('invSiteSelect').addEventListener('change', refreshInvoicePoOptions);
   document.getElementById('btnCopyPO').addEventListener('click', copyPONumber);
   const resetFormEl = document.getElementById('resetForm');
   if (resetFormEl) resetFormEl.addEventListener('submit', handleSetNewPassword);
@@ -4201,6 +4204,7 @@ function renderPOTab(site) {
           <div style="margin-top: 2px;"><strong>${diaryEsc(po.merchant)}</strong>${po.est_value != null ? ' · est. ' + diaryEsc(formatPounds(po.est_value)) : ''}</div>
           <div style="font-size: 0.9rem; margin-top: 2px;">${diaryEsc(po.description)}</div>
           <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">Requested by ${diaryEsc(po.requested_by_name || 'Unknown')}</div>
+          ${po.invoice_no ? `<div style="font-size: 0.8rem; margin-top: 2px;">🧾 Invoice ${diaryEsc(po.invoice_no)}${po.invoice_value != null ? ' · ' + diaryEsc(formatPounds(po.invoice_value)) + ' ex VAT' : ''}${po.invoice_gross != null ? ' (' + diaryEsc(formatPounds(po.invoice_gross)) + ' inc VAT)' : ''}</div>` : ''}
           ${mgrControls}
         </div>`;
       }).join('');
@@ -4208,12 +4212,17 @@ function renderPOTab(site) {
   host.innerHTML = `
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
       <p style="color: var(--text-muted);">${isMgr ? 'All purchase orders raised for this site' : 'Your purchase orders for this site'}</p>
-      <button type="button" class="btn btn-primary btn-sm" id="btnNewPO">🧾 Request PO number</button>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        ${isMgr ? '<button type="button" class="btn btn-outline btn-sm" id="btnImportInvoice">📥 Import invoice</button>' : ''}
+        <button type="button" class="btn btn-primary btn-sm" id="btnNewPO">🧾 Request PO number</button>
+      </div>
     </div>
     ${totalsHtml}
     ${itemsHtml}`;
 
   host.querySelector('#btnNewPO').onclick = () => openPOModal(parseInt(site.id));
+  const importBtn = host.querySelector('#btnImportInvoice');
+  if (importBtn) importBtn.onclick = () => openInvoiceModal(parseInt(site.id));
   host.querySelectorAll('.po-status').forEach(sel => sel.addEventListener('change', () => updatePO(sel.dataset.po, { status: sel.value })));
   host.querySelectorAll('.po-invoice').forEach(inp => inp.addEventListener('change', () => {
     const v = parseFloat(inp.value);
@@ -4294,4 +4303,237 @@ function copyPONumber() {
   } else {
     prompt('Copy this PO number:', lastPONumber);
   }
+}
+
+
+// -------------------------------------------------------------------
+// INVOICE IMPORT (Owner / Admin / Manager). Reads a text PDF in the browser (pdf.js, free),
+// finds the PO reference or delivery address, and the price excluding VAT, then the person confirms.
+// -------------------------------------------------------------------
+let pendingInvoice = null;
+let pdfJsPromise = null;
+
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (!pdfJsPromise) {
+    pdfJsPromise = new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = '/pdf.min.js';
+      el.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+        resolve(window.pdfjsLib);
+      };
+      el.onerror = () => reject(new Error('Could not load the PDF reader'));
+      document.head.appendChild(el);
+    });
+  }
+  return pdfJsPromise;
+}
+
+async function extractPdfLines(file) {
+  const pdfjs = await loadPdfJs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const lines = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const rows = {};
+    content.items.forEach(it => {
+      const y = Math.round(it.transform[5]);
+      (rows[y] = rows[y] || []).push([it.transform[4], it.str]);
+    });
+    Object.keys(rows).map(Number).sort((a, b) => b - a).forEach(y => {
+      const text = rows[y].sort((a, b) => a[0] - b[0]).map(x => x[1]).join(' ').replace(/\s+/g, ' ').trim();
+      if (text) lines.push(text);
+    });
+  }
+  return lines;
+}
+
+function parseInvoiceText(lines) {
+  const money = /(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g;
+  const lastAmount = line => {
+    const found = [...line.matchAll(money)];
+    return found.length ? parseFloat(found[found.length - 1][1].replace(/,/g, '')) : null;
+  };
+  const findAmount = patterns => {
+    for (const pat of patterns) {
+      for (const line of lines) {
+        if (pat.test(line)) {
+          const v = lastAmount(line);
+          if (v != null) return v;
+        }
+      }
+    }
+    return null;
+  };
+
+  let net = findAmount([/total goods/i, /total\s*(ex|excl)/i, /sub\s*-?\s*total/i, /net\s*(total|amount|value)/i, /goods\s*(value|total)?\s*:/i]);
+  let vat = findAmount([/total vat/i, /vat\s*(total|amount)/i, /^vat\s*:/i]);
+  let gross = findAmount([/inv(oice)?\s*total/i, /total\s*(inc|incl)/i, /amount due/i, /balance due/i, /total due/i, /grand total/i, /^total\s*:?\s*£/i]);
+  let netEstimated = false;
+  if (net == null && gross != null && vat != null) net = Math.round((gross - vat) * 100) / 100;
+  if (net == null && gross != null) {
+    const rateLine = lines.find(l => /rate\s*%\s*:/i.test(l));
+    const rate = rateLine ? parseFloat((rateLine.match(/(\d+(?:\.\d+)?)\s*$/) || [])[1]) : 20;
+    net = Math.round(gross / (1 + (rate || 20) / 100) * 100) / 100;
+    netEstimated = true;
+  }
+  if (vat == null && net != null && gross != null) vat = Math.round((gross - net) * 100) / 100;
+  const totalsAgree = net != null && vat != null && gross != null && Math.abs(net + vat - gross) < 0.02;
+
+  const text = lines.join('\n');
+  const po = (text.match(/\bPO-\d{4,6}-\d{3,4}\b/i) || [])[0] || null;
+  const invNo = ((text.match(/invoice\s*(?:no|number|#)\.?\s*:?\s*([A-Z0-9][A-Z0-9\/\-]{2,})/i)) || [])[1] || null;
+  const dateMatch = text.match(/invoice\s*date[^0-9\n]*(\d{2})\/(\d{2})\/(\d{4})/i);
+  const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : null;
+  let merchant = ((text.match(/Account Name:\s*(.+?)\s*\.?\s*$/im)) || [])[1] || null;
+  if (!merchant) merchant = ((text.match(/([A-Z][A-Za-z&' ]+(?:Limited|Ltd|LLP|PLC))\.?\s*Registered/)) || [])[1] || null;
+
+  // Delivery block text used for matching the job by address
+  const deliverIdx = lines.findIndex(l => /deliver(y)?\s*to/i.test(l));
+  const deliverText = deliverIdx >= 0 ? lines.slice(deliverIdx, deliverIdx + 8).join(' ') : text;
+
+  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, hasText: text.length > 40 };
+}
+
+function matchSiteByAddress(text, sites) {
+  const hay = ' ' + text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ') + ' ';
+  let best = null;
+  sites.forEach(site => {
+    const tokens = Array.from(new Set(String(site.address || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(t => t.length > 1)));
+    if (tokens.length < 3) return;
+    const hit = tokens.filter(t => hay.includes(' ' + t + ' ')).length;
+    const score = hit / tokens.length;
+    if (score >= 0.7 && (!best || score > best.score)) best = { site, score };
+  });
+  return best ? best.site : null;
+}
+
+function openInvoiceModal(siteId) {
+  pendingInvoice = { siteId, file: null, parsed: null };
+  document.getElementById('invStepPick').style.display = '';
+  document.getElementById('invForm').style.display = 'none';
+  document.getElementById('invReading').style.display = 'none';
+  document.getElementById('invFileInput').value = '';
+  openModal('modalInvoice');
+}
+
+async function handleInvoiceFilePicked(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') { alert('Please choose a PDF invoice.'); return; }
+  if (file.size > MAX_SITE_FILE_MB * 1024 * 1024) { alert(`This file is over ${MAX_SITE_FILE_MB}MB.`); return; }
+  document.getElementById('invReading').style.display = '';
+  let parsed;
+  try {
+    parsed = parseInvoiceText(await extractPdfLines(file));
+  } catch (err) {
+    console.warn('Invoice read failed:', err);
+    parsed = { net: null, vat: null, gross: null, po: null, invNo: null, date: null, merchant: null, deliverText: '', hasText: false };
+  }
+  document.getElementById('invReading').style.display = 'none';
+  pendingInvoice.file = file;
+  pendingInvoice.parsed = parsed;
+
+  // Work out which job / PO this belongs to
+  let matchedPo = parsed.po ? allPOs.find(po => String(po.po_number).toUpperCase() === parsed.po) : null;
+  let site = matchedPo ? allSites.find(s => String(s.id) === String(matchedPo.site_id)) : null;
+  let how = matchedPo ? `PO number ${matchedPo.po_number} found on the invoice` : '';
+  if (!site) {
+    site = matchSiteByAddress(parsed.deliverText, allSites.filter(s => !s.is_archived));
+    if (site) how = `Job matched from the delivery address (${site.address})`;
+  }
+  if (!site) {
+    site = allSites.find(s => parseInt(s.id) === parseInt(pendingInvoice.siteId)) || null;
+    how = 'No PO number or matching address found - defaulted to the job you opened. Please check.';
+  }
+
+  const siteSel = document.getElementById('invSiteSelect');
+  siteSel.innerHTML = allSites.filter(s => !s.is_archived || (site && s.id === site.id))
+    .map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
+  if (site) siteSel.value = String(site.id);
+  refreshInvoicePoOptions(matchedPo ? matchedPo.po_number : null);
+
+  document.getElementById('invMerchant').value = parsed.merchant || (matchedPo ? matchedPo.merchant : '') || '';
+  document.getElementById('invNo').value = parsed.invNo || '';
+  document.getElementById('invNet').value = parsed.net != null ? parsed.net.toFixed(2) : '';
+  document.getElementById('invVat').value = parsed.vat != null ? parsed.vat.toFixed(2) : '';
+  document.getElementById('invGross').value = parsed.gross != null ? parsed.gross.toFixed(2) : '';
+
+  const priceNote = !parsed.hasText ? 'This looks like a scan or photo, so the price could not be read - please type the amounts in.'
+    : parsed.net == null ? 'Could not find the price - please type it in.'
+    : parsed.netEstimated ? 'Net price is estimated from the total - please check it.'
+    : parsed.totalsAgree ? 'Net + VAT adds up to the total.' : 'Please check the amounts.';
+  document.getElementById('invFoundNote').innerHTML = `📄 ${diaryEsc(file.name)}<br>${diaryEsc(how)}<br>${diaryEsc(priceNote)}`;
+  document.getElementById('invStepPick').style.display = 'none';
+  document.getElementById('invForm').style.display = '';
+}
+
+function refreshInvoicePoOptions(preselect) {
+  const siteId = document.getElementById('invSiteSelect').value;
+  const pos = allPOs.filter(po => String(po.site_id) === String(siteId) && po.status !== 'Cancelled' && !po.invoice_no)
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const sel = document.getElementById('invPoSelect');
+  sel.innerHTML = `<option value="">➕ No PO - record as a new invoice</option>` + pos.map(po =>
+    `<option value="${diaryEsc(po.po_number)}">${diaryEsc(po.po_number)} - ${diaryEsc(po.merchant)} - ${diaryEsc(po.description).slice(0, 40)}</option>`).join('');
+  if (typeof preselect === 'string' && preselect) sel.value = preselect;
+}
+
+async function handleConfirmInvoice(e) {
+  e.preventDefault();
+  if (!pendingInvoice || !pendingInvoice.file || !db || !isManagementUser(currentUser)) return;
+  const btn = document.getElementById('btnConfirmInvoice');
+  const site = allSites.find(s => String(s.id) === document.getElementById('invSiteSelect').value);
+  if (!site) { alert('Please choose the job.'); return; }
+  const net = parseFloat(document.getElementById('invNet').value);
+  const vat = parseFloat(document.getElementById('invVat').value);
+  const gross = parseFloat(document.getElementById('invGross').value);
+  const invNo = document.getElementById('invNo').value.trim();
+  const merchant = document.getElementById('invMerchant').value.trim();
+  const poNumber = document.getElementById('invPoSelect').value;
+  if (isNaN(net)) { alert('Please enter the net price.'); return; }
+  if (invNo && allPOs.some(po => po.invoice_no === invNo && String(po.site_id) === String(site.id)) &&
+      !confirm(`Invoice ${invNo} has already been imported for this job. Import it again?`)) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Uploading...';
+  try {
+    const file = pendingInvoice.file;
+    const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `site_files/${site.id}/${fileId}_${safeName}`;
+    const up = await uploadSiteFile(path, file);
+    const invoiceNet = Math.round(net * 100) / 100;
+    const targetPo = poNumber || `INV-${String(invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
+
+    await db.collection('pdfs').doc(fileId).set({
+      id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+      filename: file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
+      po_number: targetPo, invoice_no: invNo, invoice_net: invoiceNet, invoice_vat: isNaN(vat) ? null : vat, invoice_gross: isNaN(gross) ? null : gross,
+      created_at: new Date().toISOString()
+    });
+
+    const invoiceFields = {
+      status: 'Invoiced', invoice_value: invoiceNet, invoice_vat: isNaN(vat) ? null : vat, invoice_gross: isNaN(gross) ? null : gross,
+      invoice_no: invNo || null, invoice_file_id: fileId, invoiced_at: new Date().toISOString()
+    };
+    if (poNumber) {
+      await db.collection('purchase_orders').doc(poNumber).update(invoiceFields);
+    } else {
+      await db.collection('purchase_orders').doc(targetPo).set({
+        po_number: targetPo, seq: null, site_id: String(site.id), site_address: site.address,
+        requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
+        merchant: merchant || 'Unknown merchant', description: `Invoice ${invNo || ''} (no PO)`.trim(), est_value: null,
+        created_at: new Date().toISOString(), ...invoiceFields
+      });
+    }
+    closeModal('modalInvoice');
+    showGreenToast(`🧾 Invoice attached - ${formatPounds(invoiceNet)} ex VAT added to ${site.address}`);
+    if (activeSiteId) loadProjectPage(activeSiteId);
+  } catch (err) {
+    alert('Could not import the invoice: ' + err.message);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Attach invoice & set job cost';
 }
