@@ -468,6 +468,7 @@ function onUserAuthenticated() {
   registerDevicePushSubscription(false);
   updateCleanPushUI();
   if (isManagerOrHigher) startDiarySync();
+  startPOSync();
 
   if (isManagerOrHigher) {
     showView('view-planner');
@@ -1727,6 +1728,7 @@ function renderMyShiftsView() {
             <p style="margin-top: 2px; font-size: 0.9rem;">${s.task}</p>
           </div>
           ${siteInfoHtml(site)}
+          <button class="btn btn-primary btn-sm po-request-btn" data-site-id="${s.site_id}" style="width: 100%; margin-bottom: 8px;">🧾 Request PO number</button>
           <button class="btn btn-secondary btn-sm" style="width: 100%;">View Shift Details & Site Documents →</button>
         </div>
       `;
@@ -1742,6 +1744,13 @@ function renderMyShiftsView() {
       renderMyShiftsView();
     });
   }
+
+  container.querySelectorAll('.po-request-btn').forEach(btn => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      openPOModal(parseInt(btn.dataset.siteId));
+    });
+  });
 
   container.querySelectorAll('.shift-op-card').forEach(card => {
     card.addEventListener('click', () => {
@@ -1785,6 +1794,14 @@ async function openShiftDetailModal(shiftId) {
     } else {
       seenBadge.style.display = 'none';
     }
+  }
+
+  const btnPO = document.getElementById('btnRequestPOFromShift');
+  if (btnPO) {
+    btnPO.onclick = () => {
+      closeModal('modalShiftDetail');
+      openPOModal(parseInt(shift.site_id));
+    };
   }
 
   const btnProjPage = document.getElementById('btnGoToProjectPage');
@@ -1976,6 +1993,7 @@ function loadProjectPage(siteId) {
 
   renderProjectTabContent(site);
   renderPlasterCalc(site);
+  renderPOTab(site);
 }
 
 async function handleArchiveSite(siteId) {
@@ -2767,6 +2785,8 @@ function setupEventListeners() {
   });
 
   setupDiaryListeners();
+  document.getElementById('poForm').addEventListener('submit', handleRequestPO);
+  document.getElementById('btnCopyPO').addEventListener('click', copyPONumber);
   const resetFormEl = document.getElementById('resetForm');
   if (resetFormEl) resetFormEl.addEventListener('submit', handleSetNewPassword);
   document.getElementById('plasterRoomForm').addEventListener('submit', handleSavePlasterRoom);
@@ -2946,6 +2966,7 @@ async function handleLogout() {
     }
   }
   stopDiarySync();
+  stopPOSync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
   localStorage.removeItem('gvd_push_subscribed');
@@ -4110,5 +4131,167 @@ async function userModalShareLogin(mode) {
     navigator.clipboard.writeText(msg).then(() => showGreenToast('Login details copied')).catch(() => prompt('Copy these login details:', msg));
   } else {
     prompt('Copy these login details:', msg);
+  }
+}
+
+
+// -------------------------------------------------------------------
+// PURCHASE ORDERS (merchant PO numbers, logged against the site)
+// Numbers look like PO-38392-004 (site number + running count for that site).
+// Operatives see only their own POs; Owners/Admins/Managers see all and track status.
+// -------------------------------------------------------------------
+let allPOs = [];
+let poUnsub = null;
+let poModalSiteId = null;
+let lastPONumber = '';
+
+function startPOSync() {
+  if (poUnsub || !db || !currentUser) return;
+  const col = db.collection('purchase_orders');
+  const query = isManagementUser(currentUser) ? col : col.where('requested_by_id', '==', String(currentUser.id));
+  poUnsub = query.onSnapshot(snapshot => {
+    allPOs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+    if (activeSiteId) {
+      const site = allSites.find(s => parseInt(s.id) === parseInt(activeSiteId));
+      if (site) renderPOTab(site);
+    }
+  }, err => console.warn('Firestore purchase_orders error:', err));
+}
+
+function stopPOSync() {
+  if (poUnsub) poUnsub();
+  poUnsub = null;
+  allPOs = [];
+}
+
+function formatPounds(v) {
+  const n = parseFloat(v);
+  return isNaN(n) ? '' : '£' + n.toFixed(2);
+}
+
+function renderPOTab(site) {
+  const host = document.getElementById('poTabContainer');
+  if (!host || !currentUser) return;
+  const isMgr = isManagementUser(currentUser);
+  const list = allPOs
+    .filter(po => String(po.site_id) === String(site.id))
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+
+  const liveTotal = key => list.filter(po => po.status !== 'Cancelled').reduce((sum, po) => sum + (parseFloat(po[key]) || 0), 0);
+  const totalsHtml = isMgr && list.length
+    ? `<p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 12px;">${list.filter(po => po.status !== 'Cancelled').length} active POs · Estimated ${formatPounds(liveTotal('est_value')) || '£0.00'} · Invoiced ${formatPounds(liveTotal('invoice_value')) || '£0.00'}</p>`
+    : '';
+
+  const itemsHtml = list.length === 0
+    ? '<p style="color: var(--text-muted);">No purchase orders for this site yet.</p>'
+    : list.map(po => {
+        const cancelled = po.status === 'Cancelled';
+        const mgrControls = isMgr ? `
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center;">
+            <select class="form-control po-status" data-po="${diaryEsc(po.id)}" style="width: auto; min-height: 32px; padding: 2px 8px; font-size: 0.85rem;">
+              ${['Requested', 'Collected', 'Invoiced', 'Cancelled'].map(st => `<option value="${st}"${po.status === st ? ' selected' : ''}>${st}</option>`).join('')}
+            </select>
+            <input type="number" step="0.01" min="0" class="form-control po-invoice" data-po="${diaryEsc(po.id)}" value="${po.invoice_value != null ? po.invoice_value : ''}" placeholder="Invoice £" style="width: 120px; min-height: 32px; padding: 2px 8px; font-size: 0.85rem;">
+          </div>` : `<div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">Status: ${diaryEsc(po.status || 'Requested')}</div>`;
+        return `<div class="diary-agenda-item" style="cursor: default;${cancelled ? ' opacity: 0.55;' : ''}">
+          <div style="display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+            <strong style="font-size: 1.05rem;">${diaryEsc(po.po_number)}</strong>
+            <span style="color: var(--text-muted); font-size: 0.85rem;">${diaryEsc(formatUKDateTime(po.created_at) || '')}</span>
+          </div>
+          <div style="margin-top: 2px;"><strong>${diaryEsc(po.merchant)}</strong>${po.est_value != null ? ' · est. ' + diaryEsc(formatPounds(po.est_value)) : ''}</div>
+          <div style="font-size: 0.9rem; margin-top: 2px;">${diaryEsc(po.description)}</div>
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">Requested by ${diaryEsc(po.requested_by_name || 'Unknown')}</div>
+          ${mgrControls}
+        </div>`;
+      }).join('');
+
+  host.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+      <p style="color: var(--text-muted);">${isMgr ? 'All purchase orders raised for this site' : 'Your purchase orders for this site'}</p>
+      <button type="button" class="btn btn-primary btn-sm" id="btnNewPO">🧾 Request PO number</button>
+    </div>
+    ${totalsHtml}
+    ${itemsHtml}`;
+
+  host.querySelector('#btnNewPO').onclick = () => openPOModal(parseInt(site.id));
+  host.querySelectorAll('.po-status').forEach(sel => sel.addEventListener('change', () => updatePO(sel.dataset.po, { status: sel.value })));
+  host.querySelectorAll('.po-invoice').forEach(inp => inp.addEventListener('change', () => {
+    const v = parseFloat(inp.value);
+    updatePO(inp.dataset.po, { invoice_value: isNaN(v) ? null : v });
+  }));
+}
+
+async function updatePO(id, fields) {
+  if (!db || !isManagementUser(currentUser)) return;
+  await db.collection('purchase_orders').doc(String(id)).update(fields).catch(err => alert('Could not save: ' + err.message));
+}
+
+function openPOModal(siteId) {
+  const site = allSites.find(s => parseInt(s.id) === parseInt(siteId));
+  if (!site) return;
+  poModalSiteId = siteId;
+  document.getElementById('poSiteLine').textContent = `${formatSiteId(site.id)} - ${site.address}`;
+  document.getElementById('poForm').style.display = '';
+  document.getElementById('poResult').style.display = 'none';
+  document.getElementById('poMerchantInput').value = '';
+  document.getElementById('poDescInput').value = '';
+  document.getElementById('poValueInput').value = '';
+  document.getElementById('btnSubmitPO').disabled = false;
+  document.getElementById('btnSubmitPO').textContent = 'Get PO Number';
+  const merchants = Array.from(new Set(allPOs.map(po => po.merchant).filter(Boolean)));
+  document.getElementById('poMerchantList').innerHTML = merchants.map(m => `<option value="${diaryEsc(m)}"></option>`).join('');
+  openModal('modalPO');
+}
+
+async function handleRequestPO(e) {
+  e.preventDefault();
+  const site = allSites.find(s => parseInt(s.id) === parseInt(poModalSiteId));
+  if (!site || !db || !currentUser) { alert('Not connected - please try again.'); return; }
+  const btn = document.getElementById('btnSubmitPO');
+  btn.disabled = true;
+  btn.textContent = 'Getting number...';
+  try {
+    // A per-site counter in a transaction so two people can never get the same number
+    const counterRef = db.collection('po_counters').doc(String(site.id));
+    const seq = await db.runTransaction(async tx => {
+      const snap = await tx.get(counterRef);
+      const n = snap.exists ? (snap.data().next || 1) : 1;
+      tx.set(counterRef, { next: n + 1 });
+      return n;
+    });
+    const poNumber = `PO-${site.id}-${String(seq).padStart(3, '0')}`;
+    const value = parseFloat(document.getElementById('poValueInput').value);
+    const po = {
+      po_number: poNumber,
+      seq,
+      site_id: String(site.id),
+      site_address: site.address,
+      requested_by_id: String(currentUser.id),
+      requested_by_name: currentUser.full_name,
+      merchant: document.getElementById('poMerchantInput').value.trim(),
+      description: document.getElementById('poDescInput').value.trim(),
+      est_value: isNaN(value) ? null : value,
+      invoice_value: null,
+      status: 'Requested',
+      created_at: new Date().toISOString()
+    };
+    await db.collection('purchase_orders').doc(poNumber).set(po);
+    lastPONumber = poNumber;
+    document.getElementById('poForm').style.display = 'none';
+    document.getElementById('poResult').style.display = '';
+    document.getElementById('poResultNumber').textContent = poNumber;
+    document.getElementById('poResultDetail').textContent = `${po.merchant} · ${site.address}`;
+  } catch (err) {
+    alert('Could not create the PO: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = 'Get PO Number';
+  }
+}
+
+function copyPONumber() {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(lastPONumber).then(() => showGreenToast('PO number copied')).catch(() => prompt('Copy this PO number:', lastPONumber));
+  } else {
+    prompt('Copy this PO number:', lastPONumber);
   }
 }

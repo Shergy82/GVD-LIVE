@@ -279,6 +279,7 @@
           <button class="tab-btn active" data-tab="tab-proj-planner" id="tabPlannerBtn">📅 Site Planner</button>
           <button class="tab-btn" data-tab="tab-proj-photos" id="tabPhotosBtn">📷 Live Photos</button>
           <button class="tab-btn" data-tab="tab-proj-pdfs" id="tabPdfsBtn">📄 PDF Documents</button>
+          <button class="tab-btn" data-tab="tab-proj-po" id="tabPoBtn">🧾 Purchase Orders</button>
           <button class="tab-btn admin-only" data-tab="tab-proj-customer" id="tabCustomerBtn">🏷️ Customer QR & Printout</button>
         </div>
 
@@ -310,6 +311,11 @@
           </div>
           <div class="pdf-list" id="pdfListContainer"></div>
           <div id="plasterCalcContainer" class="manager-admin-only" style="margin-top: 24px;"></div>
+        </div>
+
+        <!-- Tab: Purchase Orders -->
+        <div id="tab-proj-po" class="project-tab-content" style="display: none;">
+          <div id="poTabContainer"></div>
         </div>
 
         <!-- Tab 4: Admin-Only Customer QR & A4 Printout -->
@@ -729,6 +735,40 @@
     </div>
   </div>
 
+  <!-- Modal: Request Purchase Order -->
+  <div class="modal-overlay" id="modalPO">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Request PO Number</h3>
+        <button class="close-btn" data-close="modalPO">&times;</button>
+      </div>
+      <div id="poSiteLine" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;"></div>
+      <form id="poForm">
+        <div class="form-group">
+          <label for="poMerchantInput">Merchant</label>
+          <input type="text" id="poMerchantInput" class="form-control" list="poMerchantList" required placeholder="e.g. Travis Perkins">
+          <datalist id="poMerchantList"></datalist>
+        </div>
+        <div class="form-group">
+          <label for="poDescInput">What is it for?</label>
+          <textarea id="poDescInput" class="form-control" rows="3" required placeholder="e.g. Tiles, adhesive and grout for bathroom"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="poValueInput">Estimated value £ (optional)</label>
+          <input type="number" id="poValueInput" class="form-control" step="0.01" min="0" inputmode="decimal">
+        </div>
+        <button type="submit" class="btn btn-primary" id="btnSubmitPO" style="width: 100%;">Get PO Number</button>
+      </form>
+      <div id="poResult" style="display: none; text-align: center;">
+        <p style="color: var(--text-muted);">Give this reference to the merchant:</p>
+        <div id="poResultNumber" style="font-size: 1.8rem; font-weight: 800; margin: 12px 0; letter-spacing: 0.02em;"></div>
+        <div id="poResultDetail" style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 14px;"></div>
+        <button type="button" class="btn btn-outline" id="btnCopyPO" style="width: 100%; margin-bottom: 8px;">📋 Copy PO number</button>
+        <button type="button" class="btn btn-primary" data-close="modalPO" style="width: 100%;">Done</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Shift Detail View (Operative Click Handler - Triggers Seen Status Timestamp) -->
   <div class="modal-overlay" id="modalShiftDetail">
     <div class="modal-card">
@@ -749,6 +789,7 @@
           <p style="margin-top: 4px; font-size: 0.95rem;" id="detailTask">Task description</p>
         </div>
         <button class="btn btn-outline" id="btnGoToProjectPage" style="width: 100%; margin-bottom: 10px;">🏗️ View Site & Project Page</button>
+        <button class="btn btn-outline" id="btnRequestPOFromShift" style="width: 100%; margin-bottom: 10px;">🧾 Request PO number</button>
         <button class="btn btn-primary" data-close="modalShiftDetail" style="width: 100%;">Close Details</button>
       </div>
     </div>
@@ -799,6 +840,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=25.0"></script>
+  <script src="/app.js?v=26.0"></script>
 </body>
 </html>
