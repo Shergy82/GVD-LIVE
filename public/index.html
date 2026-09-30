@@ -695,6 +695,12 @@
           <label for="shiftTaskInput">Task Description</label>
           <textarea id="shiftTaskInput" class="form-control" rows="3" required placeholder="Short description of task to be performed"></textarea>
         </div>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
+            <input type="checkbox" id="shiftFinishChk"> 🏁 This is the finishing shift for the job
+          </label>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Tick this if the wording is different. Fixtures &amp; Fittings / Decoration shifts are picked up automatically.</div>
+        </div>
         <div style="display: flex; gap: 10px; margin-top: 16px;">
           <button type="submit" class="btn btn-primary">Save Shift</button>
           <button type="button" class="btn btn-danger" id="btnDeleteShift" style="display: none;">Remove Shift</button>
@@ -997,6 +1003,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=35.0"></script>
+  <script src="/app.js?v=36.0"></script>
 </body>
 </html>

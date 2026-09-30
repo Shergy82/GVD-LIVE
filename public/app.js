@@ -1316,8 +1316,31 @@ async function triggerShiftNotification(shift, title, body = null, forcePublish 
 // Finish = the last Fixtures & Fittings shift, or the Decoration shift that falls the day after
 // a Fixtures & Fittings shift. Sites with no such ending shift have no finish date.
 // -------------------------------------------------------------------
-const FIXTURES_RE = /fixtures?\s*(&|and|\/|\+)?\s*fittings?/i;
-const DECORATION_RE = /decorat/i;
+// Typo-tolerant: "Fictures and Fittings", "fixtures/fitting", "F&F" and "Decorating" all count
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+  }
+  return dp[m][n];
+}
+
+function hasWordLike(text, targets, maxDist) {
+  return String(text || '').toLowerCase().split(/[^a-z]+/).some(w => w.length >= 4 && targets.some(t => editDistance(w, t) <= maxDist));
+}
+
+function isFixturesShift(task) {
+  const t = String(task || '');
+  return /\bf\s*(&|and|\/|\+)\s*f\b/i.test(t) || (hasWordLike(t, ['fixtures', 'fixture'], 2) && hasWordLike(t, ['fittings', 'fitting'], 2));
+}
+
+function isDecorationShift(task) {
+  return hasWordLike(task, ['decoration', 'decorating', 'decorate', 'decorations'], 2);
+}
 
 function addDaysISO(iso, n) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -1326,9 +1349,9 @@ function addDaysISO(iso, n) {
 
 function getSiteFinish(siteId) {
   const shifts = allShifts.filter(sh => parseInt(sh.site_id) === parseInt(siteId));
-  const fixtures = shifts.filter(sh => FIXTURES_RE.test(sh.task || '')).map(sh => sh.shift_date).filter(Boolean);
+  const fixtures = shifts.filter(sh => sh.is_finish || isFixturesShift(sh.task)).map(sh => sh.shift_date).filter(Boolean);
   if (fixtures.length === 0) return null;
-  const decorations = new Set(shifts.filter(sh => DECORATION_RE.test(sh.task || '')).map(sh => sh.shift_date));
+  const decorations = new Set(shifts.filter(sh => isDecorationShift(sh.task)).map(sh => sh.shift_date));
   const candidates = [...fixtures];
   fixtures.forEach(f => { const next = addDaysISO(f, 1); if (decorations.has(next)) candidates.push(next); });
   const date = candidates.sort().pop();
@@ -3384,6 +3407,7 @@ function openCreateShiftModal(siteId, opId = null, dateStr = null) {
   populateShiftSelects(siteId, opId);
   document.getElementById('shiftDateInput').value = dateStr || formatDateISO(new Date());
   document.getElementById('shiftTaskInput').value = '';
+  document.getElementById('shiftFinishChk').checked = false;
 
   const periodRadios = document.querySelectorAll('input[name="shiftPeriod"]');
   periodRadios.forEach(r => { r.checked = (r.value === 'all_day'); });
@@ -3417,6 +3441,7 @@ function openEditShiftModal(shiftId) {
   populateShiftSelects(shift.site_id, shift.operative_id);
   document.getElementById('shiftDateInput').value = shift.shift_date;
   document.getElementById('shiftTaskInput').value = shift.task;
+  document.getElementById('shiftFinishChk').checked = !!shift.is_finish;
 
   const targetPeriod = shift.shift_period || 'all_day';
   const periodRadios = document.querySelectorAll('input[name="shiftPeriod"]');
@@ -3467,6 +3492,7 @@ async function handleSaveShift(e) {
   const operative_id = document.getElementById('shiftOpSelect').value;
   const shift_date = document.getElementById('shiftDateInput').value;
   const task = document.getElementById('shiftTaskInput').value.trim();
+  const isFinish = document.getElementById('shiftFinishChk').checked;
   const shift_period = document.querySelector('input[name="shiftPeriod"]:checked')?.value || 'all_day';
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -3479,6 +3505,7 @@ async function handleSaveShift(e) {
       shift.operative_id = operative_id;
       shift.shift_date = shift_date;
       shift.task = task;
+      shift.is_finish = isFinish;
       shift.shift_period = shift_period;
       shift.seen_at = null; // Resets seen timestamp on update!
       shift.draft_pending = isDraftPlanningMode;
@@ -3514,6 +3541,7 @@ async function handleSaveShift(e) {
         operative_id,
         shift_date: currentDateStr,
         task,
+        is_finish: isFinish,
         shift_period,
         seen_at: null,
         draft_pending: isDraftPlanningMode,
