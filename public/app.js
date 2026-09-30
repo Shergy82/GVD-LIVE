@@ -295,6 +295,7 @@ function initFirestoreSync() {
       return;
     }
     renderActiveView();
+    if (typeof refreshFinanceViews === 'function') refreshFinanceViews();
   }, err => console.warn('Firestore shifts error:', err));
 
   // Real-time Photos Collection Sync
@@ -471,6 +472,7 @@ function onUserAuthenticated() {
   updateCleanPushUI();
   if (isManagerOrHigher) startDiarySync();
   startPOSync();
+  if (isManagerOrHigher) startFinanceSync();
 
   if (isManagerOrHigher) {
     showView('view-planner');
@@ -576,6 +578,8 @@ function renderActiveView() {
     renderDiaryView();
   } else if (viewId === 'view-invoices') {
     renderInvoicesView();
+  } else if (viewId === 'view-finance') {
+    renderFinanceView();
   }
 }
 
@@ -1998,6 +2002,7 @@ function loadProjectPage(siteId) {
   renderProjectTabContent(site);
   renderPlasterCalc(site);
   renderPOTab(site);
+  renderSiteFinance(site);
 }
 
 async function handleArchiveSite(siteId) {
@@ -2791,6 +2796,7 @@ function setupEventListeners() {
   setupDiaryListeners();
   document.getElementById('poForm').addEventListener('submit', handleRequestPO);
   setupInvoiceListeners();
+  setupFinanceListeners();
   document.getElementById('btnCopyPO').addEventListener('click', copyPONumber);
   const resetFormEl = document.getElementById('resetForm');
   if (resetFormEl) resetFormEl.addEventListener('submit', handleSetNewPassword);
@@ -2972,6 +2978,7 @@ async function handleLogout() {
   }
   stopDiarySync();
   stopPOSync();
+  stopFinanceSync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
   localStorage.removeItem('gvd_push_subscribed');
@@ -3881,6 +3888,9 @@ function openUserModal(userId) {
   document.getElementById('userModalStatus').value = user.status || 'Pending';
   document.getElementById('btnRemoveUser').disabled = String(user.id) === String(currentUser.id);
   document.getElementById('userModalColor').value = userColor(user);
+  const rateGroup = document.getElementById('userModalRateGroup');
+  rateGroup.style.display = isOwnerOrAdminUser(currentUser) ? '' : 'none';
+  document.getElementById('userModalDayRate').value = financeRates[String(user.id)] != null ? financeRates[String(user.id)] : '';
 
   // Login sharing is only offered for people who have never used the app
   const loginBox = document.getElementById('userModalLoginBox');
@@ -3904,6 +3914,12 @@ async function handleSaveUserModal() {
   };
   Object.assign(user, updates);
   if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
+  if (db && isOwnerOrAdminUser(currentUser)) {
+    const rateRaw = document.getElementById('userModalDayRate').value;
+    const rate = rateRaw === '' ? null : parseFloat(rateRaw);
+    if (rate == null) await db.collection('finance_rates').doc(String(user.id)).delete().catch(console.warn);
+    else if (!isNaN(rate)) await db.collection('finance_rates').doc(String(user.id)).set({ user_id: String(user.id), day_rate: rate });
+  }
   saveLocalStorageData();
   closeModal('modalUser');
   showGreenToast(`Saved ${user.full_name}`);
@@ -4158,8 +4174,9 @@ function startPOSync() {
     allPOs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     if (activeSiteId) {
       const site = allSites.find(s => parseInt(s.id) === parseInt(activeSiteId));
-      if (site) renderPOTab(site);
+      if (site) { renderPOTab(site); renderSiteFinance(site); }
     }
+    refreshFinanceViews();
   }, err => console.warn('Firestore purchase_orders error:', err));
 }
 
@@ -4652,5 +4669,274 @@ function setupInvoiceListeners() {
   document.getElementById('btnInvImportSelected').addEventListener('click', handleImportSelectedInvoices);
   ['invSearch', 'invFilterSite', 'invFilterMerchant'].forEach(id => {
     document.getElementById(id).addEventListener(id === 'invSearch' ? 'input' : 'change', renderInvoiceRegister);
+  });
+}
+
+
+// -------------------------------------------------------------------
+// FINANCE (Owner / Admin / Manager only)
+// Stored in finance_jobs / finance_costs / finance_rates, which are only ever loaded for management
+// logins, never for operatives. Day rates are kept out of the users collection for the same reason.
+// -------------------------------------------------------------------
+let financeJobs = {};
+let financeCosts = [];
+let financeRates = {};
+let financeUnsubs = [];
+
+function startFinanceSync() {
+  if (financeUnsubs.length || !db || !currentUser || !isManagementUser(currentUser)) return;
+  const warn = name => err => console.warn(`Firestore ${name} error:`, err);
+  financeUnsubs.push(db.collection('finance_jobs').onSnapshot(snap => {
+    financeJobs = {};
+    snap.docs.forEach(d => { financeJobs[d.id] = d.data(); });
+    refreshFinanceViews();
+  }, warn('finance_jobs')));
+  financeUnsubs.push(db.collection('finance_costs').onSnapshot(snap => {
+    financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    refreshFinanceViews();
+  }, warn('finance_costs')));
+  financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
+    financeRates = {};
+    snap.docs.forEach(d => { financeRates[d.id] = parseFloat(d.data().day_rate) || 0; });
+    refreshFinanceViews();
+  }, warn('finance_rates')));
+}
+
+function stopFinanceSync() {
+  financeUnsubs.forEach(u => u());
+  financeUnsubs = [];
+  financeJobs = {};
+  financeCosts = [];
+  financeRates = {};
+}
+
+function refreshFinanceViews() {
+  if (!currentUser || !isManagementUser(currentUser)) return;
+  const v = document.getElementById('view-finance');
+  if (v && v.style.display !== 'none') renderFinanceView();
+  if (activeSiteId) {
+    const site = allSites.find(x => parseInt(x.id) === parseInt(activeSiteId));
+    if (site) renderSiteFinance(site);
+  }
+}
+
+function money(v) {
+  const n = parseFloat(v) || 0;
+  return (n < 0 ? '-£' : '£') + Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function computeSiteFinance(site) {
+  const sid = String(site.id);
+  const pos = allPOs.filter(po => String(po.site_id) === sid && po.status !== 'Cancelled');
+  const invoiced = pos.filter(po => po.invoice_value != null).reduce((t, po) => t + (parseFloat(po.invoice_value) || 0), 0);
+  const onOrder = pos.filter(po => po.invoice_value == null && po.est_value != null).reduce((t, po) => t + (parseFloat(po.est_value) || 0), 0);
+  const extrasList = financeCosts.filter(c => String(c.site_id) === sid);
+  const extras = extrasList.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
+
+  const todayKey = diaryDateKey(new Date());
+  const byOp = {};
+  let labour = 0, labourToDate = 0;
+  const noRate = new Set();
+  allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
+    const frac = sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1;
+    const rate = financeRates[String(sh.operative_id)];
+    const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
+    const name = u ? u.full_name : 'Unknown';
+    if (rate == null) noRate.add(name);
+    const cost = (rate || 0) * frac;
+    const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0 };
+    row.days += frac;
+    row.cost += cost;
+    labour += cost;
+    if ((sh.shift_date || '') <= todayKey) labourToDate += cost;
+  });
+
+  const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
+  const totalCost = invoiced + onOrder + labour + extras;
+  const profit = value != null ? value - totalCost : null;
+  const margin = value ? (profit / value) * 100 : null;
+  return { value, invoiced, onOrder, labour, labourToDate, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
+}
+
+function profitColor(v) {
+  return v == null ? 'var(--text-muted)' : v < 0 ? '#ef4444' : '#10b981';
+}
+
+function marginText(m) {
+  return m == null || isNaN(m) ? '-' : m.toFixed(1) + '%';
+}
+
+// ---- Per-site Finance tab ----
+function renderSiteFinance(site) {
+  const host = document.getElementById('financeTabContainer');
+  if (!host) return;
+  if (!currentUser || !isManagementUser(currentUser)) { host.innerHTML = ''; return; }
+  const f = computeSiteFinance(site);
+
+  const row = (label, val, sub) => `<tr><td>${label}${sub ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${sub}</div>` : ''}</td><td style="text-align: right; white-space: nowrap;">${val}</td></tr>`;
+  const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${money(o.cost)}</td></tr>`).join('');
+  const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date))).map(c => `<tr>
+      <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
+      <td style="text-align: right;">${money(c.amount)}</td>
+      <td><button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
+
+  host.innerHTML = `
+    <div class="site-card" style="margin-bottom: 16px;">
+      <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <label for="finJobValue" style="font-weight: 700;">Job value (quote) £ ex VAT</label>
+        <input type="number" id="finJobValue" class="form-control" step="0.01" min="0" value="${f.value != null ? f.value : ''}" placeholder="e.g. 10000" style="width: 180px;">
+      </div>
+      ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the job value to see profit and margin.</p>' : ''}
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px;">
+      <div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">JOB VALUE</div><div style="font-size: 1.3rem; font-weight: 800;">${f.value != null ? money(f.value) : '-'}</div></div>
+      <div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">TOTAL COST</div><div style="font-size: 1.3rem; font-weight: 800;">${money(f.totalCost)}</div></div>
+      <div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">${f.profit != null && f.profit < 0 ? 'LOSS' : 'PROFIT'}</div><div style="font-size: 1.3rem; font-weight: 800; color: ${profitColor(f.profit)};">${f.profit != null ? money(f.profit) : '-'}</div></div>
+      <div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">MARGIN</div><div style="font-size: 1.3rem; font-weight: 800; color: ${profitColor(f.profit)};">${marginText(f.margin)}</div></div>
+    </div>
+
+    <div class="site-card" style="margin-bottom: 16px;">
+      <h4 style="margin-bottom: 8px;">Where the money goes</h4>
+      <table class="planner-table" style="min-width: 0;"><tbody>
+        ${row('Materials invoiced', money(f.invoiced), 'From imported invoices (ex VAT)')}
+        ${row('Materials on order', money(f.onOrder), 'POs raised but not yet invoiced (estimates)')}
+        ${row('Labour', money(f.labour), `${money(f.labourToDate)} worked to date, ${money(f.labour - f.labourToDate)} still to come`)}
+        ${row('Extra costs', money(f.extras))}
+        ${row('<strong>Total cost</strong>', '<strong>' + money(f.totalCost) + '</strong>')}
+      </tbody></table>
+      ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
+    </div>
+
+    <div class="site-card" style="margin-bottom: 16px;">
+      <h4 style="margin-bottom: 8px;">Labour on this job</h4>
+      ${labourRows ? `<table class="planner-table" style="min-width: 0;"><tbody>${labourRows}</tbody></table>` : '<p style="color: var(--text-muted);">No shifts with a day rate yet.</p>'}
+    </div>
+
+    <div class="site-card">
+      <h4 style="margin-bottom: 8px;">Extra costs</h4>
+      <form id="finSiteCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 10px;">
+        <input type="text" id="finSiteCostDesc" class="form-control" placeholder="Description" required>
+        <select id="finSiteCostCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select>
+        <input type="number" id="finSiteCostAmount" class="form-control" step="0.01" min="0" placeholder="£ ex VAT" required>
+        <input type="date" id="finSiteCostDate" class="form-control" value="${diaryDateKey(new Date())}" required>
+        <button type="submit" class="btn btn-primary">+ Add cost</button>
+      </form>
+      ${costRows ? `<table class="planner-table" style="min-width: 0;"><tbody>${costRows}</tbody></table>` : '<p style="color: var(--text-muted);">No extra costs logged.</p>'}
+    </div>`;
+
+  host.querySelector('#finJobValue').addEventListener('change', ev => saveJobValue(site.id, ev.target.value));
+  host.querySelector('#finSiteCostForm').addEventListener('submit', ev => {
+    ev.preventDefault();
+    addFinanceCost(site.id, host.querySelector('#finSiteCostDesc').value, host.querySelector('#finSiteCostCategory').value,
+      host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value);
+  });
+  host.querySelectorAll('.fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
+}
+
+async function saveJobValue(siteId, raw) {
+  if (!db || !isManagementUser(currentUser)) return;
+  const v = raw === '' ? null : parseFloat(raw);
+  await db.collection('finance_jobs').doc(String(siteId)).set({ site_id: String(siteId), job_value: isNaN(v) ? null : v, updated_at: new Date().toISOString() }, { merge: true })
+    .catch(err => alert('Could not save: ' + err.message));
+}
+
+async function addFinanceCost(siteId, description, category, amount, date) {
+  if (!db || !isManagementUser(currentUser)) return;
+  const amt = parseFloat(amount);
+  if (!description.trim() || isNaN(amt) || !date) { alert('Please fill in the description, amount and date.'); return; }
+  const id = 'cost_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  await db.collection('finance_costs').doc(id).set({
+    site_id: String(siteId), description: description.trim(), category, amount: Math.round(amt * 100) / 100, date,
+    added_by: currentUser.full_name, created_at: new Date().toISOString()
+  }).catch(err => alert('Could not save: ' + err.message));
+  showGreenToast('Cost added');
+}
+
+async function deleteFinanceCost(id) {
+  if (!db || !isManagementUser(currentUser) || !confirm('Delete this cost?')) return;
+  await db.collection('finance_costs').doc(String(id)).delete().catch(console.warn);
+}
+
+// ---- Full Finance page ----
+function renderFinanceView() {
+  if (!currentUser || !isManagementUser(currentUser)) return;
+  const statusF = document.getElementById('finFilterStatus').value;
+  const q = (document.getElementById('finSearch').value || '').toLowerCase();
+  const sites = allSites
+    .filter(s => statusF === 'all' || (statusF === 'archived' ? s.is_archived : !s.is_archived))
+    .filter(s => !q || String(s.address).toLowerCase().includes(q))
+    .sort((a, b) => String(a.address).localeCompare(String(b.address)));
+  const data = sites.map(s => ({ site: s, f: computeSiteFinance(s) }));
+
+  const tot = data.reduce((t, d) => {
+    if (d.f.value != null) { t.value += d.f.value; t.costOfValued += d.f.totalCost; }
+    t.cost += d.f.totalCost;
+    return t;
+  }, { value: 0, cost: 0, costOfValued: 0 });
+  const profit = tot.value - tot.costOfValued;
+  const margin = tot.value ? profit / tot.value * 100 : null;
+  const box = (label, val, color) => `<div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">${label}</div><div style="font-size: 1.3rem; font-weight: 800;${color ? ` color: ${color};` : ''}">${val}</div></div>`;
+  document.getElementById('finSummary').innerHTML =
+    box('TOTAL JOB VALUE (jobs with a value)', money(tot.value)) + box('TOTAL COST (all shown jobs)', money(tot.cost)) +
+    box(profit < 0 ? 'LOSS (jobs with a value)' : 'PROFIT (jobs with a value)', money(profit), profitColor(profit)) + box('MARGIN', marginText(margin), profitColor(profit));
+
+  document.getElementById('finJobsBody').innerHTML = data.length ? data.map(({ site, f }) => `<tr class="fin-job-row" data-site="${diaryEsc(site.id)}" style="cursor: pointer;">
+      <td><strong>${diaryEsc(site.address)}</strong>${site.is_archived ? ' <small>(archived)</small>' : ''}</td>
+      <td>${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}</td>
+      <td>${money(f.invoiced)}</td><td>${money(f.onOrder)}</td><td>${money(f.labour)}</td><td>${money(f.extras)}</td>
+      <td><strong>${money(f.totalCost)}</strong></td>
+      <td style="color: ${profitColor(f.profit)}; font-weight: 700;">${f.profit != null ? money(f.profit) : '-'}</td>
+      <td style="color: ${profitColor(f.profit)}; font-weight: 700;">${marginText(f.margin)}</td></tr>`).join('')
+    : '<tr><td colspan="9" style="color: var(--text-muted);">No jobs found.</td></tr>';
+  document.querySelectorAll('.fin-job-row').forEach(r => r.addEventListener('click', () => openSiteFinance(r.dataset.site)));
+
+  // Cost form site list + ledger
+  const costSite = document.getElementById('finCostSite');
+  const prev = costSite.value;
+  costSite.innerHTML = allSites.filter(s => !s.is_archived).map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
+  if (prev) costSite.value = prev;
+  const dateEl = document.getElementById('finCostDate');
+  if (!dateEl.value) dateEl.value = diaryDateKey(new Date());
+  document.getElementById('finCostsBody').innerHTML = financeCosts.slice()
+    .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 100).map(c => {
+      const site = allSites.find(s => String(s.id) === String(c.site_id));
+      return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(site ? site.address : 'Unknown job')}</td><td>${diaryEsc(c.description)}</td><td>${diaryEsc(c.category || '')}</td><td>${money(c.amount)}</td>
+        <td><button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
+    }).join('') || '<tr><td colspan="6" style="color: var(--text-muted);">No extra costs logged.</td></tr>';
+  document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
+
+  // Day rates (Owner / Admin can edit)
+  const canEditRates = isOwnerOrAdminUser(currentUser);
+  document.getElementById('finRatesCard').style.display = '';
+  document.getElementById('finRatesBody').innerHTML = allUsers.filter(u => u.status === 'Active')
+    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map(u => `<tr>
+      <td>${diaryEsc(u.full_name)}</td><td>${diaryEsc(u.role)}</td>
+      <td>${canEditRates
+        ? `<input type="number" step="0.01" min="0" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${financeRates[String(u.id)] != null ? financeRates[String(u.id)] : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
+        : (financeRates[String(u.id)] != null ? money(financeRates[String(u.id)]) : 'not set')}</td></tr>`).join('');
+  document.querySelectorAll('.fin-rate').forEach(inp => inp.addEventListener('change', async () => {
+    const v = inp.value === '' ? null : parseFloat(inp.value);
+    if (v == null) await db.collection('finance_rates').doc(String(inp.dataset.user)).delete().catch(console.warn);
+    else if (!isNaN(v)) await db.collection('finance_rates').doc(String(inp.dataset.user)).set({ user_id: String(inp.dataset.user), day_rate: v });
+  }));
+}
+
+function openSiteFinance(siteId) {
+  showView('view-projects');
+  loadProjectPage(parseInt(siteId));
+  const tabBtn = document.getElementById('tabFinanceBtn');
+  if (tabBtn) tabBtn.click();
+}
+
+function setupFinanceListeners() {
+  document.getElementById('finFilterStatus').addEventListener('change', renderFinanceView);
+  document.getElementById('finSearch').addEventListener('input', renderFinanceView);
+  document.getElementById('finCostForm').addEventListener('submit', ev => {
+    ev.preventDefault();
+    addFinanceCost(document.getElementById('finCostSite').value, document.getElementById('finCostDesc').value,
+      document.getElementById('finCostCategory').value, document.getElementById('finCostAmount').value, document.getElementById('finCostDate').value);
+    document.getElementById('finCostDesc').value = '';
+    document.getElementById('finCostAmount').value = '';
   });
 }

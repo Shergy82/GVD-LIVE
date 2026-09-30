@@ -27,6 +27,7 @@
       <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn">🏗️ Sites & Projects</button>
       <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn">📊 Labour Sheet</button>
       <button class="nav-item manager-admin-only" data-target="view-invoices" id="navInvoicesBtn">🧾 Invoices</button>
+      <button class="nav-item manager-admin-only" data-target="view-finance" id="navFinanceBtn">💷 Finance</button>
       <button class="nav-item manager-admin-only" data-target="view-diary" id="navDiaryBtn">📖 Diary</button>
       <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn">⚙️ Admin Settings <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
@@ -281,6 +282,7 @@
           <button class="tab-btn" data-tab="tab-proj-photos" id="tabPhotosBtn">📷 Live Photos</button>
           <button class="tab-btn" data-tab="tab-proj-pdfs" id="tabPdfsBtn">📄 PDF Documents</button>
           <button class="tab-btn" data-tab="tab-proj-po" id="tabPoBtn">🧾 Purchase Orders</button>
+          <button class="tab-btn manager-admin-only" data-tab="tab-proj-finance" id="tabFinanceBtn">💷 Finance</button>
           <button class="tab-btn admin-only" data-tab="tab-proj-customer" id="tabCustomerBtn">🏷️ Customer QR & Printout</button>
         </div>
 
@@ -312,6 +314,11 @@
           </div>
           <div class="pdf-list" id="pdfListContainer"></div>
           <div id="plasterCalcContainer" class="manager-admin-only" style="margin-top: 24px;"></div>
+        </div>
+
+        <!-- Tab: Finance (Owner / Admin / Manager only) -->
+        <div id="tab-proj-finance" class="project-tab-content manager-admin-only" style="display: none;">
+          <div id="financeTabContainer"></div>
         </div>
 
         <!-- Tab: Purchase Orders -->
@@ -452,6 +459,66 @@
           <table class="planner-table" style="min-width: 760px;">
             <thead><tr><th>Date</th><th>Invoice</th><th>Merchant</th><th>PO</th><th>Job</th><th>Net £</th><th>VAT £</th><th>Total £</th><th></th></tr></thead>
             <tbody id="invRegisterBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-finance" class="app-view manager-admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Finance</h2>
+          <p>Job values against materials, labour and extra costs. Owners, Admins and Managers only. All figures exclude VAT.</p>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <select id="finFilterStatus" class="form-control" style="width: auto;">
+            <option value="active">Active jobs</option>
+            <option value="archived">Archived jobs</option>
+            <option value="all">All jobs</option>
+          </select>
+          <input type="text" id="finSearch" class="form-control" placeholder="Search job..." style="width: 200px;">
+        </div>
+      </div>
+
+      <div id="finSummary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 16px;"></div>
+
+      <div class="site-card" style="margin-bottom: 20px;">
+        <h3 style="margin-bottom: 10px;">Jobs</h3>
+        <div style="overflow-x: auto;">
+          <table class="planner-table" style="min-width: 900px;">
+            <thead><tr><th>Job</th><th>Job value</th><th>Materials invoiced</th><th>On order</th><th>Labour</th><th>Extra costs</th><th>Total cost</th><th>Profit / loss</th><th>Margin</th></tr></thead>
+            <tbody id="finJobsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="site-card" style="margin-bottom: 20px;">
+        <h3 style="margin-bottom: 10px;">Extra costs</h3>
+        <form id="finCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px;">
+          <select id="finCostSite" class="form-control" required></select>
+          <input type="text" id="finCostDesc" class="form-control" placeholder="Description" required>
+          <select id="finCostCategory" class="form-control">
+            <option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option>
+          </select>
+          <input type="number" id="finCostAmount" class="form-control" step="0.01" min="0" placeholder="Amount £ ex VAT" required>
+          <input type="date" id="finCostDate" class="form-control" required>
+          <button type="submit" class="btn btn-primary">+ Add cost</button>
+        </form>
+        <div style="overflow-x: auto;">
+          <table class="planner-table" style="min-width: 640px;">
+            <thead><tr><th>Date</th><th>Job</th><th>Description</th><th>Category</th><th>Amount</th><th></th></tr></thead>
+            <tbody id="finCostsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="site-card" id="finRatesCard">
+        <h3 style="margin-bottom: 6px;">Day rates</h3>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. Only Owners and Admins can change rates.</p>
+        <div style="overflow-x: auto;">
+          <table class="planner-table" style="min-width: 420px;">
+            <thead><tr><th>Person</th><th>Role</th><th>Day rate £</th></tr></thead>
+            <tbody id="finRatesBody"></tbody>
           </table>
         </div>
       </div>
@@ -716,6 +783,10 @@
           <option value="Restricted">Restricted</option>
         </select>
       </div>
+      <div class="form-group" id="userModalRateGroup">
+        <label for="userModalDayRate">Day rate £ (finance - Owners and Admins only)</label>
+        <input type="number" id="userModalDayRate" class="form-control" step="0.01" min="0" placeholder="e.g. 200">
+      </div>
       <div class="form-group">
         <label for="userModalColor">Planner colour</label>
         <input type="color" id="userModalColor" style="width: 64px; height: 40px; padding: 0; border: none; background: none; cursor: pointer;">
@@ -874,6 +945,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=28.0"></script>
+  <script src="/app.js?v=29.0"></script>
 </body>
 </html>
