@@ -2124,7 +2124,7 @@ function renderProjectTabContent(site) {
       const canDelete = isManagementUser(currentUser) || String(p.uploader_id) === String(currentUser.id);
       return `
         <div class="photo-card" data-photo-id="${p.id}" style="cursor: pointer;">
-          <img src="${p.data_url}" class="photo-img" alt="Project Photo" title="Click to enlarge & download">
+          <img src="${p.file_url || p.data_url}" class="photo-img" loading="lazy" alt="Project Photo" title="Click to enlarge & download">
           <div class="photo-meta">
             <div>
               <strong>${p.uploader_name || 'Operative'}</strong><br>
@@ -2151,6 +2151,9 @@ function renderProjectTabContent(site) {
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           if (confirm('Delete this photo permanently?')) {
+            if (photo.storage_path && typeof firebase.storage === 'function') {
+              await getStorageForBucket(photo.storage_bucket || STORAGE_BUCKETS[0]).ref(photo.storage_path).delete().catch(console.warn);
+            }
             if (db) await db.collection('photos').doc(photoId).delete();
             allPhotos = allPhotos.filter(p => String(p.id) !== photoId);
             deduplicatePhotos();
@@ -2170,12 +2173,21 @@ function openPhotoLightbox(photo) {
   const dlBtn = document.getElementById('lightboxDownloadBtn');
   const delBtn = document.getElementById('lightboxDeleteBtn');
 
-  imgEl.src = photo.data_url;
+  imgEl.src = photo.file_url || photo.data_url;
   const filename = photo.original_name || photo.filename || `Site_Photo_${photo.id}.png`;
   
   dlBtn.onclick = (e) => {
     e.preventDefault();
-    forceDownloadFile(filename, photo.data_url, 'image/png');
+    if (photo.storage_path) {
+      const link = document.createElement('a');
+      link.href = `/files/${encodeURIComponent(photo.id)}?dl=1`;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => link.remove(), 1000);
+    } else {
+      forceDownloadFile(filename, photo.data_url, 'image/png');
+    }
   };
 
   metaEl.innerHTML = `Uploaded by <strong>${photo.uploader_name || 'Operative'}</strong> on ${formatUKDate(photo.created_at)}`;
@@ -2186,6 +2198,9 @@ function openPhotoLightbox(photo) {
     delBtn.onclick = async () => {
       if (confirm('Delete this photo permanently?')) {
         closeModal('modalPhotoLightbox');
+        if (photo.storage_path && typeof firebase.storage === 'function') {
+          await getStorageForBucket(photo.storage_bucket || STORAGE_BUCKETS[0]).ref(photo.storage_path).delete().catch(console.warn);
+        }
         if (db) await db.collection('photos').doc(String(photo.id)).delete();
         allPhotos = allPhotos.filter(p => String(p.id) !== String(photo.id));
         deduplicatePhotos();
@@ -3496,32 +3511,90 @@ async function handleSaveShift(e) {
   }
 }
 
-function handlePhotoUpload(e) {
-  const file = e.target.files[0];
-  if (!file || !activeSiteId) return;
+// Shrinks big phone photos (typically 3-8MB) to a sensible size before uploading
+async function compressImage(file, maxDim = 1800, quality = 0.82) {
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+    return blob && blob.size < file.size ? blob : file;
+  } catch (err) {
+    return file; // e.g. a format the browser cannot decode - upload as it is
+  }
+}
 
-  const reader = new FileReader();
-  reader.onload = async (evt) => {
-    const nextPhotoId = 'photo_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-    const newPhoto = {
-      id: nextPhotoId,
-      site_id: String(activeSiteId),
-      uploader_id: currentUser.id,
-      uploader_name: currentUser.full_name,
-      filename: file.name,
-      data_url: evt.target.result,
-      created_at: new Date().toISOString()
-    };
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 
-    if (db) await db.collection('photos').doc(nextPhotoId).set(newPhoto);
-    allPhotos.push(newPhoto);
-    deduplicatePhotos();
-    saveLocalStorageData();
-    e.target.value = '';
-    showGreenToast('📷 Photo uploaded successfully!');
-    loadProjectPage(activeSiteId);
+async function uploadOnePhoto(file, index, siteId) {
+  const blob = await compressImage(file);
+  const id = 'photo_' + Date.now() + '_' + index + '_' + Math.floor(Math.random() * 1000);
+  const baseName = (file.name || 'photo').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'photo';
+  const filename = blob === file ? file.name : baseName + '.jpg';
+  const photo = {
+    id, site_id: String(siteId), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+    filename, created_at: new Date().toISOString()
   };
-  reader.readAsDataURL(file);
+  try {
+    if (typeof firebase === 'undefined' || typeof firebase.storage !== 'function') throw new Error('Storage not loaded');
+    const path = `site_files/${siteId}/${id}_${baseName}.jpg`;
+    const up = await uploadSiteFile(path, blob);
+    photo.file_url = up.url;
+    photo.storage_bucket = up.bucket;
+    photo.storage_path = path;
+  } catch (err) {
+    // Storage unavailable: keep a smaller copy in the database instead
+    let small = await compressImage(file, 1200, 0.6);
+    let dataUrl = await blobToDataURL(small);
+    if (dataUrl.length > 950000) { small = await compressImage(file, 900, 0.5); dataUrl = await blobToDataURL(small); }
+    if (dataUrl.length > 950000) throw new Error('Photo is too large to store');
+    photo.data_url = dataUrl;
+  }
+  if (db) await db.collection('photos').doc(id).set(photo);
+  if (!allPhotos.some(p => String(p.id) === id)) allPhotos.push(photo);
+  return photo;
+}
+
+async function handlePhotoUpload(e) {
+  const input = e.target;
+  const files = Array.from(input.files || []).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp|gif)$/i.test(f.name));
+  if (!files.length || !activeSiteId) { input.value = ''; return; }
+  const siteId = activeSiteId;
+  let done = 0, failed = 0, next = 0;
+  showGreenToast(`⏳ Uploading ${files.length} photo${files.length > 1 ? 's' : ''}...`);
+
+  // A few at a time so a big batch does not swamp the phone
+  const worker = async () => {
+    while (next < files.length) {
+      const i = next++;
+      try {
+        await uploadOnePhoto(files[i], i, siteId);
+        done++;
+      } catch (err) {
+        console.warn('Photo upload failed:', err);
+        failed++;
+      }
+      showGreenToast(`⏳ Uploading photos ${done + failed} of ${files.length}...`);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+
+  input.value = '';
+  deduplicatePhotos();
+  saveLocalStorageData();
+  showGreenToast(failed ? `📷 ${done} uploaded, ${failed} failed` : `📷 ${done} photo${done > 1 ? 's' : ''} uploaded`);
+  if (failed) alert(`${failed} photo${failed > 1 ? 's' : ''} could not be uploaded. Please try those again.`);
+  loadProjectPage(siteId);
 }
 
 const STORAGE_BUCKETS = ['gs://gvd-live.firebasestorage.app', 'gs://gvd-live.appspot.com'];

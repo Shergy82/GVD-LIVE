@@ -110,7 +110,8 @@ exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (r
   try {
     const id = decodeURIComponent((req.path || '').split('/').filter(Boolean).pop() || '');
     if (!id) return res.status(400).send('Missing file id');
-    const snap = await db.collection('pdfs').doc(id).get();
+    const isPhoto = id.startsWith('photo_');
+    const snap = await db.collection(isPhoto ? 'photos' : 'pdfs').doc(id).get();
     const d = snap.exists ? snap.data() : null;
     if (!d || !d.storage_path) return res.status(404).send('File not found');
 
@@ -118,8 +119,9 @@ exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (r
     const file = bucketName ? getStorage().bucket(bucketName).file(d.storage_path) : getStorage().bucket().file(d.storage_path);
     const [meta] = await file.getMetadata();
     const isPdf = /\.pdf$/i.test(d.filename || '');
+    const inline = isPhoto ? req.query.dl !== '1' : isPdf;
     res.set('Content-Type', isPdf ? 'application/pdf' : (meta.contentType || 'application/octet-stream'));
-    res.set('Content-Disposition', `${isPdf ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.filename || 'file')}`);
+    res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.filename || 'file')}`);
     if (meta.size) res.set('Content-Length', String(meta.size));
     res.set('Cache-Control', 'private, max-age=300');
     file.createReadStream()
