@@ -4017,6 +4017,10 @@ function openUserModal(userId) {
   if (user.phone) contact.push(`<a href="tel:${diaryEsc(user.phone)}" style="color: var(--primary);">📞 ${diaryEsc(user.phone)}</a>`);
   if (user.email) contact.push(`<a href="mailto:${diaryEsc(user.email)}" style="color: var(--primary); word-break: break-all;">✉️ ${diaryEsc(user.email)}</a>`);
   document.getElementById('userModalContact').innerHTML = contact.join('');
+  const emailInput = document.getElementById('userModalEmail');
+  emailInput.value = user.email || '';
+  emailInput.disabled = user.email === 'phil@gvdcontracts.com'; // the Owner account is recognised by this address
+  document.getElementById('userModalPhone').value = user.phone || '';
   document.getElementById('userModalJob').value = user.job_title || (user.email === 'phil@gvdcontracts.com' ? 'Managing Director' : '');
   document.getElementById('userModalRole').value = user.role || 'Operative';
   document.getElementById('userModalStatus').value = user.status || 'Pending';
@@ -4041,7 +4045,15 @@ function openUserModal(userId) {
 async function handleSaveUserModal() {
   const user = allUsers.find(u => String(u.id) === document.getElementById('userModalId').value);
   if (!user) return;
+  const newEmail = document.getElementById('userModalEmail').value.trim().toLowerCase();
+  if (newEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) { alert('Please enter a valid email address.'); return; }
+  if (newEmail && allUsers.some(u => String(u.id) !== String(user.id) && String(u.email || '').toLowerCase() === newEmail)) {
+    alert('Another account already uses that email address.');
+    return;
+  }
   const updates = {
+    ...(newEmail ? { email: newEmail } : {}),
+    phone: document.getElementById('userModalPhone').value.trim(),
     job_title: document.getElementById('userModalJob').value.trim(),
     role: document.getElementById('userModalRole').value,
     status: document.getElementById('userModalStatus').value,
