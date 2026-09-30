@@ -4827,7 +4827,7 @@ function renderSiteFinance(site) {
   const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date))).map(c => `<tr>
       <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
       <td style="text-align: right;">${money(c.amount)}</td>
-      <td><button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
+      <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
 
   host.innerHTML = `
     <div class="site-card" style="margin-bottom: 16px;">
@@ -4883,6 +4883,7 @@ function renderSiteFinance(site) {
       host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value, host.querySelector('#finSiteCostContractor').value);
   });
   host.querySelectorAll('.fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
+  host.querySelectorAll('.fin-edit-cost').forEach(b => b.addEventListener('click', () => openCostEdit(b.dataset.id)));
 }
 
 async function saveJobValue(siteId, raw) {
@@ -4967,9 +4968,10 @@ function renderFinanceView(force) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 100).map(c => {
       const site = allSites.find(s => String(s.id) === String(c.site_id));
       return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(site ? site.address : 'Unknown job')}</td><td>${diaryEsc(c.description)}${c.contractor_id ? ` <small style="color: var(--text-muted);">(${diaryEsc((allUsers.find(u => String(u.id) === String(c.contractor_id)) || {}).full_name || 'Unknown')})</small>` : ''}</td><td>${diaryEsc(c.category || '')}</td><td>${money(c.amount)}</td>
-        <td><button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
+        <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
     }).join('') || '<tr><td colspan="6" style="color: var(--text-muted);">No extra costs logged.</td></tr>';
   document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
+  document.querySelectorAll('#finCostsBody .fin-edit-cost').forEach(b => b.addEventListener('click', () => openCostEdit(b.dataset.id)));
 
   // Day rates (Owner / Admin can edit)
   const canEditRates = isOwnerOrAdminUser(currentUser);
@@ -5003,7 +5005,46 @@ function openSiteFinance(siteId) {
   if (tabBtn) tabBtn.click();
 }
 
+function openCostEdit(id) {
+  const c = financeCosts.find(x => String(x.id) === String(id));
+  if (!c || !isManagementUser(currentUser)) return;
+  document.getElementById('costEditId').value = c.id;
+  document.getElementById('costEditSite').innerHTML = allSites.map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(c.site_id) ? ' selected' : ''}>${diaryEsc(x.address)}${x.is_archived ? ' (archived)' : ''}</option>`).join('');
+  document.getElementById('costEditDesc').value = c.description || '';
+  document.getElementById('costEditCategory').value = c.category || 'Other';
+  document.getElementById('costEditContractor').innerHTML = contractorOptionsHtml(c.contractor_id);
+  document.getElementById('costEditAmount').value = c.amount != null ? c.amount : '';
+  document.getElementById('costEditDate').value = c.date || diaryDateKey(new Date());
+  openModal('modalCostEdit');
+}
+
+async function handleSaveCostEdit(e) {
+  e.preventDefault();
+  if (!db || !isManagementUser(currentUser)) return;
+  const id = document.getElementById('costEditId').value;
+  const amt = parseFloat(String(document.getElementById('costEditAmount').value).replace(/[£,\s]/g, ''));
+  if (isNaN(amt)) { alert('Please enter a valid amount.'); return; }
+  await db.collection('finance_costs').doc(String(id)).update({
+    site_id: document.getElementById('costEditSite').value,
+    description: document.getElementById('costEditDesc').value.trim(),
+    category: document.getElementById('costEditCategory').value,
+    contractor_id: document.getElementById('costEditContractor').value || null,
+    amount: Math.round(amt * 100) / 100,
+    date: document.getElementById('costEditDate').value,
+    edited_by: currentUser.full_name,
+    edited_at: new Date().toISOString()
+  }).catch(err => { alert('Could not save: ' + err.message); });
+  closeModal('modalCostEdit');
+  showGreenToast('Cost updated');
+}
+
 function setupFinanceListeners() {
+  document.getElementById('costEditForm').addEventListener('submit', handleSaveCostEdit);
+  document.getElementById('btnCostEditDelete').addEventListener('click', async () => {
+    const id = document.getElementById('costEditId').value;
+    closeModal('modalCostEdit');
+    await deleteFinanceCost(id);
+  });
   // Tidy typed amounts like "£1,250.50" into plain numbers
   document.addEventListener('change', ev => {
     const t = ev.target;

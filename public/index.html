@@ -846,6 +846,32 @@
     </div>
   </div>
 
+  <!-- Modal: Edit extra cost -->
+  <div class="modal-overlay" id="modalCostEdit">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Edit Cost</h3>
+        <button class="close-btn" data-close="modalCostEdit">&times;</button>
+      </div>
+      <form id="costEditForm">
+        <input type="hidden" id="costEditId">
+        <div class="form-group"><label for="costEditSite">Job</label><select id="costEditSite" class="form-control" required></select></div>
+        <div class="form-group"><label for="costEditDesc">Description</label><input type="text" id="costEditDesc" class="form-control" required></div>
+        <div class="form-group"><label for="costEditCategory">Category</label>
+          <select id="costEditCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select></div>
+        <div class="form-group"><label for="costEditContractor">Paid to</label><select id="costEditContractor" class="form-control"></select></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="costEditAmount">Amount £ ex VAT</label><input type="text" inputmode="decimal" autocomplete="off" id="costEditAmount" class="form-control" required></div>
+          <div class="form-group"><label for="costEditDate">Date</label><input type="date" id="costEditDate" class="form-control" required></div>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 12px;">
+          <button type="submit" class="btn btn-primary">Save changes</button>
+          <button type="button" class="btn btn-danger" id="btnCostEditDelete">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Modal: Request Purchase Order -->
   <div class="modal-overlay" id="modalPO">
     <div class="modal-card">
@@ -951,6 +977,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=31.0"></script>
+  <script src="/app.js?v=32.0"></script>
 </body>
 </html>
