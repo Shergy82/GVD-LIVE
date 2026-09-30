@@ -26,6 +26,7 @@
       <button class="nav-item manager-admin-only" data-target="view-planner" id="navPlannerBtn">📅 Planner</button>
       <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn">🏗️ Sites & Projects</button>
       <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn">📊 Labour Sheet</button>
+      <button class="nav-item manager-admin-only" data-target="view-invoices" id="navInvoicesBtn">🧾 Invoices</button>
       <button class="nav-item manager-admin-only" data-target="view-diary" id="navDiaryBtn">📖 Diary</button>
       <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn">⚙️ Admin Settings <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
@@ -423,6 +424,39 @@
       <div id="diaryAgenda"></div>
     </div>
 
+    <div id="view-invoices" class="app-view manager-admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Invoices</h2>
+          <p>Import merchant invoices. The app finds the PO number in each PDF and adds the cost (ex VAT) to that job.</p>
+        </div>
+      </div>
+
+      <div class="site-card" style="margin-bottom: 20px;">
+        <h3 style="margin-bottom: 10px;">📥 Import invoices</h3>
+        <input type="file" id="invBatchInput" accept="application/pdf,.pdf" multiple class="form-control">
+        <p id="invBatchReading" style="display: none; margin-top: 10px;">⏳ Reading invoices...</p>
+        <div id="invBatchList" style="margin-top: 14px;"></div>
+        <button type="button" class="btn btn-primary" id="btnInvImportSelected" style="display: none; margin-top: 8px;">Import ticked invoices</button>
+      </div>
+
+      <div class="site-card">
+        <h3 style="margin-bottom: 10px;">Invoice register</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px;">
+          <input type="text" id="invSearch" class="form-control" placeholder="Search invoice no, PO, merchant...">
+          <select id="invFilterSite" class="form-control"></select>
+          <select id="invFilterMerchant" class="form-control"></select>
+        </div>
+        <div id="invRegisterSummary" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 8px;"></div>
+        <div style="overflow-x: auto;">
+          <table class="planner-table" style="min-width: 760px;">
+            <thead><tr><th>Date</th><th>Invoice</th><th>Merchant</th><th>PO</th><th>Job</th><th>Net £</th><th>VAT £</th><th>Total £</th><th></th></tr></thead>
+            <tbody id="invRegisterBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <div id="view-admin" class="app-view admin-only" style="display: none;">
       <div class="section-header">
         <div class="section-title-group">
@@ -735,42 +769,6 @@
     </div>
   </div>
 
-  <!-- Modal: Import supplier invoice -->
-  <div class="modal-overlay" id="modalInvoice">
-    <div class="modal-card">
-      <div class="modal-header">
-        <h3>Import Invoice</h3>
-        <button class="close-btn" data-close="modalInvoice">&times;</button>
-      </div>
-      <div id="invStepPick">
-        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;">Choose the merchant's invoice (PDF). The app reads it, finds the PO / job and the price excluding VAT, and you confirm.</p>
-        <input type="file" id="invFileInput" accept="application/pdf,.pdf" class="form-control">
-        <p id="invReading" style="display: none; margin-top: 12px;">⏳ Reading invoice...</p>
-      </div>
-      <form id="invForm" style="display: none;">
-        <div id="invFoundNote" style="font-size: 0.85rem; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-primary); border: 1px solid var(--border-color); margin-bottom: 12px;"></div>
-        <div class="form-group">
-          <label for="invSiteSelect">Job / site</label>
-          <select id="invSiteSelect" class="form-control" required></select>
-        </div>
-        <div class="form-group">
-          <label for="invPoSelect">Purchase order</label>
-          <select id="invPoSelect" class="form-control"></select>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          <div class="form-group"><label for="invMerchant">Merchant</label><input type="text" id="invMerchant" class="form-control"></div>
-          <div class="form-group"><label for="invNo">Invoice no.</label><input type="text" id="invNo" class="form-control"></div>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-          <div class="form-group"><label for="invNet">Net £ (ex VAT)</label><input type="number" id="invNet" class="form-control" step="0.01" min="0" required></div>
-          <div class="form-group"><label for="invVat">VAT £</label><input type="number" id="invVat" class="form-control" step="0.01" min="0"></div>
-          <div class="form-group"><label for="invGross">Total £</label><input type="number" id="invGross" class="form-control" step="0.01" min="0"></div>
-        </div>
-        <button type="submit" class="btn btn-primary" id="btnConfirmInvoice" style="width: 100%;">Attach invoice &amp; set job cost</button>
-      </form>
-    </div>
-  </div>
-
   <!-- Modal: Request Purchase Order -->
   <div class="modal-overlay" id="modalPO">
     <div class="modal-card">
@@ -876,6 +874,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=27.0"></script>
+  <script src="/app.js?v=28.0"></script>
 </body>
 </html>

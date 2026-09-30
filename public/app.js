@@ -315,6 +315,8 @@ function initFirestoreSync() {
     });
     saveLocalStorageData();
     if (activeSiteId) loadProjectPage(activeSiteId);
+    const invView = document.getElementById('view-invoices');
+    if (invView && invView.style.display !== 'none') renderInvoiceRegister();
   }, err => console.warn('Firestore pdfs error:', err));
 
   // Real-time App Settings Sync
@@ -572,6 +574,8 @@ function renderActiveView() {
     renderAdminSettingsView();
   } else if (viewId === 'view-diary') {
     renderDiaryView();
+  } else if (viewId === 'view-invoices') {
+    renderInvoicesView();
   }
 }
 
@@ -2786,9 +2790,7 @@ function setupEventListeners() {
 
   setupDiaryListeners();
   document.getElementById('poForm').addEventListener('submit', handleRequestPO);
-  document.getElementById('invFileInput').addEventListener('change', handleInvoiceFilePicked);
-  document.getElementById('invForm').addEventListener('submit', handleConfirmInvoice);
-  document.getElementById('invSiteSelect').addEventListener('change', refreshInvoicePoOptions);
+  setupInvoiceListeners();
   document.getElementById('btnCopyPO').addEventListener('click', copyPONumber);
   const resetFormEl = document.getElementById('resetForm');
   if (resetFormEl) resetFormEl.addEventListener('submit', handleSetNewPassword);
@@ -4213,7 +4215,6 @@ function renderPOTab(site) {
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
       <p style="color: var(--text-muted);">${isMgr ? 'All purchase orders raised for this site' : 'Your purchase orders for this site'}</p>
       <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-        ${isMgr ? '<button type="button" class="btn btn-outline btn-sm" id="btnImportInvoice">📥 Import invoice</button>' : ''}
         <button type="button" class="btn btn-primary btn-sm" id="btnNewPO">🧾 Request PO number</button>
       </div>
     </div>
@@ -4221,8 +4222,6 @@ function renderPOTab(site) {
     ${itemsHtml}`;
 
   host.querySelector('#btnNewPO').onclick = () => openPOModal(parseInt(site.id));
-  const importBtn = host.querySelector('#btnImportInvoice');
-  if (importBtn) importBtn.onclick = () => openInvoiceModal(parseInt(site.id));
   host.querySelectorAll('.po-status').forEach(sel => sel.addEventListener('change', () => updatePO(sel.dataset.po, { status: sel.value })));
   host.querySelectorAll('.po-invoice').forEach(inp => inp.addEventListener('change', () => {
     const v = parseFloat(inp.value);
@@ -4310,7 +4309,6 @@ function copyPONumber() {
 // INVOICE IMPORT (Owner / Admin / Manager). Reads a text PDF in the browser (pdf.js, free),
 // finds the PO reference or delivery address, and the price excluding VAT, then the person confirms.
 // -------------------------------------------------------------------
-let pendingInvoice = null;
 let pdfJsPromise = null;
 
 function loadPdfJs() {
@@ -4410,130 +4408,249 @@ function matchSiteByAddress(text, sites) {
   return best ? best.site : null;
 }
 
-function openInvoiceModal(siteId) {
-  pendingInvoice = { siteId, file: null, parsed: null };
-  document.getElementById('invStepPick').style.display = '';
-  document.getElementById('invForm').style.display = 'none';
-  document.getElementById('invReading').style.display = 'none';
-  document.getElementById('invFileInput').value = '';
-  openModal('modalInvoice');
+// ---- Batch import ----
+let invBatch = [];
+
+function invSiteOptions(selectedId) {
+  return `<option value="">Choose job...</option>` + allSites.filter(x => !x.is_archived || String(x.id) === String(selectedId))
+    .map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(selectedId) ? ' selected' : ''}>${diaryEsc(x.address)}</option>`).join('');
 }
 
-async function handleInvoiceFilePicked(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') { alert('Please choose a PDF invoice.'); return; }
-  if (file.size > MAX_SITE_FILE_MB * 1024 * 1024) { alert(`This file is over ${MAX_SITE_FILE_MB}MB.`); return; }
-  document.getElementById('invReading').style.display = '';
-  let parsed;
-  try {
-    parsed = parseInvoiceText(await extractPdfLines(file));
-  } catch (err) {
-    console.warn('Invoice read failed:', err);
-    parsed = { net: null, vat: null, gross: null, po: null, invNo: null, date: null, merchant: null, deliverText: '', hasText: false };
-  }
-  document.getElementById('invReading').style.display = 'none';
-  pendingInvoice.file = file;
-  pendingInvoice.parsed = parsed;
+function invPoOptions(siteId, selectedPo) {
+  const pos = allPOs.filter(po => String(po.site_id) === String(siteId) && po.status !== 'Cancelled')
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  return `<option value="">➕ No PO - record as new invoice</option>` + pos.map(po =>
+    `<option value="${diaryEsc(po.po_number)}"${po.po_number === selectedPo ? ' selected' : ''}>${diaryEsc(po.po_number)} - ${diaryEsc(po.merchant)} - ${diaryEsc(String(po.description || '').slice(0, 30))}</option>`).join('');
+}
 
-  // Work out which job / PO this belongs to
-  let matchedPo = parsed.po ? allPOs.find(po => String(po.po_number).toUpperCase() === parsed.po) : null;
+function analyseInvoice(parsed) {
+  const matchedPo = parsed.po ? allPOs.find(po => String(po.po_number).toUpperCase() === parsed.po) : null;
   let site = matchedPo ? allSites.find(s => String(s.id) === String(matchedPo.site_id)) : null;
-  let how = matchedPo ? `PO number ${matchedPo.po_number} found on the invoice` : '';
+  let how = matchedPo ? `✅ PO ${matchedPo.po_number} found on the invoice` : '';
   if (!site) {
     site = matchSiteByAddress(parsed.deliverText, allSites.filter(s => !s.is_archived));
-    if (site) how = `Job matched from the delivery address (${site.address})`;
+    if (site) how = `📍 No PO number found - matched from the delivery address`;
   }
-  if (!site) {
-    site = allSites.find(s => parseInt(s.id) === parseInt(pendingInvoice.siteId)) || null;
-    how = 'No PO number or matching address found - defaulted to the job you opened. Please check.';
-  }
-
-  const siteSel = document.getElementById('invSiteSelect');
-  siteSel.innerHTML = allSites.filter(s => !s.is_archived || (site && s.id === site.id))
-    .map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
-  if (site) siteSel.value = String(site.id);
-  refreshInvoicePoOptions(matchedPo ? matchedPo.po_number : null);
-
-  document.getElementById('invMerchant').value = parsed.merchant || (matchedPo ? matchedPo.merchant : '') || '';
-  document.getElementById('invNo').value = parsed.invNo || '';
-  document.getElementById('invNet').value = parsed.net != null ? parsed.net.toFixed(2) : '';
-  document.getElementById('invVat').value = parsed.vat != null ? parsed.vat.toFixed(2) : '';
-  document.getElementById('invGross').value = parsed.gross != null ? parsed.gross.toFixed(2) : '';
-
-  const priceNote = !parsed.hasText ? 'This looks like a scan or photo, so the price could not be read - please type the amounts in.'
-    : parsed.net == null ? 'Could not find the price - please type it in.'
-    : parsed.netEstimated ? 'Net price is estimated from the total - please check it.'
-    : parsed.totalsAgree ? 'Net + VAT adds up to the total.' : 'Please check the amounts.';
-  document.getElementById('invFoundNote').innerHTML = `📄 ${diaryEsc(file.name)}<br>${diaryEsc(how)}<br>${diaryEsc(priceNote)}`;
-  document.getElementById('invStepPick').style.display = 'none';
-  document.getElementById('invForm').style.display = '';
+  if (!site) how = parsed.po ? `⚠️ ${parsed.po} is on the invoice but not in the app - choose the job` : '⚠️ No PO number or matching address found - choose the job';
+  const duplicate = parsed.invNo && allPdfs.some(f => f.file_type === 'invoice' && f.invoice_no === parsed.invNo);
+  const priceOk = parsed.net != null && parsed.hasText;
+  const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated && !duplicate;
+  return { matchedPo, site, how, duplicate, confident };
 }
 
-function refreshInvoicePoOptions(preselect) {
-  const siteId = document.getElementById('invSiteSelect').value;
-  const pos = allPOs.filter(po => String(po.site_id) === String(siteId) && po.status !== 'Cancelled' && !po.invoice_no)
-    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-  const sel = document.getElementById('invPoSelect');
-  sel.innerHTML = `<option value="">➕ No PO - record as a new invoice</option>` + pos.map(po =>
-    `<option value="${diaryEsc(po.po_number)}">${diaryEsc(po.po_number)} - ${diaryEsc(po.merchant)} - ${diaryEsc(po.description).slice(0, 40)}</option>`).join('');
-  if (typeof preselect === 'string' && preselect) sel.value = preselect;
-}
-
-async function handleConfirmInvoice(e) {
-  e.preventDefault();
-  if (!pendingInvoice || !pendingInvoice.file || !db || !isManagementUser(currentUser)) return;
-  const btn = document.getElementById('btnConfirmInvoice');
-  const site = allSites.find(s => String(s.id) === document.getElementById('invSiteSelect').value);
-  if (!site) { alert('Please choose the job.'); return; }
-  const net = parseFloat(document.getElementById('invNet').value);
-  const vat = parseFloat(document.getElementById('invVat').value);
-  const gross = parseFloat(document.getElementById('invGross').value);
-  const invNo = document.getElementById('invNo').value.trim();
-  const merchant = document.getElementById('invMerchant').value.trim();
-  const poNumber = document.getElementById('invPoSelect').value;
-  if (isNaN(net)) { alert('Please enter the net price.'); return; }
-  if (invNo && allPOs.some(po => po.invoice_no === invNo && String(po.site_id) === String(site.id)) &&
-      !confirm(`Invoice ${invNo} has already been imported for this job. Import it again?`)) return;
-
-  btn.disabled = true;
-  btn.textContent = 'Uploading...';
-  try {
-    const file = pendingInvoice.file;
-    const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const path = `site_files/${site.id}/${fileId}_${safeName}`;
-    const up = await uploadSiteFile(path, file);
-    const invoiceNet = Math.round(net * 100) / 100;
-    const targetPo = poNumber || `INV-${String(invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
-
-    await db.collection('pdfs').doc(fileId).set({
-      id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
-      filename: file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
-      po_number: targetPo, invoice_no: invNo, invoice_net: invoiceNet, invoice_vat: isNaN(vat) ? null : vat, invoice_gross: isNaN(gross) ? null : gross,
-      created_at: new Date().toISOString()
-    });
-
-    const invoiceFields = {
-      status: 'Invoiced', invoice_value: invoiceNet, invoice_vat: isNaN(vat) ? null : vat, invoice_gross: isNaN(gross) ? null : gross,
-      invoice_no: invNo || null, invoice_file_id: fileId, invoiced_at: new Date().toISOString()
-    };
-    if (poNumber) {
-      await db.collection('purchase_orders').doc(poNumber).update(invoiceFields);
+async function handleInvoiceBatchPicked(e) {
+  const files = Array.from(e.target.files || []);
+  if (!files.length) return;
+  document.getElementById('invBatchReading').style.display = '';
+  invBatch = [];
+  for (const file of files) {
+    const item = { key: 'b' + Date.now() + Math.random().toString(36).slice(2, 6), file, status: 'ready', message: '' };
+    if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+      item.status = 'error'; item.message = 'Not a PDF';
+    } else if (file.size > MAX_SITE_FILE_MB * 1024 * 1024) {
+      item.status = 'error'; item.message = `Over ${MAX_SITE_FILE_MB}MB`;
     } else {
-      await db.collection('purchase_orders').doc(targetPo).set({
-        po_number: targetPo, seq: null, site_id: String(site.id), site_address: site.address,
-        requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
-        merchant: merchant || 'Unknown merchant', description: `Invoice ${invNo || ''} (no PO)`.trim(), est_value: null,
-        created_at: new Date().toISOString(), ...invoiceFields
+      let parsed;
+      try { parsed = parseInvoiceText(await extractPdfLines(file)); }
+      catch (err) { parsed = { net: null, vat: null, gross: null, po: null, invNo: null, merchant: null, date: null, deliverText: '', hasText: false }; }
+      const a = analyseInvoice(parsed);
+      Object.assign(item, {
+        parsed, how: a.how, duplicate: a.duplicate, confident: a.confident,
+        siteId: a.site ? String(a.site.id) : '', poNumber: a.matchedPo ? a.matchedPo.po_number : '',
+        net: parsed.net, vat: parsed.vat, gross: parsed.gross, invNo: parsed.invNo || '',
+        merchant: parsed.merchant || (a.matchedPo ? a.matchedPo.merchant : '') || '', date: parsed.date || '',
+        selected: a.confident,
+        priceNote: !parsed.hasText ? 'Looks like a scan/photo - type the price in.' : parsed.net == null ? 'Price not found - type it in.'
+          : parsed.netEstimated ? 'Net price estimated from the total - check it.' : parsed.totalsAgree ? '' : 'Check the amounts.'
       });
     }
-    closeModal('modalInvoice');
-    showGreenToast(`🧾 Invoice attached - ${formatPounds(invoiceNet)} ex VAT added to ${site.address}`);
-    if (activeSiteId) loadProjectPage(activeSiteId);
-  } catch (err) {
-    alert('Could not import the invoice: ' + err.message);
+    invBatch.push(item);
+  }
+  document.getElementById('invBatchReading').style.display = 'none';
+  e.target.value = '';
+  renderInvBatch();
+}
+
+function renderInvBatch() {
+  const host = document.getElementById('invBatchList');
+  const btn = document.getElementById('btnInvImportSelected');
+  if (!invBatch.length) { host.innerHTML = ''; btn.style.display = 'none'; return; }
+  host.innerHTML = invBatch.map(it => {
+    if (it.status === 'error') return `<div class="diary-agenda-item" style="cursor: default; border-color: var(--danger);">❌ ${diaryEsc(it.file.name)} - ${diaryEsc(it.message)}</div>`;
+    if (it.status === 'done') return `<div class="diary-agenda-item" style="cursor: default; border-color: var(--success);">✅ ${diaryEsc(it.file.name)} - ${diaryEsc(it.message)}</div>`;
+    return `<div class="diary-agenda-item" data-key="${it.key}" style="cursor: default;${it.confident ? ' border-color: var(--success);' : ' border-color: var(--warning);'}">
+      <label style="display: flex; gap: 8px; align-items: center; font-weight: 700;"><input type="checkbox" class="inv-select"${it.selected ? ' checked' : ''}> ${diaryEsc(it.file.name)}</label>
+      <div style="font-size: 0.8rem; margin: 4px 0;">${diaryEsc(it.how)}${it.duplicate ? ' · ⚠️ invoice number already imported' : ''}${it.priceNote ? ' · ' + diaryEsc(it.priceNote) : ''}</div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px;">
+        <select class="form-control inv-site" style="min-height: 34px; padding: 4px 8px;">${invSiteOptions(it.siteId)}</select>
+        <select class="form-control inv-po" style="min-height: 34px; padding: 4px 8px;">${invPoOptions(it.siteId, it.poNumber)}</select>
+        <input class="form-control inv-merchant" placeholder="Merchant" value="${diaryEsc(it.merchant)}" style="min-height: 34px; padding: 4px 8px;">
+        <input class="form-control inv-no" placeholder="Invoice no." value="${diaryEsc(it.invNo)}" style="min-height: 34px; padding: 4px 8px;">
+        <input type="number" step="0.01" min="0" class="form-control inv-net" placeholder="Net £ ex VAT" value="${it.net != null ? Number(it.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+        <input type="number" step="0.01" min="0" class="form-control inv-vat" placeholder="VAT £" value="${it.vat != null ? Number(it.vat).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+        <input type="number" step="0.01" min="0" class="form-control inv-gross" placeholder="Total £" value="${it.gross != null ? Number(it.gross).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+      </div>
+    </div>`;
+  }).join('');
+  btn.style.display = invBatch.some(i => i.status === 'ready') ? '' : 'none';
+
+  host.querySelectorAll('[data-key]').forEach(row => {
+    const it = invBatch.find(x => x.key === row.dataset.key);
+    const bind = (sel, fn) => row.querySelector(sel).addEventListener('change', fn);
+    bind('.inv-select', ev => { it.selected = ev.target.checked; });
+    bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; row.querySelector('.inv-po').innerHTML = invPoOptions(it.siteId, ''); });
+    bind('.inv-po', ev => { it.poNumber = ev.target.value; });
+    bind('.inv-merchant', ev => { it.merchant = ev.target.value.trim(); });
+    bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); });
+    bind('.inv-net', ev => { it.net = ev.target.value === '' ? null : parseFloat(ev.target.value); });
+    bind('.inv-vat', ev => { it.vat = ev.target.value === '' ? null : parseFloat(ev.target.value); });
+    bind('.inv-gross', ev => { it.gross = ev.target.value === '' ? null : parseFloat(ev.target.value); });
+  });
+}
+
+async function recalcPoFromInvoices(poNumber, extraFiles = []) {
+  const files = allPdfs.filter(f => f.file_type === 'invoice' && f.po_number === poNumber && !extraFiles.some(x => x.id === f.id)).concat(extraFiles);
+  const sum = key => Math.round(files.reduce((t, f) => t + (parseFloat(f[key]) || 0), 0) * 100) / 100;
+  if (!files.length) return { status: 'Requested', invoice_value: null, invoice_vat: null, invoice_gross: null, invoice_no: null, invoice_file_id: null };
+  return {
+    status: 'Invoiced', invoice_value: sum('invoice_net'), invoice_vat: sum('invoice_vat'), invoice_gross: sum('invoice_gross'),
+    invoice_no: files.map(f => f.invoice_no).filter(Boolean).join(', ') || null, invoice_file_id: files[files.length - 1].id,
+    invoiced_at: new Date().toISOString()
+  };
+}
+
+async function importInvoiceItem(it) {
+  const site = allSites.find(s => String(s.id) === String(it.siteId));
+  if (!site) throw new Error('Choose the job');
+  if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
+  const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `site_files/${site.id}/${fileId}_${safeName}`;
+  const up = await uploadSiteFile(path, it.file);
+  const net = Math.round(it.net * 100) / 100;
+  const poNumber = it.poNumber || `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
+  const record = {
+    id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+    filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
+    po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '',
+    invoice_net: net, invoice_vat: it.vat == null || isNaN(it.vat) ? null : it.vat, invoice_gross: it.gross == null || isNaN(it.gross) ? null : it.gross,
+    created_at: new Date().toISOString()
+  };
+  await db.collection('pdfs').doc(fileId).set(record);
+  const fields = await recalcPoFromInvoices(poNumber, [record]);
+  if (it.poNumber) {
+    await db.collection('purchase_orders').doc(poNumber).update(fields);
+  } else {
+    await db.collection('purchase_orders').doc(poNumber).set({
+      po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
+      requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
+      merchant: it.merchant || 'Unknown merchant', description: `Invoice ${it.invNo || ''} (no PO)`.trim(), est_value: null,
+      created_at: new Date().toISOString(), ...fields
+    });
+  }
+  return `${formatPounds(net)} ex VAT added to ${site.address}`;
+}
+
+async function handleImportSelectedInvoices() {
+  if (!db || !isManagementUser(currentUser)) return;
+  const todo = invBatch.filter(i => i.status === 'ready' && i.selected);
+  if (!todo.length) { alert('Tick the invoices you want to import.'); return; }
+  const btn = document.getElementById('btnInvImportSelected');
+  btn.disabled = true;
+  let ok = 0;
+  for (const it of todo) {
+    btn.textContent = `Importing ${ok + 1} of ${todo.length}...`;
+    try {
+      it.message = await importInvoiceItem(it);
+      it.status = 'done';
+      ok++;
+    } catch (err) {
+      alert(`${it.file.name}: ${err.message}`);
+    }
   }
   btn.disabled = false;
-  btn.textContent = 'Attach invoice & set job cost';
+  btn.textContent = 'Import ticked invoices';
+  renderInvBatch();
+  if (ok) showGreenToast(`🧾 ${ok} invoice${ok > 1 ? 's' : ''} imported and costed to the job`);
+}
+
+// ---- Register ----
+function renderInvoicesView() {
+  if (!currentUser || !isManagementUser(currentUser)) return;
+  const siteSel = document.getElementById('invFilterSite');
+  const merchSel = document.getElementById('invFilterMerchant');
+  const invoices = allPdfs.filter(f => f.file_type === 'invoice');
+  const prevSite = siteSel.value, prevMerch = merchSel.value;
+  siteSel.innerHTML = '<option value="">All jobs</option>' + allSites.map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
+  const merchants = Array.from(new Set(invoices.map(f => invMerchantOf(f)).filter(Boolean))).sort();
+  merchSel.innerHTML = '<option value="">All merchants</option>' + merchants.map(m => `<option value="${diaryEsc(m)}">${diaryEsc(m)}</option>`).join('');
+  siteSel.value = prevSite; merchSel.value = prevMerch;
+  renderInvoiceRegister();
+}
+
+function invMerchantOf(f) {
+  if (f.merchant) return f.merchant;
+  const po = allPOs.find(p => p.po_number === f.po_number);
+  return po ? po.merchant : '';
+}
+
+function renderInvoiceRegister() {
+  const body = document.getElementById('invRegisterBody');
+  if (!body) return;
+  const q = (document.getElementById('invSearch').value || '').toLowerCase();
+  const siteF = document.getElementById('invFilterSite').value;
+  const merchF = document.getElementById('invFilterMerchant').value;
+  const rows = allPdfs.filter(f => f.file_type === 'invoice')
+    .filter(f => !siteF || String(f.site_id) === siteF)
+    .filter(f => !merchF || invMerchantOf(f) === merchF)
+    .filter(f => !q || [f.invoice_no, f.po_number, invMerchantOf(f), f.filename].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => String(b.invoice_date || b.created_at).localeCompare(String(a.invoice_date || a.created_at)));
+  const sum = key => rows.reduce((t, f) => t + (parseFloat(f[key]) || 0), 0);
+  document.getElementById('invRegisterSummary').textContent = rows.length
+    ? `${rows.length} invoice${rows.length > 1 ? 's' : ''} · Net ${formatPounds(sum('invoice_net'))} · VAT ${formatPounds(sum('invoice_vat'))} · Total ${formatPounds(sum('invoice_gross'))}`
+    : 'No invoices found.';
+  const canDelete = isOwnerOrAdminUser(currentUser);
+  body.innerHTML = rows.map(f => {
+    const site = allSites.find(s => String(s.id) === String(f.site_id));
+    return `<tr>
+      <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
+      <td>${diaryEsc(f.invoice_no || '-')}</td>
+      <td>${diaryEsc(invMerchantOf(f) || '-')}</td>
+      <td>${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
+      <td>${diaryEsc(site ? site.address : 'Unknown job')}</td>
+      <td><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
+      <td>${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
+      <td>${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
+      <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+  body.querySelectorAll('.inv-delete').forEach(b => b.addEventListener('click', () => deleteInvoice(b.dataset.id)));
+}
+
+async function deleteInvoice(fileId) {
+  const f = allPdfs.find(x => String(x.id) === String(fileId));
+  if (!f || !isOwnerOrAdminUser(currentUser) || !confirm('Delete this invoice and take its cost off the job?')) return;
+  if (f.storage_path && typeof firebase.storage === 'function') {
+    await getStorageForBucket(f.storage_bucket || STORAGE_BUCKETS[0]).ref(f.storage_path).delete().catch(console.warn);
+  }
+  await db.collection('pdfs').doc(String(f.id)).delete();
+  allPdfs = allPdfs.filter(x => String(x.id) !== String(f.id));
+  const po = allPOs.find(p => p.po_number === f.po_number);
+  if (po) {
+    const remaining = allPdfs.filter(x => x.file_type === 'invoice' && x.po_number === po.po_number);
+    if (String(po.po_number).startsWith('INV-') && remaining.length === 0) {
+      await db.collection('purchase_orders').doc(po.po_number).delete().catch(console.warn);
+    } else {
+      await db.collection('purchase_orders').doc(po.po_number).update(await recalcPoFromInvoices(po.po_number)).catch(console.warn);
+    }
+  }
+  renderInvoiceRegister();
+}
+
+function setupInvoiceListeners() {
+  document.getElementById('invBatchInput').addEventListener('change', handleInvoiceBatchPicked);
+  document.getElementById('btnInvImportSelected').addEventListener('click', handleImportSelectedInvoices);
+  ['invSearch', 'invFilterSite', 'invFilterMerchant'].forEach(id => {
+    document.getElementById(id).addEventListener(id === 'invSearch' ? 'input' : 'change', renderInvoiceRegister);
+  });
 }
