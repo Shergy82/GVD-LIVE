@@ -497,6 +497,7 @@
         <form id="finCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px;">
           <select id="finCostSite" class="form-control" required></select>
           <input type="text" id="finCostDesc" class="form-control" placeholder="Description" required>
+          <select id="finCostContractor" class="form-control"></select>
           <select id="finCostCategory" class="form-control">
             <option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option>
           </select>
@@ -514,10 +515,10 @@
 
       <div class="site-card" id="finRatesCard">
         <h3 style="margin-bottom: 6px;">Day rates</h3>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. Only Owners and Admins can change rates.</p>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. People set to Price work cost nothing per shift - their cost comes from their invoices or extra costs. Only Owners and Admins can change rates.</p>
         <div style="overflow-x: auto;">
           <table class="planner-table" style="min-width: 420px;">
-            <thead><tr><th>Person</th><th>Role</th><th>Day rate £</th></tr></thead>
+            <thead><tr><th>Person</th><th>Role</th><th>Paid by</th><th>Day rate £</th></tr></thead>
             <tbody id="finRatesBody"></tbody>
           </table>
         </div>
@@ -784,8 +785,13 @@
         </select>
       </div>
       <div class="form-group" id="userModalRateGroup">
-        <label for="userModalDayRate">Day rate £ (finance - Owners and Admins only)</label>
-        <input type="text" inputmode="decimal" autocomplete="off" id="userModalDayRate" class="form-control" step="0.01" min="0" placeholder="e.g. 200">
+        <label for="userModalPayType">Paid by (finance - Owners and Admins only)</label>
+        <select id="userModalPayType" class="form-control" style="margin-bottom: 8px;">
+          <option value="day">Day rate</option>
+          <option value="price">Price work (per m2 / job price - cost comes from invoices)</option>
+        </select>
+        <label for="userModalDayRate">Day rate £</label>
+        <input type="text" inputmode="decimal" autocomplete="off" id="userModalDayRate" class="form-control" placeholder="e.g. 200">
       </div>
       <div class="form-group">
         <label for="userModalColor">Planner colour</label>
@@ -945,6 +951,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=30.0"></script>
+  <script src="/app.js?v=31.0"></script>
 </body>
 </html>

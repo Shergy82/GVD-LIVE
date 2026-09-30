@@ -3891,6 +3891,7 @@ function openUserModal(userId) {
   const rateGroup = document.getElementById('userModalRateGroup');
   rateGroup.style.display = isOwnerOrAdminUser(currentUser) ? '' : 'none';
   document.getElementById('userModalDayRate').value = financeRates[String(user.id)] != null ? financeRates[String(user.id)] : '';
+  document.getElementById('userModalPayType').value = financePay[String(user.id)] === 'price' ? 'price' : 'day';
 
   // Login sharing is only offered for people who have never used the app
   const loginBox = document.getElementById('userModalLoginBox');
@@ -3917,8 +3918,9 @@ async function handleSaveUserModal() {
   if (db && isOwnerOrAdminUser(currentUser)) {
     const rateRaw = document.getElementById('userModalDayRate').value;
     const rate = rateRaw === '' ? null : parseFloat(rateRaw);
-    if (rate == null) await db.collection('finance_rates').doc(String(user.id)).delete().catch(console.warn);
-    else if (!isNaN(rate)) await db.collection('finance_rates').doc(String(user.id)).set({ user_id: String(user.id), day_rate: rate });
+    await db.collection('finance_rates').doc(String(user.id)).set({
+      user_id: String(user.id), day_rate: isNaN(rate) ? null : rate, pay_type: document.getElementById('userModalPayType').value
+    }, { merge: true }).catch(console.warn);
   }
   saveLocalStorageData();
   closeModal('modalUser');
@@ -4456,6 +4458,16 @@ function analyseInvoice(parsed) {
   return { matchedPo, site, how, duplicate, confident };
 }
 
+function suggestContractor(merchant) {
+  const m = String(merchant || '').toLowerCase();
+  if (!m) return '';
+  const hit = priceWorkUsers().find(u => {
+    const tokens = String(u.full_name).toLowerCase().split(/\s+/).filter(t => t.length > 2);
+    return tokens.length && tokens.every(t => m.includes(t));
+  });
+  return hit ? String(hit.id) : '';
+}
+
 async function handleInvoiceBatchPicked(e) {
   const files = Array.from(e.target.files || []);
   if (!files.length) return;
@@ -4478,6 +4490,7 @@ async function handleInvoiceBatchPicked(e) {
         net: parsed.net, vat: parsed.vat, gross: parsed.gross, invNo: parsed.invNo || '',
         merchant: parsed.merchant || (a.matchedPo ? a.matchedPo.merchant : '') || '', date: parsed.date || '',
         selected: a.confident,
+        contractorId: suggestContractor(parsed.merchant),
         priceNote: !parsed.hasText ? 'Looks like a scan/photo - type the price in.' : parsed.net == null ? 'Price not found - type it in.'
           : parsed.netEstimated ? 'Net price estimated from the total - check it.' : parsed.totalsAgree ? '' : 'Check the amounts.'
       });
@@ -4502,6 +4515,7 @@ function renderInvBatch() {
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px;">
         <select class="form-control inv-site" style="min-height: 34px; padding: 4px 8px;">${invSiteOptions(it.siteId)}</select>
         <select class="form-control inv-po" style="min-height: 34px; padding: 4px 8px;">${invPoOptions(it.siteId, it.poNumber)}</select>
+        <select class="form-control inv-contractor" style="min-height: 34px; padding: 4px 8px;">${contractorOptionsHtml(it.contractorId)}</select>
         <input class="form-control inv-merchant" placeholder="Merchant" value="${diaryEsc(it.merchant)}" style="min-height: 34px; padding: 4px 8px;">
         <input class="form-control inv-no" placeholder="Invoice no." value="${diaryEsc(it.invNo)}" style="min-height: 34px; padding: 4px 8px;">
         <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-net" placeholder="Net £ ex VAT" value="${it.net != null ? Number(it.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
@@ -4518,6 +4532,7 @@ function renderInvBatch() {
     bind('.inv-select', ev => { it.selected = ev.target.checked; });
     bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; row.querySelector('.inv-po').innerHTML = invPoOptions(it.siteId, ''); });
     bind('.inv-po', ev => { it.poNumber = ev.target.value; });
+    bind('.inv-contractor', ev => { it.contractorId = ev.target.value; });
     bind('.inv-merchant', ev => { it.merchant = ev.target.value.trim(); });
     bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); });
     bind('.inv-net', ev => { it.net = ev.target.value === '' ? null : parseFloat(ev.target.value); });
@@ -4550,7 +4565,7 @@ async function importInvoiceItem(it) {
   const record = {
     id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
     filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
-    po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '',
+    po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '', contractor_id: it.contractorId || null,
     invoice_net: net, invoice_vat: it.vat == null || isNaN(it.vat) ? null : it.vat, invoice_gross: it.gross == null || isNaN(it.gross) ? null : it.gross,
     created_at: new Date().toISOString()
   };
@@ -4682,6 +4697,7 @@ function setupInvoiceListeners() {
 let financeJobs = {};
 let financeCosts = [];
 let financeRates = {};
+let financePay = {};
 let financeUnsubs = [];
 
 function startFinanceSync() {
@@ -4698,7 +4714,12 @@ function startFinanceSync() {
   }, warn('finance_costs')));
   financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
-    snap.docs.forEach(d => { financeRates[d.id] = parseFloat(d.data().day_rate) || 0; });
+    financePay = {};
+    snap.docs.forEach(d => {
+      const v = parseFloat(d.data().day_rate);
+      if (!isNaN(v)) financeRates[d.id] = v;
+      financePay[d.id] = d.data().pay_type === 'price' ? 'price' : 'day';
+    });
     refreshFinanceViews();
   }, warn('finance_rates')));
 }
@@ -4709,6 +4730,7 @@ function stopFinanceSync() {
   financeJobs = {};
   financeCosts = [];
   financeRates = {};
+  financePay = {};
 }
 
 let uiRefreshPending = false;
@@ -4750,11 +4772,12 @@ function computeSiteFinance(site) {
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
     const frac = sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1;
     const rate = financeRates[String(sh.operative_id)];
+    const priceWork = financePay[String(sh.operative_id)] === 'price';
     const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
     const name = u ? u.full_name : 'Unknown';
-    if (rate == null) noRate.add(name);
-    const cost = (rate || 0) * frac;
-    const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0 };
+    if (rate == null && !priceWork) noRate.add(name);
+    const cost = priceWork ? 0 : (rate || 0) * frac;
+    const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0, priceWork };
     row.days += frac;
     row.cost += cost;
     labour += cost;
@@ -4765,7 +4788,19 @@ function computeSiteFinance(site) {
   const totalCost = invoiced + onOrder + labour + extras;
   const profit = value != null ? value - totalCost : null;
   const margin = value ? (profit / value) * 100 : null;
-  return { value, invoiced, onOrder, labour, labourToDate, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
+  // Price-work people: what has been invoiced or logged against them on this job (already inside the totals above)
+  const contractorTotals = {};
+  allPdfs.filter(f => f.file_type === 'invoice' && String(f.site_id) === sid && f.contractor_id).forEach(f => {
+    contractorTotals[f.contractor_id] = (contractorTotals[f.contractor_id] || 0) + (parseFloat(f.invoice_net) || 0);
+  });
+  extrasList.filter(c => c.contractor_id).forEach(c => {
+    contractorTotals[c.contractor_id] = (contractorTotals[c.contractor_id] || 0) + (parseFloat(c.amount) || 0);
+  });
+  const contractors = Object.keys(contractorTotals).map(id => {
+    const u = allUsers.find(x => String(x.id) === String(id));
+    return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
+  });
+  return { contractors, value, invoiced, onOrder, labour, labourToDate, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -4785,7 +4820,8 @@ function renderSiteFinance(site) {
   const f = computeSiteFinance(site);
 
   const row = (label, val, sub) => `<tr><td>${label}${sub ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${sub}</div>` : ''}</td><td style="text-align: right; white-space: nowrap;">${val}</td></tr>`;
-  const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${money(o.cost)}</td></tr>`).join('');
+  const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork ? '<span style="color: var(--text-muted);">Price work - see invoices</span>' : money(o.cost)}</td></tr>`).join('');
+  const contractorRows = f.contractors.map(c => `<tr><td>${diaryEsc(c.name)}</td><td style="text-align: right;">${money(c.total)}</td></tr>`).join('');
   const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date))).map(c => `<tr>
       <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
       <td style="text-align: right;">${money(c.amount)}</td>
@@ -4819,6 +4855,7 @@ function renderSiteFinance(site) {
       ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
+    ${contractorRows ? `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Price work paid (ex VAT)</h4><table class="planner-table" style="min-width: 0;"><tbody>${contractorRows}</tbody></table><p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 6px;">Already included in materials / extra costs above.</p></div>` : ''}
     <div class="site-card" style="margin-bottom: 16px;">
       <h4 style="margin-bottom: 8px;">Labour on this job</h4>
       ${labourRows ? `<table class="planner-table" style="min-width: 0;"><tbody>${labourRows}</tbody></table>` : '<p style="color: var(--text-muted);">No shifts with a day rate yet.</p>'}
@@ -4828,6 +4865,7 @@ function renderSiteFinance(site) {
       <h4 style="margin-bottom: 8px;">Extra costs</h4>
       <form id="finSiteCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 10px;">
         <input type="text" id="finSiteCostDesc" class="form-control" placeholder="Description" required>
+        <select id="finSiteCostContractor" class="form-control">${contractorOptionsHtml('')}</select>
         <select id="finSiteCostCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select>
         <input type="text" inputmode="decimal" autocomplete="off" id="finSiteCostAmount" class="form-control" step="0.01" min="0" placeholder="£ ex VAT" required>
         <input type="date" id="finSiteCostDate" class="form-control" value="${diaryDateKey(new Date())}" required>
@@ -4840,7 +4878,7 @@ function renderSiteFinance(site) {
   host.querySelector('#finSiteCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(site.id, host.querySelector('#finSiteCostDesc').value, host.querySelector('#finSiteCostCategory').value,
-      host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value);
+      host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value, host.querySelector('#finSiteCostContractor').value);
   });
   host.querySelectorAll('.fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
 }
@@ -4852,13 +4890,24 @@ async function saveJobValue(siteId, raw) {
     .catch(err => alert('Could not save: ' + err.message));
 }
 
-async function addFinanceCost(siteId, description, category, amount, date) {
+function priceWorkUsers() {
+  return allUsers.filter(u => u.status === 'Active' && financePay[String(u.id)] === 'price')
+    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+}
+
+function contractorOptionsHtml(selected) {
+  return '<option value="">Paid to: nobody in particular</option>' + priceWorkUsers()
+    .map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(selected) ? ' selected' : ''}>Paid to: ${diaryEsc(u.full_name)}</option>`).join('');
+}
+
+async function addFinanceCost(siteId, description, category, amount, date, contractorId) {
   if (!db || !isManagementUser(currentUser)) return;
   const amt = parseFloat(amount);
   if (!description.trim() || isNaN(amt) || !date) { alert('Please fill in the description, amount and date.'); return; }
   const id = 'cost_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
   await db.collection('finance_costs').doc(id).set({
     site_id: String(siteId), description: description.trim(), category, amount: Math.round(amt * 100) / 100, date,
+    contractor_id: contractorId || null,
     added_by: currentUser.full_name, created_at: new Date().toISOString()
   }).catch(err => alert('Could not save: ' + err.message));
   showGreenToast('Cost added');
@@ -4908,12 +4957,14 @@ function renderFinanceView(force) {
   const prev = costSite.value;
   costSite.innerHTML = allSites.filter(s => !s.is_archived).map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
   if (prev) costSite.value = prev;
+  const contractorSel = document.getElementById('finCostContractor');
+  contractorSel.innerHTML = contractorOptionsHtml(contractorSel.value);
   const dateEl = document.getElementById('finCostDate');
   if (!dateEl.value) dateEl.value = diaryDateKey(new Date());
   document.getElementById('finCostsBody').innerHTML = financeCosts.slice()
     .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 100).map(c => {
       const site = allSites.find(s => String(s.id) === String(c.site_id));
-      return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(site ? site.address : 'Unknown job')}</td><td>${diaryEsc(c.description)}</td><td>${diaryEsc(c.category || '')}</td><td>${money(c.amount)}</td>
+      return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(site ? site.address : 'Unknown job')}</td><td>${diaryEsc(c.description)}${c.contractor_id ? ` <small style="color: var(--text-muted);">(${diaryEsc((allUsers.find(u => String(u.id) === String(c.contractor_id)) || {}).full_name || 'Unknown')})</small>` : ''}</td><td>${diaryEsc(c.category || '')}</td><td>${money(c.amount)}</td>
         <td><button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
     }).join('') || '<tr><td colspan="6" style="color: var(--text-muted);">No extra costs logged.</td></tr>';
   document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
@@ -4922,15 +4973,24 @@ function renderFinanceView(force) {
   const canEditRates = isOwnerOrAdminUser(currentUser);
   document.getElementById('finRatesCard').style.display = '';
   document.getElementById('finRatesBody').innerHTML = allUsers.filter(u => u.status === 'Active')
-    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map(u => `<tr>
-      <td>${diaryEsc(u.full_name)}</td><td>${diaryEsc(u.role)}</td>
-      <td>${canEditRates
-        ? `<input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${financeRates[String(u.id)] != null ? financeRates[String(u.id)] : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
-        : (financeRates[String(u.id)] != null ? money(financeRates[String(u.id)]) : 'not set')}</td></tr>`).join('');
-  document.querySelectorAll('.fin-rate').forEach(inp => inp.addEventListener('change', async () => {
+    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map(u => {
+      const price = financePay[String(u.id)] === 'price';
+      const rate = financeRates[String(u.id)];
+      return `<tr>
+        <td>${diaryEsc(u.full_name)}</td><td>${diaryEsc(u.role)}</td>
+        <td>${canEditRates
+          ? `<select class="form-control fin-paytype" data-user="${diaryEsc(u.id)}" style="min-height: 32px; padding: 2px 8px; width: auto;"><option value="day"${price ? '' : ' selected'}>Day rate</option><option value="price"${price ? ' selected' : ''}>Price work</option></select>`
+          : (price ? 'Price work' : 'Day rate')}</td>
+        <td>${price ? '<span style="color: var(--text-muted);">invoiced</span>' : canEditRates
+          ? `<input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${rate != null ? rate : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
+          : (rate != null ? money(rate) : 'not set')}</td></tr>`;
+    }).join('');
+  document.querySelectorAll('.fin-rate').forEach(inp => inp.addEventListener('change', () => {
     const v = inp.value === '' ? null : parseFloat(inp.value);
-    if (v == null) await db.collection('finance_rates').doc(String(inp.dataset.user)).delete().catch(console.warn);
-    else if (!isNaN(v)) await db.collection('finance_rates').doc(String(inp.dataset.user)).set({ user_id: String(inp.dataset.user), day_rate: v });
+    if (v == null || !isNaN(v)) db.collection('finance_rates').doc(String(inp.dataset.user)).set({ user_id: String(inp.dataset.user), day_rate: v }, { merge: true }).catch(console.warn);
+  }));
+  document.querySelectorAll('.fin-paytype').forEach(sel => sel.addEventListener('change', () => {
+    db.collection('finance_rates').doc(String(sel.dataset.user)).set({ user_id: String(sel.dataset.user), pay_type: sel.value }, { merge: true }).catch(console.warn);
   }));
 }
 
@@ -4965,7 +5025,8 @@ function setupFinanceListeners() {
   document.getElementById('finCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(document.getElementById('finCostSite').value, document.getElementById('finCostDesc').value,
-      document.getElementById('finCostCategory').value, document.getElementById('finCostAmount').value, document.getElementById('finCostDate').value);
+      document.getElementById('finCostCategory').value, document.getElementById('finCostAmount').value, document.getElementById('finCostDate').value,
+      document.getElementById('finCostContractor').value);
     document.getElementById('finCostDesc').value = '';
     document.getElementById('finCostAmount').value = '';
   });
