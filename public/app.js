@@ -4017,7 +4017,7 @@ function renderPlasterCalc(site) {
       `<tr><td>${diaryEsc(i[0])}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(i[3])}</div></td><td style="white-space: nowrap;"><strong>${i[1]}</strong> ${i[2]}</td></tr>`).join('')}</tbody></table>
     <button type="button" class="btn btn-outline btn-sm" id="btnCopyPlasterList" style="margin-top: 10px;">Copy list</button>`;
 
-  const rateInput = (key, label) => `<label style="font-size: 0.8rem; display: block;">${label}<input type="number" step="0.01" min="0" class="form-control plaster-setting" data-key="${key}" value="${cfg[key]}" style="min-height: 32px; padding: 4px 8px;"></label>`;
+  const rateInput = (key, label) => `<label style="font-size: 0.8rem; display: block;">${label}<input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control plaster-setting" data-key="${key}" value="${cfg[key]}" style="min-height: 32px; padding: 4px 8px;"></label>`;
 
   host.innerHTML = `<div class="site-card">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
@@ -4194,6 +4194,7 @@ function formatPounds(v) {
 function renderPOTab(site) {
   const host = document.getElementById('poTabContainer');
   if (!host || !currentUser) return;
+  if (isTypingIn('poTabContainer')) { uiRefreshPending = true; return; }
   const isMgr = isManagementUser(currentUser);
   const list = allPOs
     .filter(po => String(po.site_id) === String(site.id))
@@ -4213,7 +4214,7 @@ function renderPOTab(site) {
             <select class="form-control po-status" data-po="${diaryEsc(po.id)}" style="width: auto; min-height: 32px; padding: 2px 8px; font-size: 0.85rem;">
               ${['Requested', 'Collected', 'Invoiced', 'Cancelled'].map(st => `<option value="${st}"${po.status === st ? ' selected' : ''}>${st}</option>`).join('')}
             </select>
-            <input type="number" step="0.01" min="0" class="form-control po-invoice" data-po="${diaryEsc(po.id)}" value="${po.invoice_value != null ? po.invoice_value : ''}" placeholder="Invoice £" style="width: 120px; min-height: 32px; padding: 2px 8px; font-size: 0.85rem;">
+            <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control po-invoice" data-po="${diaryEsc(po.id)}" value="${po.invoice_value != null ? po.invoice_value : ''}" placeholder="Invoice £" style="width: 120px; min-height: 32px; padding: 2px 8px; font-size: 0.85rem;">
           </div>` : `<div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">Status: ${diaryEsc(po.status || 'Requested')}</div>`;
         return `<div class="diary-agenda-item" style="cursor: default;${cancelled ? ' opacity: 0.55;' : ''}">
           <div style="display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
@@ -4503,9 +4504,9 @@ function renderInvBatch() {
         <select class="form-control inv-po" style="min-height: 34px; padding: 4px 8px;">${invPoOptions(it.siteId, it.poNumber)}</select>
         <input class="form-control inv-merchant" placeholder="Merchant" value="${diaryEsc(it.merchant)}" style="min-height: 34px; padding: 4px 8px;">
         <input class="form-control inv-no" placeholder="Invoice no." value="${diaryEsc(it.invNo)}" style="min-height: 34px; padding: 4px 8px;">
-        <input type="number" step="0.01" min="0" class="form-control inv-net" placeholder="Net £ ex VAT" value="${it.net != null ? Number(it.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
-        <input type="number" step="0.01" min="0" class="form-control inv-vat" placeholder="VAT £" value="${it.vat != null ? Number(it.vat).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
-        <input type="number" step="0.01" min="0" class="form-control inv-gross" placeholder="Total £" value="${it.gross != null ? Number(it.gross).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+        <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-net" placeholder="Net £ ex VAT" value="${it.net != null ? Number(it.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+        <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-vat" placeholder="VAT £" value="${it.vat != null ? Number(it.vat).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+        <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-gross" placeholder="Total £" value="${it.gross != null ? Number(it.gross).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
       </div>
     </div>`;
   }).join('');
@@ -4710,6 +4711,15 @@ function stopFinanceSync() {
   financeRates = {};
 }
 
+let uiRefreshPending = false;
+
+// True while the user is typing in a box inside this container (so we don't redraw it under them)
+function isTypingIn(containerId) {
+  const a = document.activeElement;
+  const box = document.getElementById(containerId);
+  return !!(a && box && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && box.contains(a));
+}
+
 function refreshFinanceViews() {
   if (!currentUser || !isManagementUser(currentUser)) return;
   const v = document.getElementById('view-finance');
@@ -4770,6 +4780,7 @@ function marginText(m) {
 function renderSiteFinance(site) {
   const host = document.getElementById('financeTabContainer');
   if (!host) return;
+  if (isTypingIn('financeTabContainer')) { uiRefreshPending = true; return; }
   if (!currentUser || !isManagementUser(currentUser)) { host.innerHTML = ''; return; }
   const f = computeSiteFinance(site);
 
@@ -4784,7 +4795,7 @@ function renderSiteFinance(site) {
     <div class="site-card" style="margin-bottom: 16px;">
       <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
         <label for="finJobValue" style="font-weight: 700;">Job value (quote) £ ex VAT</label>
-        <input type="number" id="finJobValue" class="form-control" step="0.01" min="0" value="${f.value != null ? f.value : ''}" placeholder="e.g. 10000" style="width: 180px;">
+        <input type="text" inputmode="decimal" autocomplete="off" id="finJobValue" class="form-control" step="0.01" min="0" value="${f.value != null ? f.value : ''}" placeholder="e.g. 10000" style="width: 180px;">
       </div>
       ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the job value to see profit and margin.</p>' : ''}
     </div>
@@ -4818,7 +4829,7 @@ function renderSiteFinance(site) {
       <form id="finSiteCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 10px;">
         <input type="text" id="finSiteCostDesc" class="form-control" placeholder="Description" required>
         <select id="finSiteCostCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select>
-        <input type="number" id="finSiteCostAmount" class="form-control" step="0.01" min="0" placeholder="£ ex VAT" required>
+        <input type="text" inputmode="decimal" autocomplete="off" id="finSiteCostAmount" class="form-control" step="0.01" min="0" placeholder="£ ex VAT" required>
         <input type="date" id="finSiteCostDate" class="form-control" value="${diaryDateKey(new Date())}" required>
         <button type="submit" class="btn btn-primary">+ Add cost</button>
       </form>
@@ -4859,8 +4870,9 @@ async function deleteFinanceCost(id) {
 }
 
 // ---- Full Finance page ----
-function renderFinanceView() {
+function renderFinanceView(force) {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  if (!force && isTypingIn('view-finance')) { uiRefreshPending = true; return; }
   const statusF = document.getElementById('finFilterStatus').value;
   const q = (document.getElementById('finSearch').value || '').toLowerCase();
   const sites = allSites
@@ -4913,7 +4925,7 @@ function renderFinanceView() {
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map(u => `<tr>
       <td>${diaryEsc(u.full_name)}</td><td>${diaryEsc(u.role)}</td>
       <td>${canEditRates
-        ? `<input type="number" step="0.01" min="0" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${financeRates[String(u.id)] != null ? financeRates[String(u.id)] : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
+        ? `<input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${financeRates[String(u.id)] != null ? financeRates[String(u.id)] : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
         : (financeRates[String(u.id)] != null ? money(financeRates[String(u.id)]) : 'not set')}</td></tr>`).join('');
   document.querySelectorAll('.fin-rate').forEach(inp => inp.addEventListener('change', async () => {
     const v = inp.value === '' ? null : parseFloat(inp.value);
@@ -4930,6 +4942,24 @@ function openSiteFinance(siteId) {
 }
 
 function setupFinanceListeners() {
+  // Tidy typed amounts like "£1,250.50" into plain numbers
+  document.addEventListener('change', ev => {
+    const t = ev.target;
+    if (t && t.tagName === 'INPUT' && t.getAttribute('inputmode') === 'decimal') t.value = t.value.replace(/[£,\s]/g, '');
+  }, true);
+  // Redraw anything that was held back while typing
+  document.addEventListener('focusout', () => {
+    setTimeout(() => {
+      if (!uiRefreshPending || isTypingIn('view-finance') || isTypingIn('financeTabContainer') || isTypingIn('poTabContainer')) return;
+      uiRefreshPending = false;
+      refreshFinanceViews();
+      if (activeSiteId) {
+        const site = allSites.find(x => parseInt(x.id) === parseInt(activeSiteId));
+        if (site) renderPOTab(site);
+      }
+    }, 200);
+  });
+
   document.getElementById('finFilterStatus').addEventListener('change', renderFinanceView);
   document.getElementById('finSearch').addEventListener('input', renderFinanceView);
   document.getElementById('finCostForm').addEventListener('submit', ev => {

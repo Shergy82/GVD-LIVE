@@ -500,7 +500,7 @@
           <select id="finCostCategory" class="form-control">
             <option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option>
           </select>
-          <input type="number" id="finCostAmount" class="form-control" step="0.01" min="0" placeholder="Amount £ ex VAT" required>
+          <input type="text" inputmode="decimal" autocomplete="off" id="finCostAmount" class="form-control" step="0.01" min="0" placeholder="Amount £ ex VAT" required>
           <input type="date" id="finCostDate" class="form-control" required>
           <button type="submit" class="btn btn-primary">+ Add cost</button>
         </form>
@@ -785,7 +785,7 @@
       </div>
       <div class="form-group" id="userModalRateGroup">
         <label for="userModalDayRate">Day rate £ (finance - Owners and Admins only)</label>
-        <input type="number" id="userModalDayRate" class="form-control" step="0.01" min="0" placeholder="e.g. 200">
+        <input type="text" inputmode="decimal" autocomplete="off" id="userModalDayRate" class="form-control" step="0.01" min="0" placeholder="e.g. 200">
       </div>
       <div class="form-group">
         <label for="userModalColor">Planner colour</label>
@@ -820,13 +820,13 @@
         <input type="hidden" id="plRoomId">
         <div class="form-group"><label for="plName">Room name</label><input type="text" id="plName" class="form-control" required placeholder="e.g. Shower room"></div>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-          <div class="form-group"><label for="plLength">Length (m)</label><input type="number" id="plLength" class="form-control" step="0.001" min="0" required></div>
-          <div class="form-group"><label for="plWidth">Width (m)</label><input type="number" id="plWidth" class="form-control" step="0.001" min="0" required></div>
-          <div class="form-group"><label for="plHeight">Ceiling height (m)</label><input type="number" id="plHeight" class="form-control" step="0.001" min="0" required value="2.4"></div>
+          <div class="form-group"><label for="plLength">Length (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plLength" class="form-control" step="0.001" min="0" required></div>
+          <div class="form-group"><label for="plWidth">Width (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plWidth" class="form-control" step="0.001" min="0" required></div>
+          <div class="form-group"><label for="plHeight">Ceiling height (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plHeight" class="form-control" step="0.001" min="0" required value="2.4"></div>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          <div class="form-group"><label for="plTiledLen">Tiled (green) wall length (m)</label><input type="number" id="plTiledLen" class="form-control" step="0.001" min="0" value="0"></div>
-          <div class="form-group"><label for="plTiledHeight">Tiled height (m)</label><input type="number" id="plTiledHeight" class="form-control" step="0.001" min="0" value="2.4"></div>
+          <div class="form-group"><label for="plTiledLen">Tiled (green) wall length (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plTiledLen" class="form-control" step="0.001" min="0" value="0"></div>
+          <div class="form-group"><label for="plTiledHeight">Tiled height (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plTiledHeight" class="form-control" step="0.001" min="0" value="2.4"></div>
         </div>
         <div class="form-group"><label for="plWallType">Walls are</label>
           <select id="plWallType" class="form-control"><option value="stud">Stud (screw fixed)</option><option value="brick">Brick / block (dab fixed)</option></select></div>
@@ -860,7 +860,7 @@
         </div>
         <div class="form-group">
           <label for="poValueInput">Estimated value £ (optional)</label>
-          <input type="number" id="poValueInput" class="form-control" step="0.01" min="0" inputmode="decimal">
+          <input type="text" inputmode="decimal" autocomplete="off" id="poValueInput" class="form-control" step="0.01" min="0" inputmode="decimal">
         </div>
         <button type="submit" class="btn btn-primary" id="btnSubmitPO" style="width: 100%;">Get PO Number</button>
       </form>
@@ -945,6 +945,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=29.0"></script>
+  <script src="/app.js?v=30.0"></script>
 </body>
 </html>
