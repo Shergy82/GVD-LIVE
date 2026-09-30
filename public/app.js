@@ -1512,37 +1512,68 @@ function setupPlannerTableDragAndDrop() {
       } else if (type === 'EXISTING_SHIFT') {
         const shiftId = parseInt(e.dataTransfer.getData('shiftId'));
         const shift = allShifts.find(s => parseInt(s.id) === shiftId);
-        if (shift) {
-          const oldDate = shift.shift_date;
-          shift.site_id = targetSiteId;
-          shift.shift_date = targetDate;
-          shift.seen_at = null; // Reset seen status!
-
-          if (isDraftPlanningMode) {
-            shift.draft_pending = true;
-          } else {
-            shift.draft_pending = false;
-          }
-
-          if (db) {
-            await db.collection('shifts').doc(String(shift.id)).set(shift);
-          }
-          saveLocalStorageData();
-          renderActiveView();
-
-          const todayStr = new Date().toISOString().split('T')[0];
-          if (targetDate >= todayStr) {
-            if (isDraftPlanningMode) {
-              showGreenToast('🛠️ Shift Moved (Draft Mode — Notifications Paused)');
-            } else {
-              triggerShiftNotification(shift, `📅 Shift Date Changed to ${targetDate}`);
-              showGreenToast(shift.operative_id ? '⚡ Live Cloud Updated — Operative Notified!' : '⏳ Drying Day Moved');
-            }
-          }
+        if (shift && !(parseInt(shift.site_id) === targetSiteId && shift.shift_date === targetDate)) {
+          openShiftDropChoice(shift, targetSiteId, targetDate);
         }
       }
     });
   });
+}
+
+let pendingShiftDrop = null;
+
+function openShiftDropChoice(shift, siteId, date) {
+  pendingShiftDrop = { shiftId: shift.id, siteId, date };
+  const fromSite = allSites.find(x => parseInt(x.id) === parseInt(shift.site_id));
+  const toSite = allSites.find(x => parseInt(x.id) === parseInt(siteId));
+  const op = allUsers.find(u => String(u.id) === String(shift.operative_id));
+  const who = shift.is_drying_day ? '⏳ Drying Day' : (op ? op.full_name : 'Operative');
+  document.getElementById('shiftDropSummary').innerHTML =
+    `<strong>${diaryEsc(who)}</strong>${shift.task && !shift.is_drying_day ? ' - ' + diaryEsc(shift.task) : ''}<br>` +
+    `From: ${diaryEsc(fromSite ? fromSite.address : 'site')}, ${diaryEsc(formatUKDate(shift.shift_date))}<br>` +
+    `To: <strong>${diaryEsc(toSite ? toSite.address : 'site')}, ${diaryEsc(formatUKDate(date))}</strong>` +
+    (parseInt(shift.site_id) !== parseInt(siteId) ? '<br><span style="color: var(--text-muted);">It takes on the new site.</span>' : '');
+  openModal('modalShiftDrop');
+}
+
+async function applyShiftDrop(mode) {
+  const drop = pendingShiftDrop;
+  pendingShiftDrop = null;
+  closeModal('modalShiftDrop');
+  if (!drop) return;
+  const shift = allShifts.find(s => parseInt(s.id) === parseInt(drop.shiftId));
+  if (!shift) return;
+  const todayStr = diaryDateKey(new Date());
+  let target = shift;
+
+  if (mode === 'copy') {
+    const newId = allShifts.length > 0 ? Math.max(...allShifts.map(s => parseInt(s.id) || 0)) + 1 : 1;
+    target = { ...shift, id: newId, site_id: drop.siteId, shift_date: drop.date, seen_at: null, last_notified_at: null,
+      draft_pending: isDraftPlanningMode, created_at: new Date().toISOString() };
+    allShifts.push(target);
+  } else {
+    shift.site_id = drop.siteId;
+    shift.shift_date = drop.date;
+    shift.seen_at = null; // Reset seen status
+    shift.draft_pending = isDraftPlanningMode;
+  }
+
+  if (db) await db.collection('shifts').doc(String(target.id)).set(target);
+  deduplicateShifts();
+  saveLocalStorageData();
+  renderActiveView();
+
+  const verb = mode === 'copy' ? 'Duplicated' : 'Moved';
+  if (drop.date >= todayStr && target.operative_id) {
+    if (isDraftPlanningMode) {
+      showGreenToast(`🛠️ Shift ${verb} (Draft Mode - Notifications Paused)`);
+    } else {
+      triggerShiftNotification(target, mode === 'copy' ? '⚡ Live Shift Assigned' : `📅 Shift Date Changed to ${drop.date}`);
+      showGreenToast(`⚡ Shift ${verb} - Operative Notified!`);
+    }
+  } else {
+    showGreenToast(target.is_drying_day ? `⏳ Drying Day ${verb}` : `Shift ${verb}`);
+  }
 }
 
 function dryingCardHtml(s) {
@@ -2811,6 +2842,8 @@ function setupEventListeners() {
   setupDiaryListeners();
   document.getElementById('poForm').addEventListener('submit', handleRequestPO);
   setupInvoiceListeners();
+  document.getElementById('btnShiftDropMove').addEventListener('click', () => applyShiftDrop('move'));
+  document.getElementById('btnShiftDropCopy').addEventListener('click', () => applyShiftDrop('copy'));
   setupFinanceListeners();
   document.getElementById('btnCopyPO').addEventListener('click', copyPONumber);
   const resetFormEl = document.getElementById('resetForm');

@@ -876,6 +876,22 @@
     </div>
   </div>
 
+  <!-- Modal: Move or duplicate a dragged shift -->
+  <div class="modal-overlay" id="modalShiftDrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Move or duplicate shift?</h3>
+        <button class="close-btn" data-close="modalShiftDrop">&times;</button>
+      </div>
+      <div id="shiftDropSummary" style="margin-bottom: 16px; font-size: 0.95rem; line-height: 1.5;"></div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button type="button" class="btn btn-primary" id="btnShiftDropMove">➡️ Move it here</button>
+        <button type="button" class="btn btn-outline" id="btnShiftDropCopy">📋 Duplicate it here (keep the original)</button>
+        <button type="button" class="btn btn-secondary" data-close="modalShiftDrop">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Request Purchase Order -->
   <div class="modal-overlay" id="modalPO">
     <div class="modal-card">
@@ -981,6 +997,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=34.0"></script>
+  <script src="/app.js?v=35.0"></script>
 </body>
 </html>
