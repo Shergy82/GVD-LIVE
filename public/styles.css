@@ -1198,3 +1198,6 @@ body {
 }
 
 .shift-card.drying-card { border-left-color: #f59e0b; background-color: rgba(245, 158, 11, 0.18); }
+
+/* Scrollable tables with a fixed header row */
+.scroll-table thead th { position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--border-color); }

@@ -4824,7 +4824,7 @@ function renderSiteFinance(site) {
   const row = (label, val, sub) => `<tr><td>${label}${sub ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${sub}</div>` : ''}</td><td style="text-align: right; white-space: nowrap;">${val}</td></tr>`;
   const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork ? '<span style="color: var(--text-muted);">Price work - see invoices</span>' : money(o.cost)}</td></tr>`).join('');
   const contractorRows = f.contractors.map(c => `<tr><td>${diaryEsc(c.name)}</td><td style="text-align: right;">${money(c.total)}</td></tr>`).join('');
-  const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date))).map(c => `<tr>
+  const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || ''))).map(c => `<tr>
       <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
       <td style="text-align: right;">${money(c.amount)}</td>
       <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
@@ -4873,7 +4873,7 @@ function renderSiteFinance(site) {
         <input type="date" id="finSiteCostDate" class="form-control" value="${diaryDateKey(new Date())}" required>
         <button type="submit" class="btn btn-primary">+ Add cost</button>
       </form>
-      ${costRows ? `<table class="planner-table" style="min-width: 0;"><tbody>${costRows}</tbody></table>` : '<p style="color: var(--text-muted);">No extra costs logged.</p>'}
+      ${costRows ? `<div style="overflow: auto; max-height: 300px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);"><table class="planner-table" style="min-width: 0;"><tbody>${costRows}</tbody></table></div>` : '<p style="color: var(--text-muted);">No extra costs logged.</p>'}
     </div>`;
 
   host.querySelector('#finJobValue').addEventListener('change', ev => saveJobValue(site.id, ev.target.value));
@@ -4964,8 +4964,16 @@ function renderFinanceView(force) {
   contractorSel.innerHTML = contractorOptionsHtml(contractorSel.value);
   const dateEl = document.getElementById('finCostDate');
   if (!dateEl.value) dateEl.value = diaryDateKey(new Date());
-  document.getElementById('finCostsBody').innerHTML = financeCosts.slice()
-    .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 100).map(c => {
+  // Ledger: newest first, optionally one job, scrolls inside its own box
+  const costFilter = document.getElementById('finCostFilterSite');
+  const prevFilter = costFilter.value;
+  costFilter.innerHTML = '<option value="">All jobs</option>' + allSites.map(x => `<option value="${diaryEsc(x.id)}">${diaryEsc(x.address)}</option>`).join('');
+  costFilter.value = prevFilter;
+  const ledger = financeCosts.filter(c => !costFilter.value || String(c.site_id) === costFilter.value)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const ledgerTotal = ledger.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
+  document.getElementById('finCostsCount').textContent = `${ledger.length} cost${ledger.length === 1 ? '' : 's'} · ${money(ledgerTotal)} · newest first`;
+  document.getElementById('finCostsBody').innerHTML = ledger.map(c => {
       const site = allSites.find(s => String(s.id) === String(c.site_id));
       return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(site ? site.address : 'Unknown job')}</td><td>${diaryEsc(c.description)}${c.contractor_id ? ` <small style="color: var(--text-muted);">(${diaryEsc((allUsers.find(u => String(u.id) === String(c.contractor_id)) || {}).full_name || 'Unknown')})</small>` : ''}</td><td>${diaryEsc(c.category || '')}</td><td>${money(c.amount)}</td>
         <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
@@ -5039,6 +5047,7 @@ async function handleSaveCostEdit(e) {
 }
 
 function setupFinanceListeners() {
+  document.getElementById('finCostFilterSite').addEventListener('change', renderFinanceView);
   document.getElementById('costEditForm').addEventListener('submit', handleSaveCostEdit);
   document.getElementById('btnCostEditDelete').addEventListener('click', async () => {
     const id = document.getElementById('costEditId').value;
