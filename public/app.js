@@ -467,6 +467,10 @@ function onUserAuthenticated() {
     el.style.display = (!isManagerOrHigher) ? '' : 'none';
   });
 
+  // Tell the phone menu how many boxes this role has, so each row fills the full width
+  const navMenuEl = document.getElementById('navMenu');
+  navMenuEl.dataset.count = Array.from(navMenuEl.querySelectorAll('.nav-item')).filter(b => b.style.display !== 'none').length;
+
   updateBrandingUI();
   updatePendingUsersBadge();
   registerDevicePushSubscription(false);
