@@ -624,11 +624,11 @@ const SITE_INFO_FIELDS = [
 function siteInfoHtml(site) {
   if (!site) return '';
   const rows = SITE_INFO_FIELDS.filter(([key]) => (site[key] || '').trim())
-    .map(([key, label, icon]) => `<div style="background-color: var(--bg-primary); padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 8px;">
-      <strong style="font-size: 0.8rem; color: var(--text-muted);">${icon} ${label.toUpperCase()}</strong>
-      <div style="font-size: 0.9rem; margin-top: 2px; white-space: pre-wrap;">${diaryEsc(site[key])}</div>
+    .map(([key, label, icon]) => `<div style="padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--primary); border-left: 5px solid var(--primary); background-color: rgba(59, 130, 246, 0.08); margin-bottom: 8px;">
+      <strong style="font-size: 0.85rem; color: var(--primary);">${icon} ${label.toUpperCase()}</strong>
+      <div style="font-size: 1rem; margin-top: 3px; white-space: pre-wrap;">${diaryEsc(site[key])}</div>
     </div>`).join('');
-  return rows ? `<div style="margin-bottom: 12px;">${rows}</div>` : '';
+  return rows ? `<div style="margin: 4px 0 12px;">${rows}</div>` : '';
 }
 
 // Editable info boxes in the planner's site column (managers/admins)
@@ -1383,6 +1383,7 @@ function getAssignableOperatives() {
 }
 
 function renderPlannerView() {
+  if (isTypingIn('plannerTableBody')) { uiRefreshPending = true; return; }
   const weekDays = getRollingDays(currentPlannerWeekOffset);
   const startDateStr = formatDateShort(weekDays[0]);
   const endDateStr = formatDateShort(weekDays[6]);
@@ -1496,7 +1497,10 @@ function renderPlannerView() {
   });
 
   tbody.querySelectorAll('.site-info-input').forEach(input => {
-    input.addEventListener('change', () => saveSiteInfo(input.dataset.siteId, input.dataset.field, input.value.trim()));
+    const save = () => saveSiteInfo(input.dataset.siteId, input.dataset.field, input.value.trim());
+    input.addEventListener('change', save);
+    // Also save a moment after typing stops, so nothing is lost if the page refreshes
+    input.addEventListener('input', () => { clearTimeout(input._saveTimer); input._saveTimer = setTimeout(save, 800); });
   });
 
   setupPlannerTableDragAndDrop();
@@ -1806,11 +1810,11 @@ function renderMyShiftsView() {
           </div>
           <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 6px;">${site ? site.address : 'Site Address'}</h3>
           <p style="color: var(--primary); font-weight: 600; font-size: 0.95rem; margin-bottom: 10px;">📅 ${formatUKDate(s.shift_date)}</p>
+          ${siteInfoHtml(site)}
           <div style="background-color: var(--bg-primary); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 10px;">
             <strong style="font-size: 0.8rem; color: var(--text-muted);">TASK:</strong>
             <p style="margin-top: 2px; font-size: 0.9rem;">${s.task}</p>
           </div>
-          ${siteInfoHtml(site)}
           <button class="btn btn-primary btn-sm po-request-btn" data-site-id="${s.site_id}" style="width: 100%; margin-bottom: 8px;">🧾 Request PO number</button>
           <button class="btn btn-secondary btn-sm" style="width: 100%;">View Shift Details & Site Documents →</button>
         </div>
@@ -5229,9 +5233,10 @@ function setupFinanceListeners() {
   // Redraw anything that was held back while typing
   document.addEventListener('focusout', () => {
     setTimeout(() => {
-      if (!uiRefreshPending || isTypingIn('view-finance') || isTypingIn('financeTabContainer') || isTypingIn('poTabContainer')) return;
+      if (!uiRefreshPending || isTypingIn('view-finance') || isTypingIn('financeTabContainer') || isTypingIn('poTabContainer') || isTypingIn('plannerTableBody')) return;
       uiRefreshPending = false;
       refreshFinanceViews();
+      renderActiveView();
       if (activeSiteId) {
         const site = allSites.find(x => parseInt(x.id) === parseInt(activeSiteId));
         if (site) renderPOTab(site);
