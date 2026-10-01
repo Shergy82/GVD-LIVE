@@ -429,6 +429,27 @@ body {
   text-align: center;
 }
 
+.planner-table th.date-col.weekend-narrow,
+.planner-table td.weekend-narrow {
+  width: 46px;
+  min-width: 0;
+  max-width: 46px;
+  padding: 6px 2px;
+  font-size: 0.65rem;
+  text-align: center;
+}
+
+.planner-table th.weekend-col-header {
+  background: linear-gradient(180deg, #5b21b6, #3b0764);
+  color: #ede9fe;
+}
+
+.planner-day-cell.weekend-day-cell {
+  background-color: rgba(139, 92, 246, 0.12);
+}
+
+.mobile-day-btn.weekend { border-color: #8b5cf6; color: #c4b5fd; }
+
 .planner-table th.today-col-header {
   background: linear-gradient(180deg, #b45309, #78350f) !important;
   color: #ffffff !important;
@@ -1020,7 +1041,7 @@ body {
     padding-bottom: 4px;
   }
   
-  .planner-table {
+  #desktopPlannerTable {
     display: none; /* Switch to mobile day selector on phone */
   }
   
@@ -1113,4 +1134,245 @@ body {
   .no-print, header, nav, .app-header, .section-header, .tab-bar, .project-page-header, .site-header, button, input {
     display: none !important;
   }
+}
+
+/* Diary */
+.diary-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.diary-dow { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); padding: 4px 0; }
+.diary-cell { min-height: 84px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 4px; cursor: pointer; overflow: hidden; }
+.diary-cell:hover { background: var(--bg-surface-hover); }
+.diary-cell.other-month { opacity: 0.4; }
+.diary-cell.today { border-color: var(--primary); }
+.diary-daynum { font-size: 0.75rem; font-weight: 700; color: var(--text-muted); }
+.diary-chip { display: block; margin-top: 3px; padding: 2px 4px; font-size: 0.7rem; line-height: 1.25; background: var(--primary); color: #fff; border-radius: 4px; white-space: normal; overflow-wrap: anywhere; }
+.diary-agenda-item { background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+.diary-agenda-item:hover { background: var(--bg-surface-hover); }
+.diary-chip { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55); }
+@media (max-width: 640px) {
+  .diary-grid { gap: 3px; }
+  .diary-cell { min-height: 92px; padding: 3px 2px; }
+  .diary-daynum { font-size: 0.7rem; }
+  /* Phone: show the address (title) in each box, small, up to 4 lines */
+  .diary-chip { font-size: 0.58rem; line-height: 1.15; padding: 2px 3px; margin-top: 2px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; overflow-wrap: anywhere; }
+  .diary-chip .dc-who, .diary-chip .dc-win { display: none; }
+}
+
+/* Compact user chips */
+.user-group-title { margin: 14px 0 8px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.user-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.user-chip { display: inline-flex; align-items: center; gap: 10px; padding: 14px 20px; min-height: 52px; font-size: 1.05rem; background: var(--bg-surface-hover); border: 1px solid var(--border-color); border-radius: 999px; color: var(--text-main); font-weight: 600; cursor: pointer; }
+.user-chip:hover { border-color: var(--primary); }
+.user-chip.pending { border-color: var(--warning); }
+.user-chip.restricted { opacity: 0.6; }
+
+/* Planner (desktop): title, controls, operatives and date headings stay put; only the site rows scroll */
+@media screen and (min-width: 769px) {
+  #view-planner {
+    display: flex !important;
+    flex-direction: column;
+    height: calc(100vh - 132px);
+    height: calc(100dvh - 132px);
+  }
+  #view-planner[style*="display: none"] { display: none !important; }
+  #view-planner .section-header { flex: 0 0 auto; margin-bottom: 10px; }
+  #view-planner .op-dock {
+    flex: 0 0 auto;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+  }
+  #view-planner .op-dock h4 { margin-bottom: 6px; font-size: 0.75rem; }
+  #view-planner .op-chips { gap: 6px; }
+  #view-planner .op-chip { padding: 3px 10px; font-size: 0.8rem; }
+  #view-planner .planner-container {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+  }
+  #view-planner .planner-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    box-shadow: 0 1px 0 var(--border-color), 0 2px 4px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* Site finish + completed rows */
+.site-finish-badge { font-size: 0.75rem; font-weight: 700; color: #fbbf24; }
+.site-completed-badge { font-size: 0.8rem; font-weight: 800; color: #ffffff; background: #059669; padding: 4px 8px; border-radius: 4px; }
+.planner-table tr.site-completed td,
+.planner-table tr.site-completed td.planner-day-cell {
+  background-color: rgba(16, 185, 129, 0.22) !important;
+  border-color: rgba(16, 185, 129, 0.5);
+}
+
+.shift-card.drying-card { border-left-color: #f59e0b; background-color: rgba(245, 158, 11, 0.18); }
+
+/* Scrollable tables with a fixed header row */
+.scroll-table thead th { position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--border-color); }
+
+/* Phone-friendly navigation for Owners / Admins / Managers: always-visible grid of boxes, no sideways scrolling */
+.mobile-menu-btn { display: none !important; }
+.nav-ico { font-size: 1.1rem; line-height: 1; }
+
+@media (max-width: 768px) {
+  .app-header.nav-collapsible { position: static; padding: 10px 12px; gap: 10px; }
+  .app-header.nav-collapsible .nav-menu {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 6px;
+    overflow: visible;
+    padding-bottom: 0;
+  }
+  /* Rows always fill the full width: 7 boxes = 3 wide on top + 4 underneath; 6 boxes = 3 + 3 */
+  .app-header.nav-collapsible .nav-item { grid-column: span 3; }
+  .app-header.nav-collapsible .nav-menu[data-count="7"] .nav-item:nth-child(-n+3) { grid-column: span 4; }
+  .app-header.nav-collapsible .nav-menu[data-count="6"] .nav-item { grid-column: span 4; }
+  .app-header.nav-collapsible .nav-menu[data-count="5"] .nav-item:nth-child(-n+2) { grid-column: span 6; }
+  .app-header.nav-collapsible .nav-menu[data-count="5"] .nav-item:nth-child(n+3) { grid-column: span 4; }
+  .app-header.nav-collapsible .nav-item {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    gap: 3px;
+    min-height: 66px;
+    padding: 6px 2px;
+    font-size: 0.7rem;
+    line-height: 1.15;
+    background-color: var(--bg-surface-hover);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+  }
+  .app-header.nav-collapsible .nav-item .nav-ico { font-size: 1.5rem; }
+  .app-header.nav-collapsible .nav-item.active { background-color: var(--primary); border-color: var(--primary); color: #fff; }
+  .app-header.nav-collapsible .user-status-bar { justify-content: space-between; }
+}
+
+/* ---- Phone layout polish ---- */
+@media (max-width: 768px) {
+  /* One consistent side margin so the header boxes and page content line up */
+  .main-content { padding: 14px; }
+  .app-header, .app-header.nav-collapsible { padding: 10px 14px; }
+
+  /* Page headings and their controls stack and fill the width */
+  .section-header { flex-direction: column; align-items: stretch; gap: 12px; }
+  .section-header .form-control { flex: 1 1 140px; width: auto !important; min-width: 0; }
+  .section-header > div { max-width: 100%; }
+
+  /* Wide tables become tidy cards, one per row, nothing to slide sideways */
+  .responsive-table, .responsive-table tbody, .responsive-table tr, .responsive-table td { display: block; width: 100%; }
+  .responsive-table { min-width: 0 !important; border: 0; }
+  .responsive-table thead { display: none; }
+  .responsive-table tr {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 10px;
+    padding: 10px 12px;
+  }
+  .responsive-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    text-align: right;
+    border: none !important;
+    padding: 5px 0 !important;
+    font-size: 0.9rem;
+  }
+  .responsive-table td::before {
+    content: attr(data-label);
+    flex: 0 0 40%;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .responsive-table td:not([data-label])::before { display: none; }
+  .responsive-table td:first-child {
+    display: block;
+    text-align: left;
+    font-size: 1.02rem;
+    padding-bottom: 8px !important;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border-color) !important;
+  }
+  .responsive-table td:last-child:not([data-label]) { justify-content: flex-end; }
+  .responsive-table td.empty-cell { display: none; }
+  .responsive-table td.labour-cell { display: block; text-align: left; background: transparent; }
+  .responsive-table td.labour-cell::before { display: block; margin-bottom: 4px; }
+  .labour-table-wrapper { background: none; border: none; overflow: visible; }
+  .scroll-table { border: none !important; max-height: none !important; }
+  .fin-job-row { cursor: pointer; }
+}
+
+/* ---- Phone: centred headings, full-width controls, even day buttons ---- */
+@media (max-width: 768px) {
+  .section-header { text-align: center; }
+  .section-title-group h2 { font-size: 1.6rem; }
+  .app-header .brand-container { justify-content: center; }
+
+  /* Button rows: the first three share a row evenly, anything else is full width */
+  .section-header .date-controls {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    justify-content: stretch;
+  }
+  .section-header .date-controls > .btn { width: 100%; padding-left: 4px; padding-right: 4px; white-space: normal; text-align: center; justify-content: center; }
+  .section-header .date-controls > .btn:nth-child(n+4),
+  .section-header .date-controls > .current-week-label { grid-column: 1 / -1; }
+  .section-header .date-controls > .current-week-label { text-align: center; font-weight: 700; padding: 4px 0; }
+
+  /* Diary controls: arrows either side of the month, Today and Add Entry on a row beneath */
+  #view-diary .section-header > div:last-child {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    align-items: center;
+  }
+  #view-diary #diaryMonthLabel { grid-column: 2 / span 2; min-width: 0 !important; text-align: center; }
+  #view-diary #diaryTodayBtn, #view-diary #diaryAddBtn { grid-column: span 2; width: 100%; }
+  #view-diary #diaryPrevMonthBtn, #view-diary #diaryNextMonthBtn { width: 100%; }
+
+  /* Day buttons: one even row across the width */
+  .mobile-day-selector {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+  }
+  .mobile-day-btn { padding: 10px 0; font-size: 0.78rem; text-align: center; width: 100%; }
+
+  /* Site cards in the phone planner: address takes the space, button never squashes */
+  .site-card-header { gap: 10px; }
+  .site-card-header > div:first-child { min-width: 0; flex: 1 1 auto; }
+  .mobile-add-shift-btn { flex-shrink: 0; white-space: nowrap; min-width: 92px; }
+}
+
+@media (max-width: 768px) {
+  #mobileDaySelector { display: grid !important; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; overflow: visible; }
+  .section-header .date-controls { align-items: stretch; }
+}
+
+@media (max-width: 768px) {
+  .responsive-table td.empty-cell { display: none !important; }
+  .no-shifts-note { display: block; font-size: 0.8rem; color: var(--text-muted); font-weight: 400; margin-top: 4px; }
+}
+
+@media (max-width: 768px) {
+  .user-chip-row { flex-direction: column; }
+  .user-chip { width: 100%; justify-content: center; }
+  #view-admin .site-card > form .btn-primary, #view-admin .site-card > .btn-primary { width: 100%; }
+  .site-card h3 { text-align: left; }
+}
+
+@media (max-width: 768px) {
+  /* Sites page: the filter toggle and Create button fill the width */
+  #view-projects .section-header > div:last-child { flex-direction: column; align-items: stretch !important; width: 100%; }
+  #view-projects .section-header > div:last-child > div { width: 100%; }
+  #view-projects .section-header > div:last-child > div .btn { flex: 1 1 0; }
+  #btnOpenCreateSiteModal { width: 100%; min-height: 44px; }
 }

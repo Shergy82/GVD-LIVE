@@ -21,16 +21,21 @@
       <span class="app-title" id="appTitleText">GVD LIVE</span>
     </div>
 
+    <button type="button" class="mobile-menu-btn" id="btnMobileMenu" aria-label="Open menu">☰ Menu</button>
+
     <nav class="nav-menu" id="navMenu">
       <!-- Admin & Manager Links -->
-      <button class="nav-item manager-admin-only" data-target="view-planner" id="navPlannerBtn">📅 Planner</button>
-      <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn">🏗️ Sites & Projects</button>
-      <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn">📊 Labour Sheet</button>
-      <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn">⚙️ Admin Settings <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
+      <button class="nav-item manager-admin-only" data-target="view-planner" id="navPlannerBtn"><span class="nav-ico">📅</span><span class="nav-lbl">Planner</span></button>
+      <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn"><span class="nav-ico">🏗️</span><span class="nav-lbl">Sites & Projects</span></button>
+      <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn"><span class="nav-ico">📊</span><span class="nav-lbl">Labour Sheet</span></button>
+      <button class="nav-item manager-admin-only" data-target="view-invoices" id="navInvoicesBtn"><span class="nav-ico">🧾</span><span class="nav-lbl">Invoices</span></button>
+      <button class="nav-item manager-admin-only" data-target="view-finance" id="navFinanceBtn"><span class="nav-ico">💷</span><span class="nav-lbl">Finance</span></button>
+      <button class="nav-item manager-admin-only" data-target="view-diary" id="navDiaryBtn"><span class="nav-ico">📖</span><span class="nav-lbl">Diary</span></button>
+      <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn"><span class="nav-ico">⚙️</span><span class="nav-lbl">Admin Settings</span> <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
       <!-- Operative Links -->
-      <button class="nav-item op-only" data-target="view-my-shifts" id="navMyShiftsBtn">📋 My Shifts</button>
-      <button class="nav-item op-only" data-target="view-projects" id="navMyProjectsBtn">🏗️ Sites & Projects</button>
+      <button class="nav-item op-only" data-target="view-my-shifts" id="navMyShiftsBtn"><span class="nav-ico">📋</span><span class="nav-lbl">My Shifts</span></button>
+      <button class="nav-item op-only" data-target="view-projects" id="navMyProjectsBtn"><span class="nav-ico">🏗️</span><span class="nav-lbl">Sites & Projects</span></button>
     </nav>
 
     <div class="user-status-bar" id="userStatusBar">
@@ -144,8 +149,8 @@
     <!-- Reset Password Form (with token) -->
     <div id="view-reset-password" class="auth-wrapper" style="display: none;">
       <div class="auth-header">
-        <h2>Set New Password</h2>
-        <p>Enter your new password below</p>
+        <h2>Choose Your Password</h2>
+        <p>Please choose a new password to continue</p>
       </div>
       <div id="resetAlert" class="alert-box alert-error" style="display: none;"></div>
       <form id="resetForm">
@@ -153,6 +158,10 @@
         <div class="form-group">
           <label for="resetNewPassword">New Password</label>
           <input type="password" id="resetNewPassword" class="form-control" required placeholder="New password">
+        </div>
+        <div class="form-group">
+          <label for="resetConfirmPassword">Confirm New Password</label>
+          <input type="password" id="resetConfirmPassword" class="form-control" required placeholder="Type it again">
         </div>
         <button type="submit" class="btn btn-primary">Update Password</button>
       </form>
@@ -168,9 +177,9 @@
           <p>Drag operatives onto site dates or tap cell on phone to assign shifts</p>
         </div>
         <div class="date-controls" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <button class="btn btn-secondary btn-sm" id="plannerPrevWeekBtn">← Previous Week</button>
-          <button class="btn btn-outline btn-sm" id="plannerCurrentWeekBtn">Current Week</button>
-          <button class="btn btn-secondary btn-sm" id="plannerNextWeekBtn">Next Week →</button>
+          <button class="btn btn-secondary btn-sm" id="plannerPrevWeekBtn">← Previous 7 days</button>
+          <button class="btn btn-outline btn-sm" id="plannerCurrentWeekBtn">Today</button>
+          <button class="btn btn-secondary btn-sm" id="plannerNextWeekBtn">Next 7 days →</button>
           <button class="btn btn-outline btn-sm manager-admin-only" id="btnPlannerDownloadPdf">📄 Download shifts PDF</button>
           <button class="btn btn-sm manager-admin-only" id="btnTogglePlanningMode" style="font-weight: 700; transition: all 0.3s ease;"></button>
           <span class="current-week-label" id="plannerWeekRangeLabel"></span>
@@ -217,12 +226,17 @@
     <div id="view-my-shifts" class="app-view" style="display: none;">
       <div class="section-header">
         <div class="section-title-group">
-          <h2>My Upcoming Shifts</h2>
-          <p>Your assigned work schedule in date order</p>
+          <h2 id="myShiftsTitle">Today's Work</h2>
+          <p id="myShiftsSubtitle">What you are on today</p>
         </div>
         <div>
           <button class="btn btn-primary btn-sm op-only" id="btnMyShiftsDownloadPdf">📱 Download Mobile Shift Card</button>
         </div>
+      </div>
+
+      <div id="myShiftsTabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="btn btn-primary my-shifts-tab" data-tab="today" style="flex: 1;">📅 Today</button>
+        <button type="button" class="btn btn-outline my-shifts-tab" data-tab="all" style="flex: 1;">📋 All My Jobs</button>
       </div>
 
       <div class="card-grid" id="myShiftsContainer">
@@ -263,7 +277,7 @@
               <h3 class="site-card-address" id="projSiteAddress">Property Address</h3>
             </div>
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
-              <span class="site-type-badge" id="projSiteTypeBadge">Concrete</span>
+              <span class="site-type-badge" id="projSiteTypeBadge"></span>
               <div id="projectPageActions" class="admin-only" style="display: flex; gap: 6px;"></div>
             </div>
           </div>
@@ -274,6 +288,8 @@
           <button class="tab-btn active" data-tab="tab-proj-planner" id="tabPlannerBtn">📅 Site Planner</button>
           <button class="tab-btn" data-tab="tab-proj-photos" id="tabPhotosBtn">📷 Live Photos</button>
           <button class="tab-btn" data-tab="tab-proj-pdfs" id="tabPdfsBtn">📄 PDF Documents</button>
+          <button class="tab-btn" data-tab="tab-proj-po" id="tabPoBtn">🧾 Purchase Orders</button>
+          <button class="tab-btn manager-admin-only" data-tab="tab-proj-finance" id="tabFinanceBtn">💷 Finance</button>
           <button class="tab-btn admin-only" data-tab="tab-proj-customer" id="tabCustomerBtn">🏷️ Customer QR & Printout</button>
         </div>
 
@@ -287,8 +303,8 @@
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
             <p style="color: var(--text-muted);">Upload site photos from your phone or computer</p>
             <div>
-              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('photoFileInput').click()">➕ Upload Photo</button>
-              <input type="file" id="photoFileInput" accept="image/*" style="display: none;">
+              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('photoFileInput').click()">➕ Upload Photos</button>
+              <input type="file" id="photoFileInput" accept="image/*" multiple style="display: none;">
             </div>
           </div>
           <div class="gallery-grid" id="photoGalleryContainer"></div>
@@ -297,13 +313,24 @@
         <!-- Tab 3: PDF Files -->
         <div id="tab-proj-pdfs" class="project-tab-content" style="display: none;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-            <p style="color: var(--text-muted);">Upload project documents (PDF files only)</p>
+            <p style="color: var(--text-muted);">Upload project documents (PDF or Excel files)</p>
             <div>
-              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('pdfFileInput').click()">📄 Upload PDF File</button>
-              <input type="file" id="pdfFileInput" accept="application/pdf" style="display: none;">
+              <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('pdfFileInput').click()">📄 Upload PDF / Excel</button>
+              <input type="file" id="pdfFileInput" accept="application/pdf,.pdf,.xlsx,.xls,.xlsm,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" style="display: none;">
             </div>
           </div>
           <div class="pdf-list" id="pdfListContainer"></div>
+          <div id="plasterCalcContainer" class="manager-admin-only" style="margin-top: 24px;"></div>
+        </div>
+
+        <!-- Tab: Finance (Owner / Admin / Manager only) -->
+        <div id="tab-proj-finance" class="project-tab-content manager-admin-only" style="display: none;">
+          <div id="financeTabContainer"></div>
+        </div>
+
+        <!-- Tab: Purchase Orders -->
+        <div id="tab-proj-po" class="project-tab-content" style="display: none;">
+          <div id="poTabContainer"></div>
         </div>
 
         <!-- Tab 4: Admin-Only Customer QR & A4 Printout -->
@@ -375,7 +402,7 @@
       </div>
 
       <div class="labour-table-wrapper">
-        <table class="labour-table">
+        <table class="labour-table responsive-table">
           <thead>
             <tr id="labourHeaderRow">
               <th class="op-name-col">Operative</th>
@@ -392,6 +419,123 @@
     <!-- ------------------------------------------------------------- -->
     <!-- ADMIN SETTINGS VIEW (USERS, ROLES, ACCESS, LOGO & APP NAME) -->
     <!-- ------------------------------------------------------------- -->
+    <div id="view-diary" class="app-view manager-admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Diary</h2>
+          <p>Site visits and appointments. Assigned people get a push notification straight away and a reminder at 7am on the day.</p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-secondary btn-sm" id="diaryPrevMonthBtn">←</button>
+          <strong id="diaryMonthLabel" style="min-width: 140px; text-align: center;"></strong>
+          <button class="btn btn-secondary btn-sm" id="diaryNextMonthBtn">→</button>
+          <button class="btn btn-outline btn-sm" id="diaryTodayBtn">Today</button>
+          <button class="btn btn-primary btn-sm" id="diaryAddBtn">+ Add Entry</button>
+        </div>
+      </div>
+      <div id="diaryGrid" class="diary-grid"></div>
+      <h3 style="margin: 20px 0 10px;">This month</h3>
+      <div id="diaryAgenda"></div>
+    </div>
+
+    <div id="view-invoices" class="app-view manager-admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Invoices</h2>
+          <p>Import merchant invoices. The app finds the PO number in each PDF and adds the cost (ex VAT) to that job.</p>
+        </div>
+      </div>
+
+      <div class="site-card" style="margin-bottom: 20px;">
+        <h3 style="margin-bottom: 10px;">📥 Import invoices</h3>
+        <input type="file" id="invBatchInput" accept="application/pdf,.pdf" multiple class="form-control">
+        <p id="invBatchReading" style="display: none; margin-top: 10px;">⏳ Reading invoices...</p>
+        <div id="invBatchList" style="margin-top: 14px;"></div>
+        <button type="button" class="btn btn-primary" id="btnInvImportSelected" style="display: none; margin-top: 8px;">Import ticked invoices</button>
+      </div>
+
+      <div class="site-card">
+        <h3 style="margin-bottom: 10px;">Invoice register</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px;">
+          <input type="text" id="invSearch" class="form-control" placeholder="Search invoice no, PO, merchant...">
+          <select id="invFilterSite" class="form-control"></select>
+          <select id="invFilterMerchant" class="form-control"></select>
+        </div>
+        <div id="invRegisterSummary" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 8px;"></div>
+        <div style="overflow-x: auto;">
+          <table class="planner-table responsive-table" style="min-width: 760px;">
+            <thead><tr><th>Date</th><th>Invoice</th><th>Merchant</th><th>PO</th><th>Job</th><th>Net £</th><th>VAT £</th><th>Total £</th><th></th></tr></thead>
+            <tbody id="invRegisterBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-finance" class="app-view manager-admin-only" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Finance</h2>
+          <p>Job values against materials, labour and extra costs. Owners, Admins and Managers only. All figures exclude VAT.</p>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <select id="finFilterStatus" class="form-control" style="width: auto;">
+            <option value="active">Active jobs</option>
+            <option value="archived">Archived jobs</option>
+            <option value="all">All jobs</option>
+          </select>
+          <input type="text" id="finSearch" class="form-control" placeholder="Search job..." style="width: 200px;">
+        </div>
+      </div>
+
+      <div id="finSummary" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 16px;"></div>
+
+      <div class="site-card" style="margin-bottom: 20px;">
+        <h3 style="margin-bottom: 10px;">Jobs</h3>
+        <div style="overflow-x: auto;">
+          <table class="planner-table responsive-table" style="min-width: 900px;">
+            <thead><tr><th>Job</th><th>Job value</th><th>Materials invoiced</th><th>On order</th><th>Labour</th><th>Extra costs</th><th>Total cost</th><th>Profit / loss</th><th>Margin</th></tr></thead>
+            <tbody id="finJobsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="site-card" style="margin-bottom: 20px;">
+        <h3 style="margin-bottom: 10px;">Extra costs</h3>
+        <form id="finCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px;">
+          <select id="finCostSite" class="form-control" required></select>
+          <input type="text" id="finCostDesc" class="form-control" placeholder="Description" required>
+          <select id="finCostContractor" class="form-control"></select>
+          <select id="finCostCategory" class="form-control">
+            <option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option>
+          </select>
+          <input type="text" inputmode="decimal" autocomplete="off" id="finCostAmount" class="form-control" step="0.01" min="0" placeholder="Amount £ ex VAT" required>
+          <input type="date" id="finCostDate" class="form-control" required>
+          <button type="submit" class="btn btn-primary">+ Add cost</button>
+        </form>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px;">
+          <select id="finCostFilterSite" class="form-control" style="width: auto; max-width: 320px;"></select>
+          <span id="finCostsCount" style="color: var(--text-muted); font-size: 0.85rem;"></span>
+        </div>
+        <div class="scroll-table" style="overflow: auto; max-height: 340px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+          <table class="planner-table responsive-table" style="min-width: 640px;">
+            <thead><tr><th>Date</th><th>Job</th><th>Description</th><th>Category</th><th>Amount</th><th></th></tr></thead>
+            <tbody id="finCostsBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="site-card" id="finRatesCard">
+        <h3 style="margin-bottom: 6px;">Day rates</h3>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. People set to Price work cost nothing per shift - their cost comes from their invoices or extra costs. Only Owners and Admins can change rates.</p>
+        <div style="overflow-x: auto;">
+          <table class="planner-table responsive-table" style="min-width: 420px;">
+            <thead><tr><th>Person</th><th>Role</th><th>Paid by</th><th>Day rate £</th></tr></thead>
+            <tbody id="finRatesBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <div id="view-admin" class="app-view admin-only" style="display: none;">
       <div class="section-header">
         <div class="section-title-group">
@@ -442,24 +586,8 @@
       <!-- User Database Control Table -->
       <div class="site-card">
         <h3 style="margin-bottom: 16px;">User Account Database</h3>
-        <div style="overflow-x: auto;">
-          <table class="planner-table" style="min-width: 700px;">
-            <thead>
-              <tr>
-                <th>Full Name</th>
-                <th>Job Title</th>
-                <th>Email Address</th>
-                <th>Phone Number</th>
-                <th>Role</th>
-                <th>Account Access Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody id="adminUserTableBody">
-              <!-- User rows -->
-            </tbody>
-          </table>
-        </div>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 12px;">Tap a person to view and edit their account.</p>
+        <div id="adminUserChips"></div>
       </div>
     </div>
 
@@ -479,7 +607,7 @@
 
         <div style="margin-bottom: 20px;">
           <h2 style="font-size: 1.4rem; font-weight: 700;" id="custPubAddress">Property Address</h2>
-          <span class="site-type-badge" id="custPubTypeBadge">Concrete</span>
+          <span class="site-type-badge" id="custPubTypeBadge"></span>
         </div>
 
         <h4 style="margin-bottom: 12px; color: #334155; font-size: 0.95rem; text-transform: uppercase;">Live Works Schedule</h4>
@@ -508,13 +636,13 @@
           <input type="text" id="siteAddressInput" class="form-control" required placeholder="14 High Street, London EC1A 1BB">
         </div>
         <div class="form-group">
-          <label>Construction Type (Simple Tick Selection)</label>
+          <label>Construction Type (optional - tick one, or leave both blank)</label>
           <div style="display: flex; gap: 20px; margin-top: 8px;">
             <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="radio" name="constructionType" value="Concrete" checked> Concrete
+              <input type="checkbox" name="constructionType" value="Concrete"> Concrete
             </label>
             <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-              <input type="radio" name="constructionType" value="Timber"> Timber
+              <input type="checkbox" name="constructionType" value="Timber"> Timber
             </label>
           </div>
         </div>
@@ -574,11 +702,248 @@
           <label for="shiftTaskInput">Task Description</label>
           <textarea id="shiftTaskInput" class="form-control" rows="3" required placeholder="Short description of task to be performed"></textarea>
         </div>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
+            <input type="checkbox" id="shiftFinishChk"> 🏁 This is the finishing shift for the job
+          </label>
+          <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">Tick this if the wording is different. Fixtures &amp; Fittings / Decoration shifts are picked up automatically.</div>
+        </div>
         <div style="display: flex; gap: 10px; margin-top: 16px;">
           <button type="submit" class="btn btn-primary">Save Shift</button>
           <button type="button" class="btn btn-danger" id="btnDeleteShift" style="display: none;">Remove Shift</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal: Diary Entry -->
+  <div class="modal-overlay" id="modalDiary">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalDiaryTitle">Add Diary Entry</h3>
+        <button class="close-btn" data-close="modalDiary">&times;</button>
+      </div>
+      <form id="diaryForm">
+        <input type="hidden" id="diaryIdInput">
+        <div class="form-group">
+          <label for="diaryTitleInput">Title</label>
+          <input type="text" id="diaryTitleInput" class="form-control" required placeholder="e.g. Site visit - survey">
+        </div>
+        <div class="form-group">
+          <label for="diaryDateInput">Date</label>
+          <input type="date" id="diaryDateInput" class="form-control" required>
+        </div>
+        <div class="form-group">
+          <label for="diaryTimeInput">Time window</label>
+          <select id="diaryTimeInput" class="form-control">
+            <option value="">No set time</option>
+            <option value="06:00-08:00">6am - 8am</option>
+            <option value="08:00-10:00">8am - 10am</option>
+            <option value="10:00-12:00">10am - 12pm</option>
+            <option value="12:00-14:00">12pm - 2pm</option>
+            <option value="14:00-16:00">2pm - 4pm</option>
+            <option value="16:00-18:00">4pm - 6pm</option>
+            <option value="18:00-20:00">6pm - 8pm</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="diarySiteSelect">Site (optional)</label>
+          <select id="diarySiteSelect" class="form-control"></select>
+        </div>
+        <div class="form-group">
+          <label>Site visit for (managers, admins &amp; owners)</label>
+          <div id="diaryAssigneeList" style="display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; margin-top: 6px;"></div>
+        </div>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
+            <input type="checkbox" id="diaryReminderChk" checked> ⏰ Send a reminder at 7am on the day
+          </label>
+        </div>
+        <div class="form-group">
+          <label for="diaryNotesInput">Notes (optional)</label>
+          <textarea id="diaryNotesInput" class="form-control" rows="3"></textarea>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button type="submit" class="btn btn-primary">Save Entry</button>
+          <button type="button" class="btn btn-danger" id="btnDeleteDiary" style="display: none;">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: User Account -->
+  <div class="modal-overlay" id="modalUser">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalUserName">User</h3>
+        <button class="close-btn" data-close="modalUser">&times;</button>
+      </div>
+      <input type="hidden" id="userModalId">
+      <div id="userModalContact" style="margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px;"></div>
+      <div class="form-group">
+        <label for="userModalEmail">Email address (this is their login)</label>
+        <input type="email" id="userModalEmail" class="form-control" autocomplete="off" placeholder="name@example.com">
+      </div>
+      <div class="form-group">
+        <label for="userModalPhone">Phone number</label>
+        <input type="tel" id="userModalPhone" class="form-control" autocomplete="off" placeholder="07...">
+      </div>
+      <div class="form-group">
+        <label for="userModalJob">Job Title</label>
+        <input type="text" id="userModalJob" class="form-control" placeholder="e.g. Site Manager">
+      </div>
+      <div class="form-group">
+        <label for="userModalRole">Role</label>
+        <select id="userModalRole" class="form-control">
+          <option value="Operative">Operative</option>
+          <option value="Manager">Manager</option>
+          <option value="Admin">Admin</option>
+          <option value="Owner">Owner</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="userModalStatus">Account Access Status</label>
+        <select id="userModalStatus" class="form-control">
+          <option value="Pending">Pending</option>
+          <option value="Active">Active</option>
+          <option value="Restricted">Restricted</option>
+        </select>
+      </div>
+      <div class="form-group" id="userModalRateGroup">
+        <label for="userModalPayType">Paid by (finance - Owners and Admins only)</label>
+        <select id="userModalPayType" class="form-control" style="margin-bottom: 8px;">
+          <option value="day">Day rate</option>
+          <option value="price">Price work (per m2 / job price - cost comes from invoices)</option>
+        </select>
+        <label for="userModalDayRate">Day rate £</label>
+        <input type="text" inputmode="decimal" autocomplete="off" id="userModalDayRate" class="form-control" placeholder="e.g. 200">
+      </div>
+      <div class="form-group">
+        <label for="userModalColor">Planner colour</label>
+        <input type="color" id="userModalColor" style="width: 64px; height: 40px; padding: 0; border: none; background: none; cursor: pointer;">
+      </div>
+      <div id="userModalLoginBox" style="display: none; margin-top: 8px; padding: 12px; border: 1px dashed var(--warning); border-radius: var(--radius-sm);">
+        <strong style="font-size: 0.9rem;">🔑 Share login details</strong>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin: 4px 0 8px;">For people who have not logged in yet. They log in with their email and this temporary password, then choose their own.</p>
+        <label for="userModalTempPw" style="font-size: 0.8rem;">Temporary password</label>
+        <input type="text" id="userModalTempPw" class="form-control" autocomplete="off">
+        <p id="userModalLoginState" style="font-size: 0.8rem; color: var(--text-muted); margin: 6px 0;"></p>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button type="button" class="btn btn-outline btn-sm" id="btnEmailLogin">✉️ Email login details</button>
+          <button type="button" class="btn btn-outline btn-sm" id="btnCopyLogin">📋 Copy login details</button>
+        </div>
+      </div>
+      <div style="display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap;">
+        <button type="button" class="btn btn-primary" id="btnSaveUser">Save</button>
+        <button type="button" class="btn btn-danger" id="btnRemoveUser">Remove User</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Plastering calculator room -->
+  <div class="modal-overlay" id="modalPlasterRoom">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalPlasterRoomTitle">Add Room</h3>
+        <button class="close-btn" data-close="modalPlasterRoom">&times;</button>
+      </div>
+      <form id="plasterRoomForm">
+        <input type="hidden" id="plRoomId">
+        <div class="form-group"><label for="plName">Room name</label><input type="text" id="plName" class="form-control" required placeholder="e.g. Shower room"></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="plLength">Length (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plLength" class="form-control" step="0.001" min="0" required></div>
+          <div class="form-group"><label for="plWidth">Width (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plWidth" class="form-control" step="0.001" min="0" required></div>
+          <div class="form-group"><label for="plHeight">Ceiling height (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plHeight" class="form-control" step="0.001" min="0" required value="2.4"></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="plTiledLen">Tiled (green) wall length (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plTiledLen" class="form-control" step="0.001" min="0" value="0"></div>
+          <div class="form-group"><label for="plTiledHeight">Tiled height (m)</label><input type="text" inputmode="decimal" autocomplete="off" id="plTiledHeight" class="form-control" step="0.001" min="0" value="2.4"></div>
+        </div>
+        <div class="form-group"><label for="plWallType">Walls are</label>
+          <select id="plWallType" class="form-control"><option value="stud">Stud (screw fixed)</option><option value="brick">Brick / block (dab fixed)</option></select></div>
+        <div class="form-group"><label for="plCeiling">Ceiling</label>
+          <select id="plCeiling" class="form-control"><option value="board_skim">Board and skim</option><option value="skim_only">Skim only</option><option value="none">No work</option></select></div>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button type="submit" class="btn btn-primary">Save Room</button>
+          <button type="button" class="btn btn-danger" id="btnDeletePlasterRoom" style="display: none;">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Edit extra cost -->
+  <div class="modal-overlay" id="modalCostEdit">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Edit Cost</h3>
+        <button class="close-btn" data-close="modalCostEdit">&times;</button>
+      </div>
+      <form id="costEditForm">
+        <input type="hidden" id="costEditId">
+        <div class="form-group"><label for="costEditSite">Job</label><select id="costEditSite" class="form-control" required></select></div>
+        <div class="form-group"><label for="costEditDesc">Description</label><input type="text" id="costEditDesc" class="form-control" required></div>
+        <div class="form-group"><label for="costEditCategory">Category</label>
+          <select id="costEditCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select></div>
+        <div class="form-group"><label for="costEditContractor">Paid to</label><select id="costEditContractor" class="form-control"></select></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="form-group"><label for="costEditAmount">Amount £ ex VAT</label><input type="text" inputmode="decimal" autocomplete="off" id="costEditAmount" class="form-control" required></div>
+          <div class="form-group"><label for="costEditDate">Date</label><input type="date" id="costEditDate" class="form-control" required></div>
+        </div>
+        <div style="display: flex; gap: 10px; margin-top: 12px;">
+          <button type="submit" class="btn btn-primary">Save changes</button>
+          <button type="button" class="btn btn-danger" id="btnCostEditDelete">Delete</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Move or duplicate a dragged shift -->
+  <div class="modal-overlay" id="modalShiftDrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Move or duplicate shift?</h3>
+        <button class="close-btn" data-close="modalShiftDrop">&times;</button>
+      </div>
+      <div id="shiftDropSummary" style="margin-bottom: 16px; font-size: 0.95rem; line-height: 1.5;"></div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button type="button" class="btn btn-primary" id="btnShiftDropMove">➡️ Move it here</button>
+        <button type="button" class="btn btn-outline" id="btnShiftDropCopy">📋 Duplicate it here (keep the original)</button>
+        <button type="button" class="btn btn-secondary" data-close="modalShiftDrop">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Request Purchase Order -->
+  <div class="modal-overlay" id="modalPO">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Request PO Number</h3>
+        <button class="close-btn" data-close="modalPO">&times;</button>
+      </div>
+      <div id="poSiteLine" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;"></div>
+      <form id="poForm">
+        <div class="form-group">
+          <label for="poMerchantInput">Merchant</label>
+          <input type="text" id="poMerchantInput" class="form-control" list="poMerchantList" required placeholder="e.g. Travis Perkins">
+          <datalist id="poMerchantList"></datalist>
+        </div>
+        <div class="form-group">
+          <label for="poDescInput">What is it for?</label>
+          <textarea id="poDescInput" class="form-control" rows="3" required placeholder="e.g. Tiles, adhesive and grout for bathroom"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="poValueInput">Estimated value £ (optional)</label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="poValueInput" class="form-control" step="0.01" min="0" inputmode="decimal">
+        </div>
+        <button type="submit" class="btn btn-primary" id="btnSubmitPO" style="width: 100%;">Get PO Number</button>
+      </form>
+      <div id="poResult" style="display: none; text-align: center;">
+        <p style="color: var(--text-muted);">Give this reference to the merchant:</p>
+        <div id="poResultNumber" style="font-size: 1.8rem; font-weight: 800; margin: 12px 0; letter-spacing: 0.02em;"></div>
+        <div id="poResultDetail" style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 14px;"></div>
+        <button type="button" class="btn btn-outline" id="btnCopyPO" style="width: 100%; margin-bottom: 8px;">📋 Copy PO number</button>
+        <button type="button" class="btn btn-primary" data-close="modalPO" style="width: 100%;">Done</button>
+      </div>
     </div>
   </div>
 
@@ -596,11 +961,13 @@
         </div>
         <h4 style="font-size: 1.1rem; margin-bottom: 6px;" id="detailAddress">Property Address</h4>
         <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;" id="detailDate">Date</p>
+        <div id="detailSiteInfo"></div>
         <div style="background-color: var(--bg-primary); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
           <strong style="font-size: 0.85rem; color: var(--text-muted);">Assigned Task:</strong>
           <p style="margin-top: 4px; font-size: 0.95rem;" id="detailTask">Task description</p>
         </div>
         <button class="btn btn-outline" id="btnGoToProjectPage" style="width: 100%; margin-bottom: 10px;">🏗️ View Site & Project Page</button>
+        <button class="btn btn-outline" id="btnRequestPOFromShift" style="width: 100%; margin-bottom: 10px;">🧾 Request PO number</button>
         <button class="btn btn-primary" data-close="modalShiftDetail" style="width: 100%;">Close Details</button>
       </div>
     </div>
@@ -647,9 +1014,10 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=17.0"></script>
+  <script src="/app.js?v=47.0"></script>
 </body>
 </html>
