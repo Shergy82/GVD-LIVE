@@ -3914,7 +3914,7 @@ function renderDiaryView() {
     const d = new Date(year, month, 1 - startOffset + i);
     const key = diaryDateKey(d);
     const chips = (byDate[key] || []).map(e =>
-      `<span class="diary-chip" data-entry="${diaryEsc(e.id)}"><strong>${diaryEsc(diaryAssigneeNames(e, true) || 'Unassigned')}</strong> ${diaryEsc(diaryWindowLabel(e.time))} ${diaryEsc(e.title)}</span>`).join('');
+      `<span class="diary-chip" data-entry="${diaryEsc(e.id)}" style="background: ${userColor((e.assignee_ids || [])[0] || '')};"><strong class="dc-who">${diaryEsc(diaryAssigneeNames(e, true) || 'Unassigned')}</strong> <span class="dc-win">${diaryEsc(diaryWindowLabel(e.time))}</span> <span class="dc-title">${diaryEsc(e.title)}</span></span>`).join('');
     html += `<div class="diary-cell${d.getMonth() !== month ? ' other-month' : ''}${key === todayKey ? ' today' : ''}" data-date="${key}"><div class="diary-daynum">${d.getDate()}</div>${chips}</div>`;
   }
   const grid = document.getElementById('diaryGrid');

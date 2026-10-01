@@ -1147,7 +1147,15 @@ body {
 .diary-chip { display: block; margin-top: 3px; padding: 2px 4px; font-size: 0.7rem; line-height: 1.25; background: var(--primary); color: #fff; border-radius: 4px; white-space: normal; overflow-wrap: anywhere; }
 .diary-agenda-item { background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
 .diary-agenda-item:hover { background: var(--bg-surface-hover); }
-@media (max-width: 640px) { .diary-cell { min-height: 52px; } .diary-chip { font-size: 0; height: 6px; padding: 0; } }
+.diary-chip { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55); }
+@media (max-width: 640px) {
+  .diary-grid { gap: 3px; }
+  .diary-cell { min-height: 92px; padding: 3px 2px; }
+  .diary-daynum { font-size: 0.7rem; }
+  /* Phone: show the address (title) in each box, small, up to 4 lines */
+  .diary-chip { font-size: 0.58rem; line-height: 1.15; padding: 2px 3px; margin-top: 2px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; overflow-wrap: anywhere; }
+  .diary-chip .dc-who, .diary-chip .dc-win { display: none; }
+}
 
 /* Compact user chips */
 .user-group-title { margin: 14px 0 8px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
