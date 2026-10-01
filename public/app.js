@@ -2490,7 +2490,7 @@ function renderLabourSheetView() {
       }).join('');
 
       return `
-        <td class="labour-cell">
+        <td class="labour-cell${opShifts.length ? '' : ' empty-cell'}" data-label="${formatDateShort(day)}">
           ${badgesHtml || '<span style="color: var(--border-color); font-size: 0.75rem;">—</span>'}
         </td>
       `;
@@ -4839,13 +4839,13 @@ function renderInvoiceRegister() {
     const site = allSites.find(s => String(s.id) === String(f.site_id));
     return `<tr>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
-      <td>${diaryEsc(f.invoice_no || '-')}</td>
-      <td>${diaryEsc(invMerchantOf(f) || '-')}</td>
-      <td>${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
-      <td>${diaryEsc(site ? site.address : 'Unknown job')}</td>
-      <td><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
-      <td>${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
-      <td>${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
+      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}</td>
+      <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}</td>
+      <td data-label="PO">${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
+      <td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td>
+      <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
+      <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
+      <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
       <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
@@ -5139,11 +5139,11 @@ function renderFinanceView(force) {
 
   document.getElementById('finJobsBody').innerHTML = data.length ? data.map(({ site, f }) => `<tr class="fin-job-row" data-site="${diaryEsc(site.id)}" style="cursor: pointer;">
       <td><strong>${diaryEsc(site.address)}</strong>${site.is_archived ? ' <small>(archived)</small>' : ''}</td>
-      <td>${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}</td>
-      <td>${money(f.invoiced)}</td><td>${money(f.onOrder)}</td><td>${money(f.labour)}</td><td>${money(f.extras)}</td>
-      <td><strong>${money(f.totalCost)}</strong></td>
-      <td style="color: ${profitColor(f.profit)}; font-weight: 700;">${f.profit != null ? money(f.profit) : '-'}</td>
-      <td style="color: ${profitColor(f.profit)}; font-weight: 700;">${marginText(f.margin)}</td></tr>`).join('')
+      <td data-label="Job value">${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}</td>
+      <td data-label="Materials invoiced">${money(f.invoiced)}</td><td data-label="On order">${money(f.onOrder)}</td><td data-label="Labour">${money(f.labour)}</td><td data-label="Extra costs">${money(f.extras)}</td>
+      <td data-label="Total cost"><strong>${money(f.totalCost)}</strong></td>
+      <td data-label="Profit / loss" style="color: ${profitColor(f.profit)}; font-weight: 700;">${f.profit != null ? money(f.profit) : '-'}</td>
+      <td data-label="Margin" style="color: ${profitColor(f.profit)}; font-weight: 700;">${marginText(f.margin)}</td></tr>`).join('')
     : '<tr><td colspan="9" style="color: var(--text-muted);">No jobs found.</td></tr>';
   document.querySelectorAll('.fin-job-row').forEach(r => r.addEventListener('click', () => openSiteFinance(r.dataset.site)));
 
@@ -5167,7 +5167,7 @@ function renderFinanceView(force) {
   document.getElementById('finCostsCount').textContent = `${ledger.length} cost${ledger.length === 1 ? '' : 's'} · ${money(ledgerTotal)} · newest first`;
   document.getElementById('finCostsBody').innerHTML = ledger.map(c => {
       const site = allSites.find(s => String(s.id) === String(c.site_id));
-      return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(site ? site.address : 'Unknown job')}</td><td>${diaryEsc(c.description)}${c.contractor_id ? ` <small style="color: var(--text-muted);">(${diaryEsc((allUsers.find(u => String(u.id) === String(c.contractor_id)) || {}).full_name || 'Unknown')})</small>` : ''}</td><td>${diaryEsc(c.category || '')}</td><td>${money(c.amount)}</td>
+      return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td><td data-label="Description">${diaryEsc(c.description)}${c.contractor_id ? ` <small style="color: var(--text-muted);">(${diaryEsc((allUsers.find(u => String(u.id) === String(c.contractor_id)) || {}).full_name || 'Unknown')})</small>` : ''}</td><td data-label="Category">${diaryEsc(c.category || '')}</td><td data-label="Amount">${money(c.amount)}</td>
         <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
     }).join('') || '<tr><td colspan="6" style="color: var(--text-muted);">No extra costs logged.</td></tr>';
   document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
@@ -5181,11 +5181,11 @@ function renderFinanceView(force) {
       const price = financePay[String(u.id)] === 'price';
       const rate = financeRates[String(u.id)];
       return `<tr>
-        <td>${diaryEsc(u.full_name)}</td><td>${diaryEsc(u.role)}</td>
-        <td>${canEditRates
+        <td>${diaryEsc(u.full_name)}</td><td data-label="Role">${diaryEsc(u.role)}</td>
+        <td data-label="Paid by">${canEditRates
           ? `<select class="form-control fin-paytype" data-user="${diaryEsc(u.id)}" style="min-height: 32px; padding: 2px 8px; width: auto;"><option value="day"${price ? '' : ' selected'}>Day rate</option><option value="price"${price ? ' selected' : ''}>Price work</option></select>`
           : (price ? 'Price work' : 'Day rate')}</td>
-        <td>${price ? '<span style="color: var(--text-muted);">invoiced</span>' : canEditRates
+        <td data-label="Day rate £">${price ? '<span style="color: var(--text-muted);">invoiced</span>' : canEditRates
           ? `<input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${rate != null ? rate : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
           : (rate != null ? money(rate) : 'not set')}</td></tr>`;
     }).join('');

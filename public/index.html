@@ -402,7 +402,7 @@
       </div>
 
       <div class="labour-table-wrapper">
-        <table class="labour-table">
+        <table class="labour-table responsive-table">
           <thead>
             <tr id="labourHeaderRow">
               <th class="op-name-col">Operative</th>
@@ -463,7 +463,7 @@
         </div>
         <div id="invRegisterSummary" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 8px;"></div>
         <div style="overflow-x: auto;">
-          <table class="planner-table" style="min-width: 760px;">
+          <table class="planner-table responsive-table" style="min-width: 760px;">
             <thead><tr><th>Date</th><th>Invoice</th><th>Merchant</th><th>PO</th><th>Job</th><th>Net £</th><th>VAT £</th><th>Total £</th><th></th></tr></thead>
             <tbody id="invRegisterBody"></tbody>
           </table>
@@ -492,7 +492,7 @@
       <div class="site-card" style="margin-bottom: 20px;">
         <h3 style="margin-bottom: 10px;">Jobs</h3>
         <div style="overflow-x: auto;">
-          <table class="planner-table" style="min-width: 900px;">
+          <table class="planner-table responsive-table" style="min-width: 900px;">
             <thead><tr><th>Job</th><th>Job value</th><th>Materials invoiced</th><th>On order</th><th>Labour</th><th>Extra costs</th><th>Total cost</th><th>Profit / loss</th><th>Margin</th></tr></thead>
             <tbody id="finJobsBody"></tbody>
           </table>
@@ -517,7 +517,7 @@
           <span id="finCostsCount" style="color: var(--text-muted); font-size: 0.85rem;"></span>
         </div>
         <div class="scroll-table" style="overflow: auto; max-height: 340px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
-          <table class="planner-table" style="min-width: 640px;">
+          <table class="planner-table responsive-table" style="min-width: 640px;">
             <thead><tr><th>Date</th><th>Job</th><th>Description</th><th>Category</th><th>Amount</th><th></th></tr></thead>
             <tbody id="finCostsBody"></tbody>
           </table>
@@ -528,7 +528,7 @@
         <h3 style="margin-bottom: 6px;">Day rates</h3>
         <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. People set to Price work cost nothing per shift - their cost comes from their invoices or extra costs. Only Owners and Admins can change rates.</p>
         <div style="overflow-x: auto;">
-          <table class="planner-table" style="min-width: 420px;">
+          <table class="planner-table responsive-table" style="min-width: 420px;">
             <thead><tr><th>Person</th><th>Role</th><th>Paid by</th><th>Day rate £</th></tr></thead>
             <tbody id="finRatesBody"></tbody>
           </table>
@@ -1018,6 +1018,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=43.0"></script>
+  <script src="/app.js?v=44.0"></script>
 </body>
 </html>

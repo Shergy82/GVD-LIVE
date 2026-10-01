@@ -1041,7 +1041,7 @@ body {
     padding-bottom: 4px;
   }
   
-  .planner-table {
+  #desktopPlannerTable {
     display: none; /* Switch to mobile day selector on phone */
   }
   
@@ -1246,4 +1246,64 @@ body {
   .app-header.nav-collapsible .nav-item .nav-ico { font-size: 1.5rem; }
   .app-header.nav-collapsible .nav-item.active { background-color: var(--primary); border-color: var(--primary); color: #fff; }
   .app-header.nav-collapsible .user-status-bar { justify-content: space-between; }
+}
+
+/* ---- Phone layout polish ---- */
+@media (max-width: 768px) {
+  /* One consistent side margin so the header boxes and page content line up */
+  .main-content { padding: 14px; }
+  .app-header, .app-header.nav-collapsible { padding: 10px 14px; }
+
+  /* Page headings and their controls stack and fill the width */
+  .section-header { flex-direction: column; align-items: stretch; gap: 12px; }
+  .section-header .form-control { flex: 1 1 140px; width: auto !important; min-width: 0; }
+  .section-header > div { max-width: 100%; }
+
+  /* Wide tables become tidy cards, one per row, nothing to slide sideways */
+  .responsive-table, .responsive-table tbody, .responsive-table tr, .responsive-table td { display: block; width: 100%; }
+  .responsive-table { min-width: 0 !important; border: 0; }
+  .responsive-table thead { display: none; }
+  .responsive-table tr {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 10px;
+    padding: 10px 12px;
+  }
+  .responsive-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    text-align: right;
+    border: none !important;
+    padding: 5px 0 !important;
+    font-size: 0.9rem;
+  }
+  .responsive-table td::before {
+    content: attr(data-label);
+    flex: 0 0 40%;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .responsive-table td:not([data-label])::before { display: none; }
+  .responsive-table td:first-child {
+    display: block;
+    text-align: left;
+    font-size: 1.02rem;
+    padding-bottom: 8px !important;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border-color) !important;
+  }
+  .responsive-table td:last-child:not([data-label]) { justify-content: flex-end; }
+  .responsive-table td.empty-cell { display: none; }
+  .responsive-table td.labour-cell { display: block; text-align: left; background: transparent; }
+  .responsive-table td.labour-cell::before { display: block; margin-bottom: 4px; }
+  .labour-table-wrapper { background: none; border: none; overflow: visible; }
+  .scroll-table { border: none !important; max-height: none !important; }
+  .fin-job-row { cursor: pointer; }
 }
