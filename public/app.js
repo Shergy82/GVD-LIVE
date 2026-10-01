@@ -551,6 +551,7 @@ function showView(viewId) {
 
   const targetView = document.getElementById(viewId);
   if (targetView) targetView.style.display = 'block';
+  if (viewId === 'view-my-shifts') myShiftsTab = 'today';
 
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.target === viewId);
@@ -1742,16 +1743,29 @@ function formatShiftPeriodBadge(period) {
 // -------------------------------------------------------------------
 // OPERATIVE "MY SHIFTS" VIEW & AUTOMATIC SEEN TIMESTAMP ON APP OPEN
 // -------------------------------------------------------------------
+let myShiftsTab = 'today'; // always starts on today's work
+
 function renderMyShiftsView() {
   const container = document.getElementById('myShiftsContainer');
   if (!currentUser) return;
   const todayKey = diaryDateKey(new Date());
   const periodRank = { am: 0, all_day: 1, pm: 2 };
-  const myShifts = allShifts
+  const upcoming = allShifts
     .filter(s => String(s.operative_id) === String(currentUser.id) && (s.shift_date || '') >= todayKey)
     .sort((a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (periodRank[a.shift_period] ?? 1) - (periodRank[b.shift_period] ?? 1));
+  const myShifts = myShiftsTab === 'today' ? upcoming.filter(s => s.shift_date === todayKey) : upcoming;
 
-  // Automatically mark shifts as SEEN when operative opens the app / views their shifts
+  // Tabs + headings
+  document.querySelectorAll('.my-shifts-tab').forEach(btn => {
+    const active = btn.dataset.tab === myShiftsTab;
+    btn.className = `btn ${active ? 'btn-primary' : 'btn-outline'} my-shifts-tab`;
+    btn.onclick = () => { myShiftsTab = btn.dataset.tab; renderMyShiftsView(); };
+  });
+  document.getElementById('myShiftsTitle').textContent = myShiftsTab === 'today' ? "Today's Work" : 'All My Jobs';
+  document.getElementById('myShiftsSubtitle').textContent = myShiftsTab === 'today'
+    ? formatDateShort(new Date()) : `${upcoming.length} upcoming shift${upcoming.length === 1 ? '' : 's'} in date order`;
+
+  // Automatically mark the shifts on screen as SEEN (not ones hidden on the other tab)
   const nowIso = new Date().toISOString();
   myShifts.forEach(async (s) => {
     if (!s.seen_at || (s.updated_at && s.seen_at < s.updated_at)) {
@@ -1766,16 +1780,23 @@ function renderMyShiftsView() {
   if (myShifts.length === 0) {
     container.innerHTML = `
       <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-muted);" class="site-card">
-        <h3>No Upcoming Shifts</h3>
-        <p>You have no assigned shifts at this time.</p>
+        <h3>${myShiftsTab === 'today' ? 'No work scheduled for today' : 'No Upcoming Shifts'}</h3>
+        <p>${myShiftsTab === 'today' ? (upcoming.length ? `You have ${upcoming.length} upcoming shift${upcoming.length === 1 ? '' : 's'}. Tap All My Jobs to see them.` : 'You have no assigned shifts at this time.') : 'You have no assigned shifts at this time.'}</p>
       </div>
     `;
   } else {
+    let lastDate = null;
     container.innerHTML = myShifts.map(s => {
+      let heading = '';
+      if (myShiftsTab === 'all' && s.shift_date !== lastDate) {
+        lastDate = s.shift_date;
+        const label = s.shift_date === todayKey ? 'Today' : s.shift_date === addDaysISO(todayKey, 1) ? 'Tomorrow' : '';
+        heading = `<h3 style="grid-column: 1 / -1; margin: 8px 0 -4px;">${label ? label + ' - ' : ''}${formatShortUKDayDate(s.shift_date)}</h3>`;
+      }
       const site = allSites.find(st => parseInt(st.id) === parseInt(s.site_id));
       const periodBadge = formatShiftPeriodBadge(s.shift_period);
       const isSeen = s.seen_at && s.updated_at && s.seen_at >= s.updated_at;
-      return `
+      return heading + `
         <div class="site-card shift-op-card" data-shift-id="${s.id}" data-site-id="${s.site_id}" style="cursor: pointer;">
           <div class="site-card-header">
             <div>

@@ -224,12 +224,17 @@
     <div id="view-my-shifts" class="app-view" style="display: none;">
       <div class="section-header">
         <div class="section-title-group">
-          <h2>My Upcoming Shifts</h2>
-          <p>Your assigned work schedule in date order</p>
+          <h2 id="myShiftsTitle">Today's Work</h2>
+          <p id="myShiftsSubtitle">What you are on today</p>
         </div>
         <div>
           <button class="btn btn-primary btn-sm op-only" id="btnMyShiftsDownloadPdf">📱 Download Mobile Shift Card</button>
         </div>
+      </div>
+
+      <div id="myShiftsTabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="btn btn-primary my-shifts-tab" data-tab="today" style="flex: 1;">📅 Today</button>
+        <button type="button" class="btn btn-outline my-shifts-tab" data-tab="all" style="flex: 1;">📋 All My Jobs</button>
       </div>
 
       <div class="card-grid" id="myShiftsContainer">
@@ -1011,6 +1016,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=37.0"></script>
+  <script src="/app.js?v=38.0"></script>
 </body>
 </html>
