@@ -1307,3 +1307,72 @@ body {
   .scroll-table { border: none !important; max-height: none !important; }
   .fin-job-row { cursor: pointer; }
 }
+
+/* ---- Phone: centred headings, full-width controls, even day buttons ---- */
+@media (max-width: 768px) {
+  .section-header { text-align: center; }
+  .section-title-group h2 { font-size: 1.6rem; }
+  .app-header .brand-container { justify-content: center; }
+
+  /* Button rows: the first three share a row evenly, anything else is full width */
+  .section-header .date-controls {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    justify-content: stretch;
+  }
+  .section-header .date-controls > .btn { width: 100%; padding-left: 4px; padding-right: 4px; white-space: normal; text-align: center; justify-content: center; }
+  .section-header .date-controls > .btn:nth-child(n+4),
+  .section-header .date-controls > .current-week-label { grid-column: 1 / -1; }
+  .section-header .date-controls > .current-week-label { text-align: center; font-weight: 700; padding: 4px 0; }
+
+  /* Diary controls: arrows either side of the month, Today and Add Entry on a row beneath */
+  #view-diary .section-header > div:last-child {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    align-items: center;
+  }
+  #view-diary #diaryMonthLabel { grid-column: 2 / span 2; min-width: 0 !important; text-align: center; }
+  #view-diary #diaryTodayBtn, #view-diary #diaryAddBtn { grid-column: span 2; width: 100%; }
+  #view-diary #diaryPrevMonthBtn, #view-diary #diaryNextMonthBtn { width: 100%; }
+
+  /* Day buttons: one even row across the width */
+  .mobile-day-selector {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+  }
+  .mobile-day-btn { padding: 10px 0; font-size: 0.78rem; text-align: center; width: 100%; }
+
+  /* Site cards in the phone planner: address takes the space, button never squashes */
+  .site-card-header { gap: 10px; }
+  .site-card-header > div:first-child { min-width: 0; flex: 1 1 auto; }
+  .mobile-add-shift-btn { flex-shrink: 0; white-space: nowrap; min-width: 92px; }
+}
+
+@media (max-width: 768px) {
+  #mobileDaySelector { display: grid !important; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; overflow: visible; }
+  .section-header .date-controls { align-items: stretch; }
+}
+
+@media (max-width: 768px) {
+  .responsive-table td.empty-cell { display: none !important; }
+  .no-shifts-note { display: block; font-size: 0.8rem; color: var(--text-muted); font-weight: 400; margin-top: 4px; }
+}
+
+@media (max-width: 768px) {
+  .user-chip-row { flex-direction: column; }
+  .user-chip { width: 100%; justify-content: center; }
+  #view-admin .site-card > form .btn-primary, #view-admin .site-card > .btn-primary { width: 100%; }
+  .site-card h3 { text-align: left; }
+}
+
+@media (max-width: 768px) {
+  /* Sites page: the filter toggle and Create button fill the width */
+  #view-projects .section-header > div:last-child { flex-direction: column; align-items: stretch !important; width: 100%; }
+  #view-projects .section-header > div:last-child > div { width: 100%; }
+  #view-projects .section-header > div:last-child > div .btn { flex: 1 1 0; }
+  #btnOpenCreateSiteModal { width: 100%; min-height: 44px; }
+}
