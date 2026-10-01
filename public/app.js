@@ -567,7 +567,8 @@ function updateMobileMenuLabel(viewId) {
   if (!btn) return;
   const navBtn = Array.from(document.querySelectorAll('.nav-item')).find(b => b.dataset.target === viewId && b.offsetParent !== null) ||
     Array.from(document.querySelectorAll('.nav-item')).find(b => b.dataset.target === viewId);
-  const label = navBtn ? navBtn.firstChild.textContent.trim() : '';
+  const lblEl = navBtn ? navBtn.querySelector('.nav-lbl') : null;
+  const label = lblEl ? lblEl.textContent.trim() : '';
   btn.textContent = label ? `☰ ${label}` : '☰ Menu';
   document.getElementById('appHeader').classList.remove('menu-open');
 }

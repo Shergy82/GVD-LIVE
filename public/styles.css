@@ -1202,48 +1202,34 @@ body {
 /* Scrollable tables with a fixed header row */
 .scroll-table thead th { position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--border-color); }
 
-/* Phone-friendly menu for Owners / Admins / Managers: a big-tile menu instead of a sideways-scrolling tab row */
-.mobile-menu-btn { display: none; }
+/* Phone-friendly navigation for Owners / Admins / Managers: always-visible grid of boxes, no sideways scrolling */
+.mobile-menu-btn { display: none !important; }
+.nav-ico { font-size: 1.1rem; line-height: 1; }
 
 @media (max-width: 768px) {
-  .app-header.nav-collapsible { padding: 10px 14px; gap: 10px; }
-  .app-header.nav-collapsible .mobile-menu-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    position: absolute;
-    top: 12px;
-    right: 14px;
-    max-width: 55%;
-    min-height: 44px;
-    padding: 8px 14px;
-    background: var(--primary);
-    color: #fff;
-    border: none;
-    border-radius: var(--radius-sm);
-    font-size: 0.95rem;
-    font-weight: 700;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-  }
-  .app-header.nav-collapsible .nav-menu { display: none; overflow: visible; }
-  .app-header.nav-collapsible.menu-open .nav-menu {
+  .app-header.nav-collapsible { position: static; padding: 10px 12px; gap: 10px; }
+  .app-header.nav-collapsible .nav-menu {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    overflow: visible;
+    padding-bottom: 0;
   }
   .app-header.nav-collapsible .nav-item {
+    flex-direction: column;
     justify-content: center;
+    align-items: center;
     text-align: center;
-    min-height: 58px;
-    padding: 10px 8px;
-    font-size: 1rem;
+    gap: 3px;
+    min-height: 66px;
+    padding: 6px 2px;
+    font-size: 0.7rem;
+    line-height: 1.15;
     background-color: var(--bg-surface-hover);
     color: var(--text-main);
     border: 1px solid var(--border-color);
   }
+  .app-header.nav-collapsible .nav-item .nav-ico { font-size: 1.5rem; }
   .app-header.nav-collapsible .nav-item.active { background-color: var(--primary); border-color: var(--primary); color: #fff; }
   .app-header.nav-collapsible .user-status-bar { justify-content: space-between; }
 }
