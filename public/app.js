@@ -433,6 +433,8 @@ function onUserAuthenticated() {
     return;
   }
 
+  touchLastActive();
+
   localStorage.setItem('gvd_current_user_id', currentUser.id);
   document.getElementById('appHeader').style.display = 'flex';
   document.getElementById('userNameText').textContent = currentUser.full_name;
@@ -2522,6 +2524,7 @@ function updatePendingUsersBadge() {
 }
 
 function renderAdminSettingsView() {
+  loadPushUserIds();
   updatePendingUsersBadge();
   document.getElementById('settingsAppNameInput').value = appSettings.app_name || 'GVD LIVE';
   const includeInput = document.getElementById('settingsIncludeManagementInput');
@@ -4312,9 +4315,47 @@ async function handleDeletePlasterRoom() {
 // -------------------------------------------------------------------
 // LOGIN SHARING for people who have never used the app
 // -------------------------------------------------------------------
+// True if there is any sign this person has used the app: a recorded login, a subscribed phone,
+// an opened shift, an uploaded photo/file, a PO, or a diary entry.
+let pushUserIds = new Set();
+let pushIdsLoadedAt = 0;
+
+async function loadPushUserIds() {
+  if (!db || Date.now() - pushIdsLoadedAt < 60000) return;
+  pushIdsLoadedAt = Date.now();
+  try {
+    const snap = await db.collectionGroup('subscriptions').get();
+    const ids = new Set(snap.docs.map(d => String(d.data().user_id || d.ref.parent.parent.id)));
+    const changed = ids.size !== pushUserIds.size || Array.from(ids).some(id => !pushUserIds.has(id));
+    pushUserIds = ids;
+    if (changed) renderActiveView();
+  } catch (err) {
+    console.warn('Could not read push subscriptions:', err);
+  }
+}
+
 function hasUsedApp(user) {
-  if (user.last_login_at) return true;
-  return allShifts.some(sh => String(sh.operative_id) === String(user.id) && sh.seen_at);
+  const id = String(user.id);
+  if (user.last_login_at || user.last_active_at) return true;
+  if (pushUserIds.has(id)) return true;
+  if (allShifts.some(sh => String(sh.operative_id) === id && sh.seen_at)) return true;
+  if (allPhotos.some(p => String(p.uploader_id) === id)) return true;
+  if (allPdfs.some(f => String(f.uploader_id) === id)) return true;
+  if (allPOs.some(po => String(po.requested_by_id) === id)) return true;
+  if (allDiary.some(e => String(e.created_by) === id)) return true;
+  return false;
+}
+
+// Remember each time someone opens the app (at most every 6 hours) so this stays accurate
+function touchLastActive() {
+  if (!db || !currentUser) return;
+  const key = 'gvd_last_touch_' + currentUser.id;
+  try {
+    if (Date.now() - parseInt(localStorage.getItem(key) || '0', 10) < 6 * 3600 * 1000) return;
+    localStorage.setItem(key, String(Date.now()));
+  } catch (e) {}
+  currentUser.last_active_at = new Date().toISOString();
+  db.collection('users').doc(String(currentUser.id)).update({ last_active_at: currentUser.last_active_at }).catch(console.warn);
 }
 
 function buildLoginMessage(user, tempPw) {
