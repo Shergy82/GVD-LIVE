@@ -453,6 +453,7 @@ function onUserAuthenticated() {
 
   const isOwnerOrAdmin = isOwnerOrAdminUser(currentUser);
   const isManagerOrHigher = isManagementUser(currentUser);
+  document.getElementById('appHeader').classList.toggle('nav-collapsible', isManagerOrHigher);
 
   // Role permissions UI visibility
   // Tab panels are shown/hidden by the tab buttons, so only ever force-hide them here
@@ -552,12 +553,23 @@ function showView(viewId) {
   const targetView = document.getElementById(viewId);
   if (targetView) targetView.style.display = 'block';
   if (viewId === 'view-my-shifts') myShiftsTab = 'today';
+  updateMobileMenuLabel(viewId);
 
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.target === viewId);
   });
 
   renderActiveView();
+}
+
+function updateMobileMenuLabel(viewId) {
+  const btn = document.getElementById('btnMobileMenu');
+  if (!btn) return;
+  const navBtn = Array.from(document.querySelectorAll('.nav-item')).find(b => b.dataset.target === viewId && b.offsetParent !== null) ||
+    Array.from(document.querySelectorAll('.nav-item')).find(b => b.dataset.target === viewId);
+  const label = navBtn ? navBtn.firstChild.textContent.trim() : '';
+  btn.textContent = label ? `☰ ${label}` : '☰ Menu';
+  document.getElementById('appHeader').classList.remove('menu-open');
 }
 
 function renderActiveView() {
@@ -2736,8 +2748,12 @@ function loadCustomerPublicView(token) {
 // EVENT HANDLERS & AUTH LOGIC
 // -------------------------------------------------------------------
 function setupEventListeners() {
+  const mobileMenuBtn = document.getElementById('btnMobileMenu');
+  if (mobileMenuBtn) mobileMenuBtn.addEventListener('click', () => document.getElementById('appHeader').classList.toggle('menu-open'));
+
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
+      document.getElementById('appHeader').classList.remove('menu-open');
       if (!btn.dataset.target) return;
       activeSiteId = null;
       showView(btn.dataset.target);
