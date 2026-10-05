@@ -451,7 +451,12 @@
         <input type="file" id="invBatchInput" accept="application/pdf,.pdf" multiple class="form-control">
         <p id="invBatchReading" style="display: none; margin-top: 10px;">⏳ Reading invoices...</p>
         <div id="invBatchList" style="margin-top: 14px;"></div>
-        <button type="button" class="btn btn-primary" id="btnInvImportSelected" style="display: none; margin-top: 8px;">Import ticked invoices</button>
+        <div id="invBatchActions" style="display: none; margin-top: 8px; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <label style="display: flex; gap: 6px; align-items: center; font-weight: 700; margin-right: 8px;"><input type="checkbox" id="invTickAll"> Tick all</label>
+          <button type="button" class="btn btn-primary" id="btnInvImportSelected">Import ticked invoices</button>
+          <button type="button" class="btn btn-outline" id="btnInvImportAll">Import all</button>
+        </div>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;">Invoices with no job are still imported, shown in <span style="color: var(--warning); font-weight: 700;">amber</span> in the register until you pick a job. Possible duplicates are flagged in <span style="color: var(--danger); font-weight: 700;">red</span>.</p>
       </div>
 
       <div class="site-card">
@@ -504,7 +509,6 @@
         <form id="finCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 12px;">
           <select id="finCostSite" class="form-control" required></select>
           <input type="text" id="finCostDesc" class="form-control" placeholder="Description" required>
-          <select id="finCostContractor" class="form-control"></select>
           <select id="finCostCategory" class="form-control">
             <option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option>
           </select>
@@ -884,7 +888,6 @@
         <div class="form-group"><label for="costEditDesc">Description</label><input type="text" id="costEditDesc" class="form-control" required></div>
         <div class="form-group"><label for="costEditCategory">Category</label>
           <select id="costEditCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select></div>
-        <div class="form-group"><label for="costEditContractor">Paid to</label><select id="costEditContractor" class="form-control"></select></div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
           <div class="form-group"><label for="costEditAmount">Amount £ ex VAT</label><input type="text" inputmode="decimal" autocomplete="off" id="costEditAmount" class="form-control" required></div>
           <div class="form-group"><label for="costEditDate">Date</label><input type="date" id="costEditDate" class="form-control" required></div>

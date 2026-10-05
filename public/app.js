@@ -3568,8 +3568,10 @@ async function handleSaveShift(e) {
     renderActiveView();
 
     if (targetShift && shift_date >= todayStr && !isDraftPlanningMode) {
-      await triggerShiftNotification(targetShift, '⚡ Live Shift Assigned');
-      showGreenToast('⚡ Live Shift Saved & Operative Notified!');
+      showGreenToast('✅ Shift updated & operative notified');
+      triggerShiftNotification(targetShift, '⚡ Live Shift Assigned').catch(console.warn);
+    } else {
+      showGreenToast(isDraftPlanningMode ? '✅ Draft shift updated (silent)' : '✅ Shift updated');
     }
   } else {
     // Creating Shift(s)
@@ -3578,6 +3580,7 @@ async function handleSaveShift(e) {
 
     const [year, month, day] = shift_date.split('-').map(Number);
     let createdCount = 0;
+    const notifyShifts = [];
 
     for (let i = 0; i < numDays; i++) {
       const d = new Date(year, month - 1, day + i);
@@ -3600,10 +3603,7 @@ async function handleSaveShift(e) {
       if (db) await db.collection('shifts').doc(String(nextShiftId)).set(newShift);
       allShifts.push(newShift);
       createdCount++;
-
-      if (!isDraftPlanningMode && currentDateStr >= todayStr) {
-        await triggerShiftNotification(newShift, '⚡ Live Shift Assigned');
-      }
+      if (!isDraftPlanningMode && currentDateStr >= todayStr) notifyShifts.push(newShift);
     }
 
     deduplicateShifts();
@@ -3612,12 +3612,16 @@ async function handleSaveShift(e) {
     renderActiveView();
 
     if (createdCount > 1) {
-      showGreenToast(`⚡ ${createdCount} consecutive shifts assigned!`);
-    } else if (!isDraftPlanningMode && shift_date >= todayStr) {
-      showGreenToast('⚡ Live Shift Saved & Operative Notified!');
+      showGreenToast(`✅ ${createdCount} consecutive shifts saved${notifyShifts.length ? ' & operative notified' : ''}`);
     } else if (isDraftPlanningMode) {
-      showGreenToast('📝 Draft Shift Saved (Silent)');
+      showGreenToast('✅ Draft shift saved (silent)');
+    } else if (notifyShifts.length) {
+      showGreenToast('✅ Shift saved & operative notified');
+    } else {
+      showGreenToast('✅ Shift saved');
     }
+    // Notify in the background so the box is already closed
+    notifyShifts.forEach(sh => triggerShiftNotification(sh, '⚡ Live Shift Assigned').catch(console.warn));
   }
 }
 
@@ -4585,33 +4589,45 @@ async function extractPdfLines(file) {
   const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
   const lines = [];
+  // Every page is read, in order, so totals printed on page 2, 3... are found too
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    const rows = {};
-    content.items.forEach(it => {
-      const y = Math.round(it.transform[5]);
-      (rows[y] = rows[y] || []).push([it.transform[4], it.str]);
+    const items = content.items.filter(it => it.str && it.str.trim()).map(it => ({ x: it.transform[4], y: it.transform[5], str: it.str }))
+      .sort((p, q) => q.y - p.y || p.x - q.x);
+    // Text whose baseline is within a few points sits on the same printed line
+    const rows = [];
+    items.forEach(it => {
+      const row = rows.find(r => Math.abs(r.y - it.y) <= 3);
+      if (row) row.items.push(it); else rows.push({ y: it.y, items: [it] });
     });
-    Object.keys(rows).map(Number).sort((a, b) => b - a).forEach(y => {
-      const text = rows[y].sort((a, b) => a[0] - b[0]).map(x => x[1]).join(' ').replace(/\s+/g, ' ').trim();
+    rows.sort((p, q) => q.y - p.y).forEach(r => {
+      const text = r.items.sort((p, q) => p.x - q.x).map(x => x.str).join(' ').replace(/\s+/g, ' ').trim();
       if (text) lines.push(text);
     });
   }
   return lines;
 }
 
+const r2 = n => Math.round(n * 100) / 100;
+
 function parseInvoiceText(lines) {
   const money = /(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g;
-  const lastAmount = line => {
-    const found = [...line.matchAll(money)];
-    return found.length ? parseFloat(found[found.length - 1][1].replace(/,/g, '')) : null;
+  const amountsIn = line => [...line.matchAll(money)].map(m => parseFloat(m[1].replace(/,/g, '')));
+  // A label's amount is on its own line, or - when the figures are laid out below the labels - on the next line or two
+  const amountFor = idx => {
+    for (let k = 0; k <= 2 && idx + k < lines.length; k++) {
+      const found = amountsIn(lines[idx + k]);
+      if (found.length) return found[found.length - 1];
+    }
+    return null;
   };
+  // Last match wins: on multi-page invoices the real totals are at the end, earlier pages only carry page sub-totals
   const findAmount = patterns => {
     for (const pat of patterns) {
-      for (const line of lines) {
-        if (pat.test(line)) {
-          const v = lastAmount(line);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (pat.test(lines[i])) {
+          const v = amountFor(i);
           if (v != null) return v;
         }
       }
@@ -4623,15 +4639,42 @@ function parseInvoiceText(lines) {
   let vat = findAmount([/total vat/i, /vat\s*(total|amount)/i, /^vat\s*:/i]);
   let gross = findAmount([/inv(oice)?\s*total/i, /total\s*(inc|incl)/i, /amount due/i, /balance due/i, /total due/i, /grand total/i, /^total\s*:?\s*£/i]);
   let netEstimated = false;
-  if (net == null && gross != null && vat != null) net = Math.round((gross - vat) * 100) / 100;
+  const agrees = () => net != null && vat != null && gross != null && Math.abs(net + vat - gross) < 0.02;
+
+  // When the labelled figures do not add up, look for the net + VAT = total set among all the amounts,
+  // working back from the end of the invoice
+  if (!agrees()) {
+    const all = [];
+    lines.forEach(l => amountsIn(l).forEach(a => all.push(a)));
+    const tail = all.slice(-60).reverse();
+    const rates = [0.2, 0.05, 0];
+    const candidates = gross != null ? [gross, ...tail] : tail;
+    outer: for (const g of candidates) {
+      for (const n of tail) {
+        if (n >= g || n <= 0) continue;
+        const v = r2(g - n);
+        if (rates.some(r => Math.abs(n * r - v) <= 0.03) && (v === 0 || tail.some(t => Math.abs(t - v) < 0.005))) {
+          net = n; vat = v; gross = g; netEstimated = false; break outer;
+        }
+      }
+    }
+  }
+  if (net == null && gross != null && vat != null) net = r2(gross - vat);
   if (net == null && gross != null) {
     const rateLine = lines.find(l => /rate\s*%\s*:/i.test(l));
     const rate = rateLine ? parseFloat((rateLine.match(/(\d+(?:\.\d+)?)\s*$/) || [])[1]) : 20;
-    net = Math.round(gross / (1 + (rate || 20) / 100) * 100) / 100;
+    net = r2(gross / (1 + (rate || 20) / 100));
     netEstimated = true;
   }
-  if (vat == null && net != null && gross != null) vat = Math.round((gross - net) * 100) / 100;
-  const totalsAgree = net != null && vat != null && gross != null && Math.abs(net + vat - gross) < 0.02;
+  // VAT must be the difference between the total and the net price - never a repeat of the net figure
+  if (gross != null && net != null && !agrees()) {
+    if (net >= gross || Math.abs(net - (vat == null ? NaN : vat)) < 0.005) {
+      net = r2(gross / 1.2); netEstimated = true;
+    }
+    vat = r2(gross - net);
+  }
+  if (vat == null && net != null && gross != null) vat = r2(gross - net);
+  const totalsAgree = agrees();
 
   const text = lines.join('\n');
   const po = (text.match(/\bPO-\d{4,6}-\d{3,4}\b/i) || [])[0] || null;
@@ -4676,6 +4719,18 @@ function invPoOptions(siteId, selectedPo) {
     `<option value="${diaryEsc(po.po_number)}"${po.po_number === selectedPo ? ' selected' : ''}>${diaryEsc(po.po_number)} - ${diaryEsc(po.merchant)} - ${diaryEsc(String(po.description || '').slice(0, 30))}</option>`).join('');
 }
 
+// Why an invoice looks like a repeat (or '' if it does not): already imported, or twice in this batch
+function invDuplicateReason(it) {
+  const no = String(it.invNo || '').trim().toLowerCase();
+  const inRegister = allPdfs.filter(f => f.file_type === 'invoice');
+  if (no && inRegister.some(f => String(f.invoice_no || '').trim().toLowerCase() === no)) return 'invoice number already imported';
+  if (inRegister.some(f => f.filename === it.file.name && (it.net == null || Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005))) return 'this file was already imported';
+  const others = invBatch.filter(o => o !== it && o.status !== 'error');
+  if (no && others.some(o => String(o.invNo || '').trim().toLowerCase() === no)) return 'same invoice number appears twice in this batch';
+  if (others.some(o => o.file.name === it.file.name && o.file.size === it.file.size)) return 'same file added twice in this batch';
+  return '';
+}
+
 function analyseInvoice(parsed) {
   const matchedPo = parsed.po ? allPOs.find(po => String(po.po_number).toUpperCase() === parsed.po) : null;
   let site = matchedPo ? allSites.find(s => String(s.id) === String(matchedPo.site_id)) : null;
@@ -4685,20 +4740,10 @@ function analyseInvoice(parsed) {
     if (site) how = `📍 No PO number found - matched from the delivery address`;
   }
   if (!site) how = parsed.po ? `⚠️ ${parsed.po} is on the invoice but not in the app - choose the job` : '⚠️ No PO number or matching address found - choose the job';
-  const duplicate = parsed.invNo && allPdfs.some(f => f.file_type === 'invoice' && f.invoice_no === parsed.invNo);
+  const duplicate = false; // worked out by invDuplicateReason() so it also catches repeats inside the same batch
   const priceOk = parsed.net != null && parsed.hasText;
-  const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated && !duplicate;
+  const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated;
   return { matchedPo, site, how, duplicate, confident };
-}
-
-function suggestContractor(merchant) {
-  const m = String(merchant || '').toLowerCase();
-  if (!m) return '';
-  const hit = priceWorkUsers().find(u => {
-    const tokens = String(u.full_name).toLowerCase().split(/\s+/).filter(t => t.length > 2);
-    return tokens.length && tokens.every(t => m.includes(t));
-  });
-  return hit ? String(hit.id) : '';
 }
 
 async function handleInvoiceBatchPicked(e) {
@@ -4718,12 +4763,11 @@ async function handleInvoiceBatchPicked(e) {
       catch (err) { parsed = { net: null, vat: null, gross: null, po: null, invNo: null, merchant: null, date: null, deliverText: '', hasText: false }; }
       const a = analyseInvoice(parsed);
       Object.assign(item, {
-        parsed, how: a.how, duplicate: a.duplicate, confident: a.confident,
+        parsed, how: a.how, confident: a.confident,
         siteId: a.site ? String(a.site.id) : '', poNumber: a.matchedPo ? a.matchedPo.po_number : '',
         net: parsed.net, vat: parsed.vat, gross: parsed.gross, invNo: parsed.invNo || '',
         merchant: parsed.merchant || (a.matchedPo ? a.matchedPo.merchant : '') || '', date: parsed.date || '',
-        selected: a.confident,
-        contractorId: suggestContractor(parsed.merchant),
+        selected: false,
         priceNote: !parsed.hasText ? 'Looks like a scan/photo - type the price in.' : parsed.net == null ? 'Price not found - type it in.'
           : parsed.netEstimated ? 'Net price estimated from the total - check it.' : parsed.totalsAgree ? '' : 'Check the amounts.'
       });
@@ -4732,23 +4776,32 @@ async function handleInvoiceBatchPicked(e) {
   }
   document.getElementById('invBatchReading').style.display = 'none';
   e.target.value = '';
+  invBatch.forEach(it => {
+    if (it.status !== 'ready') return;
+    it.duplicateReason = invDuplicateReason(it);
+    it.selected = it.confident && !it.duplicateReason;
+  });
   renderInvBatch();
 }
 
 function renderInvBatch() {
   const host = document.getElementById('invBatchList');
-  const btn = document.getElementById('btnInvImportSelected');
-  if (!invBatch.length) { host.innerHTML = ''; btn.style.display = 'none'; return; }
+  const actions = document.getElementById('invBatchActions');
+  if (!invBatch.length) { host.innerHTML = ''; actions.style.display = 'none'; return; }
+  invBatch.forEach(it => { if (it.status === 'ready') it.duplicateReason = invDuplicateReason(it); });
   host.innerHTML = invBatch.map(it => {
     if (it.status === 'error') return `<div class="diary-agenda-item" style="cursor: default; border-color: var(--danger);">❌ ${diaryEsc(it.file.name)} - ${diaryEsc(it.message)}</div>`;
     if (it.status === 'done') return `<div class="diary-agenda-item" style="cursor: default; border-color: var(--success);">✅ ${diaryEsc(it.file.name)} - ${diaryEsc(it.message)}</div>`;
-    return `<div class="diary-agenda-item" data-key="${it.key}" style="cursor: default;${it.confident ? ' border-color: var(--success);' : ' border-color: var(--warning);'}">
+    // red = possible duplicate, amber = no job picked yet, green = ready
+    const style = it.duplicateReason ? 'border-color: var(--danger); background: rgba(239, 68, 68, 0.15);'
+      : !it.siteId ? 'border-color: var(--warning); background: rgba(245, 158, 11, 0.14);'
+      : it.confident ? 'border-color: var(--success);' : 'border-color: var(--warning);';
+    return `<div class="diary-agenda-item" data-key="${it.key}" style="cursor: default; ${style}">
       <label style="display: flex; gap: 8px; align-items: center; font-weight: 700;"><input type="checkbox" class="inv-select"${it.selected ? ' checked' : ''}> ${diaryEsc(it.file.name)}</label>
-      <div style="font-size: 0.8rem; margin: 4px 0;">${diaryEsc(it.how)}${it.duplicate ? ' · ⚠️ invoice number already imported' : ''}${it.priceNote ? ' · ' + diaryEsc(it.priceNote) : ''}</div>
+      <div style="font-size: 0.8rem; margin: 4px 0;">${diaryEsc(it.how)}${it.duplicateReason ? ` · <strong style="color: #fca5a5;">⚠️ Possible duplicate - ${diaryEsc(it.duplicateReason)}</strong>` : ''}${it.priceNote ? ' · ' + diaryEsc(it.priceNote) : ''}${!it.siteId ? ' · <strong style="color: var(--warning);">No job yet - will import as unattributed</strong>' : ''}</div>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px;">
         <select class="form-control inv-site" style="min-height: 34px; padding: 4px 8px;">${invSiteOptions(it.siteId)}</select>
         <select class="form-control inv-po" style="min-height: 34px; padding: 4px 8px;">${invPoOptions(it.siteId, it.poNumber)}</select>
-        <select class="form-control inv-contractor" style="min-height: 34px; padding: 4px 8px;">${contractorOptionsHtml(it.contractorId)}</select>
         <input class="form-control inv-merchant" placeholder="Merchant" value="${diaryEsc(it.merchant)}" style="min-height: 34px; padding: 4px 8px;">
         <input class="form-control inv-no" placeholder="Invoice no." value="${diaryEsc(it.invNo)}" style="min-height: 34px; padding: 4px 8px;">
         <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-net" placeholder="Net £ ex VAT" value="${it.net != null ? Number(it.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
@@ -4757,17 +4810,21 @@ function renderInvBatch() {
       </div>
     </div>`;
   }).join('');
-  btn.style.display = invBatch.some(i => i.status === 'ready') ? '' : 'none';
+  const ready = invBatch.filter(i => i.status === 'ready');
+  actions.style.display = ready.length ? 'flex' : 'none';
+  const tickAll = document.getElementById('invTickAll');
+  tickAll.checked = ready.length > 0 && ready.every(i => i.selected);
+  document.getElementById('btnInvImportSelected').textContent = `Import ticked invoices (${ready.filter(i => i.selected).length})`;
+  document.getElementById('btnInvImportAll').textContent = `Import all (${ready.length})`;
 
   host.querySelectorAll('[data-key]').forEach(row => {
     const it = invBatch.find(x => x.key === row.dataset.key);
     const bind = (sel, fn) => row.querySelector(sel).addEventListener('change', fn);
-    bind('.inv-select', ev => { it.selected = ev.target.checked; });
-    bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; row.querySelector('.inv-po').innerHTML = invPoOptions(it.siteId, ''); });
+    bind('.inv-select', ev => { it.selected = ev.target.checked; renderInvBatch(); });
+    bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; renderInvBatch(); });
     bind('.inv-po', ev => { it.poNumber = ev.target.value; });
-    bind('.inv-contractor', ev => { it.contractorId = ev.target.value; });
     bind('.inv-merchant', ev => { it.merchant = ev.target.value.trim(); });
-    bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); });
+    bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); renderInvBatch(); });
     bind('.inv-net', ev => { it.net = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-vat', ev => { it.vat = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-gross', ev => { it.gross = ev.target.value === '' ? null : parseFloat(ev.target.value); });
@@ -4785,59 +4842,75 @@ async function recalcPoFromInvoices(poNumber, extraFiles = []) {
   };
 }
 
-async function importInvoiceItem(it) {
-  const site = allSites.find(s => String(s.id) === String(it.siteId));
-  if (!site) throw new Error('Choose the job');
-  if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
-  const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-  const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `site_files/${site.id}/${fileId}_${safeName}`;
-  const up = await uploadSiteFile(path, it.file);
-  const net = Math.round(it.net * 100) / 100;
-  const poNumber = it.poNumber || `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
-  const record = {
-    id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
-    filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
-    po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '', contractor_id: it.contractorId || null,
-    invoice_net: net, invoice_vat: it.vat == null || isNaN(it.vat) ? null : it.vat, invoice_gross: it.gross == null || isNaN(it.gross) ? null : it.gross,
-    created_at: new Date().toISOString()
-  };
-  await db.collection('pdfs').doc(fileId).set(record);
+// Adds (or re-adds) the invoice's cost to a job's purchase order record
+async function applyInvoiceToJob(record, site, asNewPo, poNumber, merchant, invNo) {
   const fields = await recalcPoFromInvoices(poNumber, [record]);
-  if (it.poNumber) {
+  if (!asNewPo) {
     await db.collection('purchase_orders').doc(poNumber).update(fields);
   } else {
     await db.collection('purchase_orders').doc(poNumber).set({
       po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
       requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
-      merchant: it.merchant || 'Unknown merchant', description: `Invoice ${it.invNo || ''} (no PO)`.trim(), est_value: null,
+      merchant: merchant || 'Unknown merchant', description: `Invoice ${invNo || ''} (no PO)`.trim(), est_value: null,
       created_at: new Date().toISOString(), ...fields
     });
   }
+}
+
+async function importInvoiceItem(it) {
+  const site = allSites.find(s => String(s.id) === String(it.siteId)) || null; // no job yet is allowed - it is imported as unattributed
+  if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
+  const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `site_files/${site ? site.id : 'unassigned'}/${fileId}_${safeName}`;
+  const up = await uploadSiteFile(path, it.file);
+  const net = Math.round(it.net * 100) / 100;
+  const poNumber = it.poNumber || `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
+  const record = {
+    id: fileId, site_id: site ? String(site.id) : '', uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+    filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
+    po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '',
+    invoice_net: net, invoice_vat: it.vat == null || isNaN(it.vat) ? null : it.vat, invoice_gross: it.gross == null || isNaN(it.gross) ? null : it.gross,
+    created_at: new Date().toISOString()
+  };
+  await db.collection('pdfs').doc(fileId).set(record);
+  if (!allPdfs.some(f => String(f.id) === fileId)) allPdfs.push(record);
+  if (!site) return `${formatPounds(net)} ex VAT imported - no job yet (shown in amber in the register)`;
+  await applyInvoiceToJob(record, site, !it.poNumber, poNumber, it.merchant, it.invNo);
   return `${formatPounds(net)} ex VAT added to ${site.address}`;
 }
 
-async function handleImportSelectedInvoices() {
+async function runInvoiceImport(todo) {
   if (!db || !isManagementUser(currentUser)) return;
-  const todo = invBatch.filter(i => i.status === 'ready' && i.selected);
   if (!todo.length) { alert('Tick the invoices you want to import.'); return; }
-  const btn = document.getElementById('btnInvImportSelected');
-  btn.disabled = true;
-  let ok = 0;
+  const dups = todo.filter(i => i.duplicateReason).length;
+  if (dups && !confirm(`${dups} of these look like duplicates (highlighted red). Import them anyway?`)) return;
+  const btns = [document.getElementById('btnInvImportSelected'), document.getElementById('btnInvImportAll')];
+  btns.forEach(b => { b.disabled = true; });
+  let ok = 0, unattributed = 0;
   for (const it of todo) {
-    btn.textContent = `Importing ${ok + 1} of ${todo.length}...`;
+    btns[0].textContent = `Importing ${ok + 1} of ${todo.length}...`;
     try {
       it.message = await importInvoiceItem(it);
       it.status = 'done';
+      if (!it.siteId) unattributed++;
       ok++;
     } catch (err) {
       alert(`${it.file.name}: ${err.message}`);
     }
   }
-  btn.disabled = false;
-  btn.textContent = 'Import ticked invoices';
+  btns.forEach(b => { b.disabled = false; });
   renderInvBatch();
-  if (ok) showGreenToast(`🧾 ${ok} invoice${ok > 1 ? 's' : ''} imported and costed to the job`);
+  renderInvoiceRegister();
+  if (ok) showGreenToast(`🧾 ${ok} invoice${ok > 1 ? 's' : ''} imported${unattributed ? ` (${unattributed} still need a job)` : ' and costed to the job'}`);
+}
+
+function handleImportSelectedInvoices() {
+  return runInvoiceImport(invBatch.filter(i => i.status === 'ready' && i.selected));
+}
+
+function handleImportAllInvoices() {
+  return runInvoiceImport(invBatch.filter(i => i.status === 'ready'));
 }
 
 // ---- Register ----
@@ -4876,21 +4949,56 @@ function renderInvoiceRegister() {
     ? `${rows.length} invoice${rows.length > 1 ? 's' : ''} · Net ${formatPounds(sum('invoice_net'))} · VAT ${formatPounds(sum('invoice_vat'))} · Total ${formatPounds(sum('invoice_gross'))}`
     : 'No invoices found.';
   const canDelete = isOwnerOrAdminUser(currentUser);
+  // Repeats: same invoice number, or same job + merchant + amount
+  const dupKey = f => String(f.invoice_no || '').trim() ? 'n|' + String(f.invoice_no).trim().toLowerCase() : '';
+  const dupKey2 = f => ['j', f.site_id, String(invMerchantOf(f)).toLowerCase(), Math.round((parseFloat(f.invoice_net) || 0) * 100)].join('|');
+  const allInv = allPdfs.filter(f => f.file_type === 'invoice');
+  const count = (keyFn, k) => allInv.filter(x => keyFn(x) === k).length;
+  const isDupInv = f => (dupKey(f) && count(dupKey, dupKey(f)) > 1) || (f.site_id && count(dupKey2, dupKey2(f)) > 1);
   body.innerHTML = rows.map(f => {
     const site = allSites.find(s => String(s.id) === String(f.site_id));
-    return `<tr>
+    const unassigned = !site;
+    const dup = isDupInv(f);
+    const rowStyle = dup ? DUP_ROW_STYLE : unassigned ? 'background: rgba(245, 158, 11, 0.18); box-shadow: inset 4px 0 0 var(--warning);' : '';
+    return `<tr${rowStyle ? ` style="${rowStyle}"` : ''}>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
-      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}</td>
+      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}${dup ? DUP_BADGE : ''}</td>
       <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}</td>
       <td data-label="PO">${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
-      <td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td>
+      <td data-label="Job">${unassigned
+        ? `<div style="color: var(--warning); font-weight: 700; font-size: 0.8rem; margin-bottom: 4px;">⚠️ Not attributed to a job</div><select class="form-control inv-assign-site" data-id="${diaryEsc(f.id)}" style="min-height: 32px; padding: 2px 8px;">${invSiteOptions('')}</select>`
+        : diaryEsc(site.address)}</td>
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
       <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
       <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
-      <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+      <td style="white-space: nowrap;">${unassigned ? `<button type="button" class="btn btn-primary btn-sm inv-assign" data-id="${diaryEsc(f.id)}">Assign job</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
   body.querySelectorAll('.inv-delete').forEach(b => b.addEventListener('click', () => deleteInvoice(b.dataset.id)));
+  body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => {
+    const sel = body.querySelector(`.inv-assign-site[data-id="${b.dataset.id}"]`);
+    assignInvoiceToJob(b.dataset.id, sel ? sel.value : '');
+  }));
+}
+
+// Attribute an unattributed invoice to a job: moves it onto the job and adds its cost there
+async function assignInvoiceToJob(fileId, siteId) {
+  const f = allPdfs.find(x => String(x.id) === String(fileId));
+  const site = allSites.find(x => String(x.id) === String(siteId));
+  if (!f || !db || !isManagementUser(currentUser)) return;
+  if (!site) { alert('Choose the job first.'); return; }
+  try {
+    const poNumber = f.po_number || `INV-${String(f.invoice_no || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
+    const existingPo = allPOs.find(po => po.po_number === poNumber && String(po.site_id) === String(site.id));
+    const updated = { ...f, site_id: String(site.id), po_number: poNumber };
+    await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id), po_number: poNumber });
+    Object.assign(f, updated);
+    await applyInvoiceToJob(f, site, !existingPo, poNumber, f.merchant, f.invoice_no);
+    showGreenToast(`🧾 Invoice costed to ${site.address}`);
+  } catch (err) {
+    alert('Could not assign the invoice: ' + err.message);
+  }
+  renderInvoiceRegister();
 }
 
 async function deleteInvoice(fileId) {
@@ -4916,6 +5024,11 @@ async function deleteInvoice(fileId) {
 function setupInvoiceListeners() {
   document.getElementById('invBatchInput').addEventListener('change', handleInvoiceBatchPicked);
   document.getElementById('btnInvImportSelected').addEventListener('click', handleImportSelectedInvoices);
+  document.getElementById('btnInvImportAll').addEventListener('click', handleImportAllInvoices);
+  document.getElementById('invTickAll').addEventListener('change', ev => {
+    invBatch.forEach(i => { if (i.status === 'ready') i.selected = ev.target.checked; });
+    renderInvBatch();
+  });
   ['invSearch', 'invFilterSite', 'invFilterMerchant'].forEach(id => {
     document.getElementById(id).addEventListener(id === 'invSearch' ? 'input' : 'change', renderInvoiceRegister);
   });
@@ -5023,19 +5136,7 @@ function computeSiteFinance(site) {
   const totalCost = invoiced + onOrder + labour + extras;
   const profit = value != null ? value - totalCost : null;
   const margin = value ? (profit / value) * 100 : null;
-  // Price-work people: what has been invoiced or logged against them on this job (already inside the totals above)
-  const contractorTotals = {};
-  allPdfs.filter(f => f.file_type === 'invoice' && String(f.site_id) === sid && f.contractor_id).forEach(f => {
-    contractorTotals[f.contractor_id] = (contractorTotals[f.contractor_id] || 0) + (parseFloat(f.invoice_net) || 0);
-  });
-  extrasList.filter(c => c.contractor_id).forEach(c => {
-    contractorTotals[c.contractor_id] = (contractorTotals[c.contractor_id] || 0) + (parseFloat(c.amount) || 0);
-  });
-  const contractors = Object.keys(contractorTotals).map(id => {
-    const u = allUsers.find(x => String(x.id) === String(id));
-    return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
-  });
-  return { contractors, value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
+  return { value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -5056,9 +5157,9 @@ function renderSiteFinance(site) {
 
   const row = (label, val, sub) => `<tr><td>${label}${sub ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${sub}</div>` : ''}</td><td style="text-align: right; white-space: nowrap;">${val}</td></tr>`;
   const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork ? '<span style="color: var(--text-muted);">Price work - see invoices</span>' : money(o.cost)}</td></tr>`).join('');
-  const contractorRows = f.contractors.map(c => `<tr><td>${diaryEsc(c.name)}</td><td style="text-align: right;">${money(c.total)}</td></tr>`).join('');
-  const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || ''))).map(c => `<tr>
-      <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
+  const dupIds = findDuplicateCostIds(f.extrasList);
+  const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || ''))).map(c => `<tr${dupIds.has(c.id) ? ` style="${DUP_ROW_STYLE}"` : ''}>
+      <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}${dupIds.has(c.id) ? DUP_BADGE : ''}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
       <td style="text-align: right;">${money(c.amount)}</td>
       <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
 
@@ -5090,7 +5191,6 @@ function renderSiteFinance(site) {
       ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
-    ${contractorRows ? `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Price work paid (ex VAT)</h4><table class="planner-table" style="min-width: 0;"><tbody>${contractorRows}</tbody></table><p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 6px;">Already included in materials / extra costs above.</p></div>` : ''}
     <div class="site-card" style="margin-bottom: 16px;">
       <h4 style="margin-bottom: 8px;">Labour on this job</h4>
       ${labourRows ? `<table class="planner-table" style="min-width: 0;"><tbody>${labourRows}</tbody></table>` : '<p style="color: var(--text-muted);">No shifts with a day rate yet.</p>'}
@@ -5100,7 +5200,6 @@ function renderSiteFinance(site) {
       <h4 style="margin-bottom: 8px;">Extra costs</h4>
       <form id="finSiteCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 10px;">
         <input type="text" id="finSiteCostDesc" class="form-control" placeholder="Description" required>
-        <select id="finSiteCostContractor" class="form-control">${contractorOptionsHtml('')}</select>
         <select id="finSiteCostCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select>
         <input type="text" inputmode="decimal" autocomplete="off" id="finSiteCostAmount" class="form-control" step="0.01" min="0" placeholder="£ ex VAT" required>
         <input type="date" id="finSiteCostDate" class="form-control" value="${diaryDateKey(new Date())}" required>
@@ -5113,7 +5212,7 @@ function renderSiteFinance(site) {
   host.querySelector('#finSiteCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(site.id, host.querySelector('#finSiteCostDesc').value, host.querySelector('#finSiteCostCategory').value,
-      host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value, host.querySelector('#finSiteCostContractor').value);
+      host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value);
   });
   host.querySelectorAll('.fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
   host.querySelectorAll('.fin-edit-cost').forEach(b => b.addEventListener('click', () => openCostEdit(b.dataset.id)));
@@ -5131,19 +5230,27 @@ function priceWorkUsers() {
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
 }
 
-function contractorOptionsHtml(selected) {
-  return '<option value="">Paid to: nobody in particular</option>' + priceWorkUsers()
-    .map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(selected) ? ' selected' : ''}>Paid to: ${diaryEsc(u.full_name)}</option>`).join('');
+// Costs on the same job with the same description and amount - flagged for admin to review
+function findDuplicateCostIds(costs) {
+  const groups = {};
+  costs.forEach(c => {
+    const key = [c.site_id, String(c.description || '').trim().toLowerCase(), Math.round((parseFloat(c.amount) || 0) * 100)].join('|');
+    (groups[key] = groups[key] || []).push(c.id);
+  });
+  const dup = new Set();
+  Object.values(groups).forEach(ids => { if (ids.length > 1) ids.forEach(id => dup.add(id)); });
+  return dup;
 }
+const DUP_ROW_STYLE = 'background: rgba(239, 68, 68, 0.18); box-shadow: inset 4px 0 0 var(--danger);';
+const DUP_BADGE = ' <span style="color: #fca5a5; font-size: 0.72rem; font-weight: 700; white-space: nowrap;">⚠️ Possible duplicate - review</span>';
 
-async function addFinanceCost(siteId, description, category, amount, date, contractorId) {
+async function addFinanceCost(siteId, description, category, amount, date) {
   if (!db || !isManagementUser(currentUser)) return;
   const amt = parseFloat(amount);
   if (!description.trim() || isNaN(amt) || !date) { alert('Please fill in the description, amount and date.'); return; }
   const id = 'cost_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
   await db.collection('finance_costs').doc(id).set({
     site_id: String(siteId), description: description.trim(), category, amount: Math.round(amt * 100) / 100, date,
-    contractor_id: contractorId || null,
     added_by: currentUser.full_name, created_at: new Date().toISOString()
   }).catch(err => alert('Could not save: ' + err.message));
   showGreenToast('Cost added');
@@ -5193,8 +5300,6 @@ function renderFinanceView(force) {
   const prev = costSite.value;
   costSite.innerHTML = allSites.filter(s => !s.is_archived).map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
   if (prev) costSite.value = prev;
-  const contractorSel = document.getElementById('finCostContractor');
-  contractorSel.innerHTML = contractorOptionsHtml(contractorSel.value);
   const dateEl = document.getElementById('finCostDate');
   if (!dateEl.value) dateEl.value = diaryDateKey(new Date());
   // Ledger: newest first, optionally one job, scrolls inside its own box
@@ -5204,11 +5309,14 @@ function renderFinanceView(force) {
   costFilter.value = prevFilter;
   const ledger = financeCosts.filter(c => !costFilter.value || String(c.site_id) === costFilter.value)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const ledgerDupIds = findDuplicateCostIds(financeCosts);
+  const ledgerDupCount = ledger.filter(c => ledgerDupIds.has(c.id)).length;
   const ledgerTotal = ledger.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
-  document.getElementById('finCostsCount').textContent = `${ledger.length} cost${ledger.length === 1 ? '' : 's'} · ${money(ledgerTotal)} · newest first`;
+  document.getElementById('finCostsCount').textContent = `${ledger.length} cost${ledger.length === 1 ? '' : 's'} · ${money(ledgerTotal)} · newest first${ledgerDupCount ? ` · ⚠️ ${ledgerDupCount} possible duplicate${ledgerDupCount === 1 ? '' : 's'} highlighted` : ''}`;
   document.getElementById('finCostsBody').innerHTML = ledger.map(c => {
       const site = allSites.find(s => String(s.id) === String(c.site_id));
-      return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td><td data-label="Description">${diaryEsc(c.description)}${c.contractor_id ? ` <small style="color: var(--text-muted);">(${diaryEsc((allUsers.find(u => String(u.id) === String(c.contractor_id)) || {}).full_name || 'Unknown')})</small>` : ''}</td><td data-label="Category">${diaryEsc(c.category || '')}</td><td data-label="Amount">${money(c.amount)}</td>
+      const isDup = ledgerDupIds.has(c.id);
+      return `<tr${isDup ? ` style="${DUP_ROW_STYLE}"` : ''}><td>${diaryEsc(formatUKDate(c.date))}</td><td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td><td data-label="Description">${diaryEsc(c.description)}${isDup ? DUP_BADGE : ''}</td><td data-label="Category">${diaryEsc(c.category || '')}</td><td data-label="Amount">${money(c.amount)}</td>
         <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
     }).join('') || '<tr><td colspan="6" style="color: var(--text-muted);">No extra costs logged.</td></tr>';
   document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
@@ -5253,7 +5361,6 @@ function openCostEdit(id) {
   document.getElementById('costEditSite').innerHTML = allSites.map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(c.site_id) ? ' selected' : ''}>${diaryEsc(x.address)}${x.is_archived ? ' (archived)' : ''}</option>`).join('');
   document.getElementById('costEditDesc').value = c.description || '';
   document.getElementById('costEditCategory').value = c.category || 'Other';
-  document.getElementById('costEditContractor').innerHTML = contractorOptionsHtml(c.contractor_id);
   document.getElementById('costEditAmount').value = c.amount != null ? c.amount : '';
   document.getElementById('costEditDate').value = c.date || diaryDateKey(new Date());
   openModal('modalCostEdit');
@@ -5269,7 +5376,6 @@ async function handleSaveCostEdit(e) {
     site_id: document.getElementById('costEditSite').value,
     description: document.getElementById('costEditDesc').value.trim(),
     category: document.getElementById('costEditCategory').value,
-    contractor_id: document.getElementById('costEditContractor').value || null,
     amount: Math.round(amt * 100) / 100,
     date: document.getElementById('costEditDate').value,
     edited_by: currentUser.full_name,
@@ -5311,8 +5417,7 @@ function setupFinanceListeners() {
   document.getElementById('finCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(document.getElementById('finCostSite').value, document.getElementById('finCostDesc').value,
-      document.getElementById('finCostCategory').value, document.getElementById('finCostAmount').value, document.getElementById('finCostDate').value,
-      document.getElementById('finCostContractor').value);
+      document.getElementById('finCostCategory').value, document.getElementById('finCostAmount').value, document.getElementById('finCostDate').value);
     document.getElementById('finCostDesc').value = '';
     document.getElementById('finCostAmount').value = '';
   });
