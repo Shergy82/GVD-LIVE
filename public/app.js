@@ -4727,6 +4727,7 @@ function invDuplicateReason(it) {
   const inRegister = allPdfs.filter(f => f.file_type === 'invoice');
   if (no && inRegister.some(f => String(f.invoice_no || '').trim().toLowerCase() === no)) return 'invoice number already imported';
   if (inRegister.some(f => f.filename === it.file.name && (it.net == null || Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005))) return 'this file was already imported';
+  if (it.net != null && it.gross != null && inRegister.some(f => !f.dup_dismissed && Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005 && Math.abs((parseFloat(f.invoice_gross) || 0) - it.gross) < 0.005 && (!it.date || !f.invoice_date || f.invoice_date === it.date))) return 'same amounts and date as an invoice already imported';
   const others = invBatch.filter(o => o !== it && o.status !== 'error');
   if (no && others.some(o => String(o.invNo || '').trim().toLowerCase() === no)) return 'same invoice number appears twice in this batch';
   if (others.some(o => o.file.name === it.file.name && o.file.size === it.file.size)) return 'same file added twice in this batch';
@@ -4952,20 +4953,26 @@ function renderInvoiceRegister() {
     ? `${rows.length} invoice${rows.length > 1 ? 's' : ''} · Net ${formatPounds(sum('invoice_net'))} · VAT ${formatPounds(sum('invoice_vat'))} · Total ${formatPounds(sum('invoice_gross'))}`
     : 'No invoices found.';
   const canDelete = isOwnerOrAdminUser(currentUser);
-  // Repeats: same invoice number, or same job + merchant + amount
-  const dupKey = f => String(f.invoice_no || '').trim() ? 'n|' + String(f.invoice_no).trim().toLowerCase() : '';
-  const dupKey2 = f => ['j', f.site_id, String(invMerchantOf(f)).toLowerCase(), Math.round((parseFloat(f.invoice_net) || 0) * 100)].join('|');
+  // Repeats: same invoice number, or same net + total + date. "Not a duplicate" (dup_dismissed) takes an invoice out of the check.
   const allInv = allPdfs.filter(f => f.file_type === 'invoice');
-  const count = (keyFn, k) => allInv.filter(x => keyFn(x) === k).length;
-  const isDupInv = f => (dupKey(f) && count(dupKey, dupKey(f)) > 1) || (f.site_id && count(dupKey2, dupKey2(f)) > 1);
+  const sameInvoice = (f, o) => {
+    const n1 = String(f.invoice_no || '').trim().toLowerCase(), n2 = String(o.invoice_no || '').trim().toLowerCase();
+    if (n1 && n1 === n2) return true;
+    const a = parseFloat(f.invoice_net), b = parseFloat(o.invoice_net), ga = parseFloat(f.invoice_gross), gb = parseFloat(o.invoice_gross);
+    if ([a, b, ga, gb].some(isNaN)) return false;
+    return Math.abs(a - b) < 0.005 && Math.abs(ga - gb) < 0.005 && (!f.invoice_date || !o.invoice_date || f.invoice_date === o.invoice_date);
+  };
+  const dupMatch = f => f.dup_dismissed ? null : allInv.find(o => String(o.id) !== String(f.id) && !o.dup_dismissed && sameInvoice(f, o)) || null;
   body.innerHTML = rows.map(f => {
     const site = allSites.find(s => String(s.id) === String(f.site_id));
     const unassigned = !site;
-    const dup = isDupInv(f);
+    const match = dupMatch(f);
+    const dup = !!match;
+    const matchSite = match ? allSites.find(x => String(x.id) === String(match.site_id)) : null;
     const rowStyle = dup ? DUP_ROW_STYLE : unassigned ? 'background: rgba(245, 158, 11, 0.18); box-shadow: inset 4px 0 0 var(--warning);' : '';
     return `<tr${rowStyle ? ` style="${rowStyle}"` : ''}>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
-      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}${dup ? DUP_BADGE : ''}${f.source === 'email' ? `<div style="font-size: 0.72rem; color: var(--text-muted);">📧 Emailed${f.needs_review && f.review_reason ? ' - ' + diaryEsc(f.review_reason) : ''}</div>` : ''}</td>
+      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}${dup ? DUP_BADGE + `<div style="font-size: 0.72rem; color: #fca5a5;">Matches ${diaryEsc(match.invoice_no ? 'invoice ' + match.invoice_no : match.filename)} on ${diaryEsc(matchSite ? matchSite.address : 'no job yet')}</div>` : ''}${f.source === 'email' ? `<div style="font-size: 0.72rem; color: var(--text-muted);">📧 Emailed${f.needs_review && f.review_reason ? ' - ' + diaryEsc(f.review_reason) : ''}</div>` : ''}</td>
       <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}</td>
       <td data-label="PO">${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
       <td data-label="Job">${unassigned
@@ -4974,10 +4981,18 @@ function renderInvoiceRegister() {
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
       <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
       <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
-      <td style="white-space: nowrap;">${unassigned ? `<button type="button" class="btn btn-primary btn-sm inv-assign" data-id="${diaryEsc(f.id)}">Assign job</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+      <td style="white-space: nowrap;">${dup ? `<button type="button" class="btn btn-outline btn-sm inv-keep" data-id="${diaryEsc(f.id)}" title="This is a different invoice - keep it">Not a duplicate</button> ` : ''}${unassigned ? `<button type="button" class="btn btn-primary btn-sm inv-assign" data-id="${diaryEsc(f.id)}">Assign job</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
   body.querySelectorAll('.inv-delete').forEach(b => b.addEventListener('click', () => deleteInvoice(b.dataset.id)));
+  body.querySelectorAll('.inv-keep').forEach(b => b.addEventListener('click', async () => {
+    const f = allPdfs.find(x => String(x.id) === String(b.dataset.id));
+    if (!f || !db) return;
+    await db.collection('pdfs').doc(String(f.id)).update({ dup_dismissed: true }).catch(err => alert('Could not save: ' + err.message));
+    f.dup_dismissed = true;
+    renderInvoiceRegister();
+    showGreenToast('✅ Kept - marked as not a duplicate');
+  }));
   body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => {
     const sel = body.querySelector(`.inv-assign-site[data-id="${b.dataset.id}"]`);
     assignInvoiceToJob(b.dataset.id, sel ? sel.value : '');

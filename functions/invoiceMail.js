@@ -76,7 +76,12 @@ async function importOne({ db, att, mail, ctx }) {
   if (!site) site = matchSiteByAddress(parsed.deliverText, ctx.sites.filter(s => !s.is_archived));
 
   const no = String(parsed.invNo || '').trim().toLowerCase();
-  const duplicate = no && ctx.invoices.some(f => String(f.invoice_no || '').trim().toLowerCase() === no);
+  // Same invoice number, or same net + total (and same date when both have one) - held for review, never silently dropped
+  const sameAmounts = f => parsed.net != null && parsed.gross != null && !f.dup_dismissed
+    && Math.abs((parseFloat(f.invoice_net) || 0) - parsed.net) < 0.005 && Math.abs((parseFloat(f.invoice_gross) || 0) - parsed.gross) < 0.005
+    && (!parsed.date || !f.invoice_date || f.invoice_date === parsed.date);
+  const dupOf = ctx.invoices.find(f => (no && String(f.invoice_no || '').trim().toLowerCase() === no) || sameAmounts(f));
+  const duplicate = !!dupOf;
   const priceOk = parsed.net != null && parsed.hasText;
   // Only a clear, checked, non-duplicate invoice goes straight onto a job; everything else waits (amber/red) in the register
   const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated && !duplicate;
@@ -91,7 +96,7 @@ async function importOne({ db, att, mail, ctx }) {
     po_number: poNumber, invoice_no: parsed.invNo || '', merchant: parsed.merchant || (matchedPo ? matchedPo.merchant : '') || '', invoice_date: parsed.date || '',
     invoice_net: parsed.net != null ? parsed.net : null, invoice_vat: parsed.vat != null ? parsed.vat : null, invoice_gross: parsed.gross != null ? parsed.gross : null,
     source: 'email', email_from: mail.from, email_subject: mail.subject,
-    needs_review: !confident, review_reason: duplicate ? 'possible duplicate' : !site ? 'no job found' : !priceOk ? 'price not found' : 'check the amounts',
+    needs_review: !confident, duplicate_of: dupOf ? dupOf.id : null, review_reason: duplicate ? 'possible duplicate' : !site ? 'no job found' : !priceOk ? 'price not found' : 'check the amounts',
     created_at: new Date().toISOString()
   };
   await db.collection('pdfs').doc(fileId).set(record);
