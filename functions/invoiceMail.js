@@ -4,9 +4,8 @@ const { defineSecret } = require('firebase-functions/params');
 const { getFirestore } = require('firebase-admin/firestore');
 const { getStorage } = require('firebase-admin/storage');
 const crypto = require('crypto');
-const { ImapFlow } = require('imapflow');
-const { simpleParser } = require('mailparser');
 const { parseInvoiceText, matchSiteByAddress } = require('./invoiceParser');
+// imapflow / mailparser / pdfjs are loaded only when the function runs, so deploying stays quick
 
 const GMAIL_USER = defineSecret('GMAIL_USER');
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
@@ -120,6 +119,8 @@ exports.importInvoiceEmails = onSchedule({
   secrets: [GMAIL_USER, GMAIL_APP_PASSWORD]
 }, async () => {
   const db = getFirestore();
+  const { ImapFlow } = require('imapflow');
+  const { simpleParser } = require('mailparser');
   const client = new ImapFlow({
     host: 'imap.gmail.com', port: 993, secure: true, logger: false,
     auth: { user: GMAIL_USER.value().trim(), pass: GMAIL_APP_PASSWORD.value().replace(/\s+/g, '') }
