@@ -14,7 +14,10 @@
   "dependencies": {
     "firebase-admin": "^12.0.0",
     "firebase-functions": "^5.0.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "imapflow": "^1.0.162",
+    "mailparser": "^3.7.1",
+    "pdfjs-dist": "3.11.174"
   },
   "private": true
 }

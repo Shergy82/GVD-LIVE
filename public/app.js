@@ -4669,7 +4669,9 @@ function parseInvoiceText(lines) {
   // VAT must be the difference between the total and the net price - never a repeat of the net figure
   if (gross != null && net != null && !agrees()) {
     if (net >= gross || Math.abs(net - (vat == null ? NaN : vat)) < 0.005) {
-      net = r2(gross / 1.2); netEstimated = true;
+      const derived = r2(gross / 1.2);
+      if (Math.abs(derived - net) > 0.02) netEstimated = true; // the labelled net already fits the total at 20% VAT, so it is not a guess
+      net = derived;
     }
     vat = r2(gross - net);
   }
@@ -4963,7 +4965,7 @@ function renderInvoiceRegister() {
     const rowStyle = dup ? DUP_ROW_STYLE : unassigned ? 'background: rgba(245, 158, 11, 0.18); box-shadow: inset 4px 0 0 var(--warning);' : '';
     return `<tr${rowStyle ? ` style="${rowStyle}"` : ''}>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
-      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}${dup ? DUP_BADGE : ''}</td>
+      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}${dup ? DUP_BADGE : ''}${f.source === 'email' ? `<div style="font-size: 0.72rem; color: var(--text-muted);">📧 Emailed${f.needs_review && f.review_reason ? ' - ' + diaryEsc(f.review_reason) : ''}</div>` : ''}</td>
       <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}</td>
       <td data-label="PO">${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
       <td data-label="Job">${unassigned
@@ -4989,10 +4991,17 @@ async function assignInvoiceToJob(fileId, siteId) {
   if (!f || !db || !isManagementUser(currentUser)) return;
   if (!site) { alert('Choose the job first.'); return; }
   try {
+    if (f.invoice_net == null || isNaN(parseFloat(f.invoice_net))) {
+      const typed = prompt('The price was not found on this invoice. Enter the net price (ex VAT):');
+      const net = parseFloat(String(typed || '').replace(/[£,\s]/g, ''));
+      if (isNaN(net)) return;
+      f.invoice_net = Math.round(net * 100) / 100;
+      await db.collection('pdfs').doc(String(f.id)).update({ invoice_net: f.invoice_net });
+    }
     const poNumber = f.po_number || `INV-${String(f.invoice_no || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
     const existingPo = allPOs.find(po => po.po_number === poNumber && String(po.site_id) === String(site.id));
     const updated = { ...f, site_id: String(site.id), po_number: poNumber };
-    await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id), po_number: poNumber });
+    await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id), po_number: poNumber, needs_review: false });
     Object.assign(f, updated);
     await applyInvoiceToJob(f, site, !existingPo, poNumber, f.merchant, f.invoice_no);
     showGreenToast(`🧾 Invoice costed to ${site.address}`);
