@@ -4900,9 +4900,10 @@ async function runInvoiceImport(todo) {
     }
   }
   btns.forEach(b => { b.disabled = false; });
+  invBatch = invBatch.filter(i => i.status !== 'done'); // imported ones leave the list, only unimported/failed stay
   renderInvBatch();
   renderInvoiceRegister();
-  if (ok) showGreenToast(`🧾 ${ok} invoice${ok > 1 ? 's' : ''} imported${unattributed ? ` (${unattributed} still need a job)` : ' and costed to the job'}`);
+  if (ok) showGreenToast(`✅ ${ok} invoice${ok > 1 ? 's' : ''} imported successfully${unattributed ? ` (${unattributed} still need a job - see the register)` : ''}`);
 }
 
 function handleImportSelectedInvoices() {
