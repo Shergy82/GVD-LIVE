@@ -1504,3 +1504,10 @@ body {
 .chat-mention-banner .cm-open { background: #3b82f6; color: #fff; flex: 1; }
 .chat-mention-banner .cm-close { background: #334155; color: #f8fafc; }
 @keyframes chatBannerIn { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+/* Chat box on phones: 16px text stops the phone zooming in (and the page sliding sideways) when you tap to type */
+.chat-input-row textarea { font-size: 16px !important; line-height: 1.35; padding: 10px 12px; box-sizing: border-box; width: 100%; }
+.chat-input-row textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 6px; padding-left: 4px; }
+.chat-box, .chat-messages, .chat-composer { max-width: 100%; box-sizing: border-box; }
+.chat-messages { overflow-x: hidden; }
