@@ -2733,36 +2733,70 @@ function loadCustomerPublicView(token) {
   document.getElementById('custPubTypeBadge').className = `site-type-badge ${(site.construction_type || '').toLowerCase()}`;
   document.getElementById('custPubTypeBadge').style.display = site.construction_type ? '' : 'none';
 
-  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
-  const container = document.getElementById('custPubShiftsContainer');
-
-  if (siteShifts.length === 0) {
-    container.innerHTML = `<p style="color: #64748b; padding: 20px;">No current works scheduled for this property.</p>`;
-  } else {
-    container.innerHTML = siteShifts.map(s => {
-      const op = allUsers.find(u => String(u.id) === String(s.operative_id));
-      const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
-      if (s.is_drying_day) {
-        return `<div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;"><strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)}</strong><div style="margin-top: 6px; font-weight: 600;">⏳ Drying Day</div></div>`;
-      }
-      return `
-        <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;">
-          <strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
-          <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? op.full_name : 'Operative'}</div>
-          <div style="margin-top: 4px; color: #475569;">Task: ${s.task}</div>
-        </div>
-      `;
-    }).join('');
-  }
+  renderCustomerSchedule(site);
 
   renderCustomerFeedbackForm(site);
 }
 
 
+let custScheduleTab = 'current';
+
+/** The customer's schedule: today and future days on the main tab; days that have passed move to "Completed" */
+function renderCustomerSchedule(site) {
+  const container = document.getElementById('custPubShiftsContainer');
+  if (!container) return;
+  const todayKey = diaryDateKey(new Date());
+  const rank = { am: 0, all_day: 1, pm: 2 };
+  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
+  const byDate = (a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (rank[a.shift_period] ?? 1) - (rank[b.shift_period] ?? 1);
+  const current = siteShifts.filter(s => (s.shift_date || '') >= todayKey).sort(byDate);
+  const completed = siteShifts.filter(s => (s.shift_date || '') < todayKey).sort((a, b) => byDate(b, a));
+
+  let tabs = document.getElementById('custPubTabs');
+  if (!tabs) {
+    tabs = document.createElement('div');
+    tabs.id = 'custPubTabs';
+    tabs.className = 'cust-tabs';
+    container.parentNode.insertBefore(tabs, container);
+    tabs.addEventListener('click', e => {
+      const b = e.target.closest('[data-cust-tab]');
+      if (!b) return;
+      custScheduleTab = b.dataset.custTab;
+      const st = allSites.find(x => x.customer_token === currentCustomerToken);
+      if (st) renderCustomerSchedule(st);
+    });
+  }
+  tabs.innerHTML = `
+    <button type="button" class="cust-tab ${custScheduleTab === 'current' ? 'active' : ''}" data-cust-tab="current">Current &amp; upcoming (${current.length})</button>
+    <button type="button" class="cust-tab ${custScheduleTab === 'completed' ? 'active' : ''}" data-cust-tab="completed">Completed (${completed.length})</button>`;
+
+  const list = custScheduleTab === 'completed' ? completed : current;
+  if (list.length === 0) {
+    container.innerHTML = `<p style="color: #64748b; padding: 20px;">${custScheduleTab === 'completed' ? 'No completed works yet.' : (siteShifts.length === 0 ? 'No current works scheduled for this property.' : 'No more works are currently scheduled.')}</p>`;
+    return;
+  }
+  const done = custScheduleTab === 'completed';
+  container.innerHTML = list.map(s => {
+    const op = allUsers.find(u => String(u.id) === String(s.operative_id));
+    const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
+    const dim = done ? 'opacity: 0.8;' : '';
+    if (s.is_drying_day) {
+      return `<div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}"><strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)}</strong><div style="margin-top: 6px; font-weight: 600;">⏳ Drying Day</div></div>`;
+    }
+    return `
+      <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}">
+        <strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
+        <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? diaryEsc(op.full_name) : 'Operative'}</div>
+        <div style="margin-top: 4px; color: #475569;">Task: ${diaryEsc(s.task)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
 // -------------------------------------------------------------------
 // CUSTOMER FEEDBACK
 // Customers leave feedback from the QR code page (no login). Every registered user can read it in the Feedback page;
-// only Owners / Admins / Managers can remove NEGATIVE comments (a copy is kept in feedback_removed).
+// only Owners / Admins / Managers can remove comments (a copy is kept in feedback_removed).
 // -------------------------------------------------------------------
 let allFeedback = [];
 let feedbackUnsub = null;
@@ -2970,7 +3004,7 @@ function renderFeedbackList() {
             <div class="fb-who-name">${diaryEsc(f.customer_name)}</div>
             <div class="fb-who-detail">📍 ${diaryEsc(f.customer_address || f.site_address)}${f.site_ref ? ` · Site ${diaryEsc(f.site_ref)}` : ''}${contact ? `<br>${contact}` : ''}</div>
           </div>
-          ${mgmt && kind === 'neg' ? `<button type="button" class="fb-del" data-fb-delete="${diaryEsc(f.id)}">🗑 Remove comment</button>` : ''}
+          ${mgmt ? `<button type="button" class="fb-del" data-fb-delete="${diaryEsc(f.id)}">🗑 Remove comment</button>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -2979,7 +3013,6 @@ function renderFeedbackList() {
 async function deleteFeedback(id) {
   const f = allFeedback.find(x => x.id === id);
   if (!f || !isManagementUser(currentUser)) return;
-  if (!(f.rating <= 2)) { alert('Only negative feedback (1 or 2 stars) can be removed.'); return; }
   if (!confirm(`Remove this ${f.rating}-star comment from ${f.customer_name}?\n\nA record of who removed it is kept in the audit log.`)) return;
   try {
     await db.collection('feedback_removed').doc(id).set({
