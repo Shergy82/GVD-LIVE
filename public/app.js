@@ -5003,18 +5003,27 @@ function computeSiteFinance(site) {
   const byOp = {};
   let labour = 0, labourPlanned = 0;
   const noRate = new Set();
+  // A person's day (or half day) is shared equally between everything they are booked on in that slot, across all sites:
+  // £200 a day with 4 morning jobs = £100 for the morning, £25 each.
+  const slotOf = sh => `${sh.operative_id}|${sh.shift_date}|${sh.shift_period === 'am' ? 'am' : sh.shift_period === 'pm' ? 'pm' : 'full'}`;
+  const slotCount = {};
+  allShifts.forEach(sh => {
+    if (!sh.operative_id || sh.is_drying_day) return;
+    const k = slotOf(sh);
+    slotCount[k] = (slotCount[k] || 0) + 1;
+  });
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
-    const frac = sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1;
+    const frac = (sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1) / (slotCount[slotOf(sh)] || 1);
     const rate = financeRates[String(sh.operative_id)];
     const priceWork = financePay[String(sh.operative_id)] === 'price';
     const isFuture = (sh.shift_date || '') > todayKey;
-    const cost = priceWork ? 0 : (rate || 0) * frac;
+    const cost = priceWork ? 0 : Math.round((rate || 0) * frac * 100) / 100;
     if (isFuture) { labourPlanned += cost; return; }
     const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
     const name = u ? u.full_name : 'Unknown';
     if (rate == null && !priceWork) noRate.add(name);
     const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0, priceWork };
-    row.days += frac;
+    row.days = Math.round((row.days + frac) * 1000) / 1000;
     row.cost += cost;
     labour += cost;
   });
