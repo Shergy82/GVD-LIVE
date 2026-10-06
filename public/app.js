@@ -3033,15 +3033,57 @@ async function deleteFeedback(id) {
 // -------------------------------------------------------------------
 // TEAM CHAT
 // One group chat for every registered user. Owners / Admins can post announcements, which are highlighted,
-// pinned at the top and pushed to every phone. Everyone can delete their own messages; Owners / Admins can delete any.
+// pinned at the top and pushed to every phone. Typing @ tags a person (or @all): they get a push and a pop-up in the app.
+// Everyone can delete their own messages; Owners / Admins can delete any.
 // -------------------------------------------------------------------
 let chatMessages = [];
 let chatUnsub = null;
+let chatFirstSnapshot = true;
+let chatMentionMatches = [];
+let chatMentionIndex = 0;
 
 const chatSeenKey = () => `gvd_chat_seen_${currentUser ? currentUser.id : ''}`;
+const chatActiveUsers = () => allUsers.filter(u => u.status === 'Active');
+const chatFirstName = u => String(u.full_name || '').trim().split(/\s+/)[0] || '';
+const chatEscRe = t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Who a message tags: { all, ids } from the @names in the text */
+function chatFindMentions(text, senderId) {
+  const users = chatActiveUsers();
+  const lower = String(text || '').toLowerCase();
+  const all = /(^|[^\w])@(all|everyone)(?![\w])/i.test(text);
+  const firstCount = {};
+  users.forEach(u => { const f = chatFirstName(u).toLowerCase(); firstCount[f] = (firstCount[f] || 0) + 1; });
+  const ids = users.filter(u => {
+    if (String(u.id) === String(senderId)) return false;
+    if (lower.includes('@' + String(u.full_name).toLowerCase())) return true;
+    const f = chatFirstName(u).toLowerCase();
+    return f && firstCount[f] === 1 && new RegExp('(^|[^\\w])@' + chatEscRe(f) + '(?![\\w])', 'i').test(text);
+  }).map(u => String(u.id));
+  return { all, ids };
+}
+
+const chatMentionsMe = m => !!currentUser && String(m.sender_id) !== String(currentUser.id) &&
+  (m.mention_all === true || (Array.isArray(m.mentions) && m.mentions.map(String).includes(String(currentUser.id))));
+
+/** Safe HTML for a message, with @tags highlighted (stronger when it is you) */
+function chatFormatText(text) {
+  const users = chatActiveUsers();
+  const firstCount = {};
+  users.forEach(u => { const f = chatFirstName(u).toLowerCase(); firstCount[f] = (firstCount[f] || 0) + 1; });
+  const names = ['everyone', 'all'];
+  users.forEach(u => { names.push(u.full_name); if (firstCount[chatFirstName(u).toLowerCase()] === 1) names.push(chatFirstName(u)); });
+  const alt = names.filter(Boolean).sort((x, y) => y.length - x.length).map(n => chatEscRe(diaryEsc(n))).join('|');
+  const html = diaryEsc(text);
+  if (!alt) return html;
+  const mine = currentUser ? [String(currentUser.full_name).toLowerCase(), chatFirstName(currentUser).toLowerCase(), 'all', 'everyone'] : [];
+  return html.replace(new RegExp('(^|[^\\w])@(' + alt + ')(?![\\w])', 'gi'), (m0, pre, name) =>
+    `${pre}<span class="chat-mention ${mine.includes(name.toLowerCase().replace(/&#39;/g, "'")) ? 'me' : ''}">@${name}</span>`);
+}
 
 function startChatSync() {
   if (chatUnsub || !db || !currentUser) return;
+  chatFirstSnapshot = true;
   chatUnsub = db.collection('group_chat').orderBy('created_at').limitToLast(300).onSnapshot(snapshot => {
     chatMessages = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
     // first ever visit: start from now, so old history is not counted as unread
@@ -3050,6 +3092,18 @@ function startChatSync() {
       localStorage.setItem(chatSeenKey(), newest);
     }
     const v = document.getElementById('view-chat');
+    const viewing = !!v && v.style.display !== 'none' && !document.hidden;
+
+    // pop-up when someone tags you (new tags as they arrive; on opening the app, the latest one you have not seen)
+    if (!viewing) {
+      const seen = localStorage.getItem(chatSeenKey()) || '';
+      let fresh;
+      if (chatFirstSnapshot) fresh = chatMessages.filter(m => chatMentionsMe(m) && (m.created_at || '') > seen).pop();
+      else fresh = snapshot.docChanges().filter(c => c.type === 'added').map(c => ({ ...c.doc.data(), id: c.doc.id })).filter(chatMentionsMe).pop();
+      if (fresh) showChatMentionBanner(fresh);
+    }
+    chatFirstSnapshot = false;
+
     if (v && v.style.display !== 'none') renderChatView(false); else updateChatBadge();
   }, err => console.warn('Firestore group_chat error:', err));
 }
@@ -3058,16 +3112,37 @@ function stopChatSync() {
   if (chatUnsub) chatUnsub();
   chatUnsub = null;
   chatMessages = [];
+  const b = document.getElementById('chatMentionBanner');
+  if (b) b.remove();
   updateChatBadge();
 }
 
+/** Red dot on the Team Chat button while there is anything new (an @ when you have been tagged) */
 function updateChatBadge() {
-  const el = document.getElementById('chatBadge');
-  if (!el) return;
+  const btn = document.getElementById('navChatBtn');
+  if (!btn) return;
   const seen = currentUser ? (localStorage.getItem(chatSeenKey()) || '') : '';
-  const n = currentUser ? chatMessages.filter(m => String(m.sender_id) !== String(currentUser.id) && (m.created_at || '') > seen).length : 0;
-  el.textContent = n > 99 ? '99+' : String(n);
-  el.style.display = n > 0 ? '' : 'none';
+  const unread = currentUser ? chatMessages.filter(m => String(m.sender_id) !== String(currentUser.id) && (m.created_at || '') > seen) : [];
+  btn.classList.toggle('has-unread-chat', unread.length > 0);
+  btn.classList.toggle('has-unread-mention', unread.some(chatMentionsMe));
+  btn.title = unread.length ? `${unread.length} new message${unread.length === 1 ? '' : 's'}` : '';
+}
+
+function showChatMentionBanner(m) {
+  let b = document.getElementById('chatMentionBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'chatMentionBanner';
+    b.className = 'chat-mention-banner';
+    document.body.appendChild(b);
+  }
+  b.innerHTML = `
+    <div class="cm-title">💬 ${diaryEsc(m.sender_name)} ${m.mention_all ? 'tagged everyone' : 'tagged you'} in Team Chat</div>
+    <div class="cm-text">${diaryEsc(m.text)}</div>
+    <div class="cm-actions"><button type="button" class="cm-open">Open chat</button><button type="button" class="cm-close">Dismiss</button></div>`;
+  b.querySelector('.cm-open').onclick = () => { b.remove(); showView('view-chat'); };
+  b.querySelector('.cm-close').onclick = () => b.remove();
+  if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) {} }
 }
 
 function chatDayLabel(iso) {
@@ -3097,7 +3172,7 @@ function renderChatView(forceBottom) {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
   const latest = chatMessages.filter(m => m.kind === 'announcement' && (m.created_at || '') > weekAgo).pop();
   document.getElementById('chatPinned').innerHTML = latest
-    ? `<div class="chat-pinned">📌 <b>Announcement</b> from ${diaryEsc(latest.sender_name)} · ${diaryEsc(chatDayLabel(latest.created_at))}<div style="margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;">${diaryEsc(latest.text)}</div></div>`
+    ? `<div class="chat-pinned">📌 <b>Announcement</b> from <b>${diaryEsc(latest.sender_name)}</b> · ${diaryEsc(chatDayLabel(latest.created_at))}<div style="margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;">${chatFormatText(latest.text)}</div></div>`
     : '';
 
   if (chatMessages.length === 0) {
@@ -3111,16 +3186,16 @@ function renderChatView(forceBottom) {
       const mine = String(m.sender_id) === String(currentUser.id);
       const time = new Date(m.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
       const del = (mine || isAdmin) ? `<button type="button" data-chat-delete="${diaryEsc(m.id)}">Delete</button>` : '';
-      if (m.kind === 'announcement') {
-        return `${sep}<div class="chat-announce"><div class="chat-tag">📢 Announcement</div><div class="chat-text">${diaryEsc(m.text)}</div><div class="chat-meta"><span>${diaryEsc(m.sender_name)} · ${time}</span>${del}</div></div>`;
-      }
       const role = ['Owner', 'Admin', 'Manager'].includes(m.sender_role) ? `<span class="chat-role">${diaryEsc(m.sender_role)}</span>` : '';
+      if (m.kind === 'announcement') {
+        return `${sep}<div class="chat-announce"><div class="chat-tag">📢 Announcement from ${diaryEsc(m.sender_name)}${role}</div><div class="chat-text">${chatFormatText(m.text)}</div><div class="chat-meta"><span>${diaryEsc(m.sender_name)} · ${time}</span>${del}</div></div>`;
+      }
       return `${sep}
-        <div class="chat-row ${mine ? 'mine' : ''}">
+        <div class="chat-row ${mine ? 'mine' : ''} ${chatMentionsMe(m) ? 'tagged' : ''}">
           ${mine ? '' : `<div class="chat-avatar" style="background: ${userColor(m.sender_id)};">${diaryEsc(chatInitials(m.sender_name))}</div>`}
           <div class="chat-bubble">
-            ${mine ? '' : `<div class="chat-name" style="color: ${userColor(m.sender_id)};">${diaryEsc(m.sender_name)}${role}</div>`}
-            <div class="chat-text">${diaryEsc(m.text)}</div>
+            <div class="chat-name" style="color: ${userColor(m.sender_id)};">${diaryEsc(m.sender_name)}${role}</div>
+            <div class="chat-text">${chatFormatText(m.text)}</div>
             <div class="chat-meta"><span>${time}</span>${del}</div>
           </div>
         </div>`;
@@ -3132,6 +3207,8 @@ function renderChatView(forceBottom) {
   const v = document.getElementById('view-chat');
   if (v && v.style.display !== 'none' && chatMessages.length) {
     localStorage.setItem(chatSeenKey(), chatMessages[chatMessages.length - 1].created_at);
+    const banner = document.getElementById('chatMentionBanner');
+    if (banner) banner.remove();
   }
   updateChatBadge();
 }
@@ -3141,7 +3218,9 @@ async function sendChatMessage() {
   const input = document.getElementById('chatInput');
   const text = input.value.trim();
   if (!text) return;
+  closeChatMentionMenu();
   const announce = isOwnerOrAdminUser(currentUser) && document.getElementById('chatAnnounce').checked;
+  const tags = chatFindMentions(text, currentUser.id);
   const btn = document.getElementById('chatSend');
   btn.disabled = true;
   try {
@@ -3151,21 +3230,23 @@ async function sendChatMessage() {
       sender_name: currentUser.full_name,
       sender_role: currentUser.role,
       kind: announce ? 'announcement' : 'message',
+      mentions: tags.ids,
+      mention_all: tags.all,
       created_at: new Date().toISOString()
     });
     input.value = '';
     input.style.height = 'auto';
     document.getElementById('chatAnnounce').checked = false;
-    if (announce) {
-      // a push to everyone else (the existing notification service delivers it, even to phones that are asleep)
-      const others = allUsers.filter(u => u.status === 'Active' && String(u.id) !== String(currentUser.id));
-      await Promise.all(others.map(u => db.collection('notifications').add({
-        target_user_id: String(u.id),
-        title: `📢 Announcement from ${currentUser.full_name}`,
-        body: text.slice(0, 300),
-        created_at: new Date().toISOString()
-      }).catch(err => console.warn('Announcement alert failed:', err))));
-    }
+
+    // phone alerts (delivered by the existing notification service, even to phones that are asleep):
+    // announcements go to everyone; otherwise only the people tagged, or everyone for @all
+    const others = chatActiveUsers().filter(u => String(u.id) !== String(currentUser.id));
+    const push = (users, title) => Promise.all(users.map(u => db.collection('notifications').add({
+      target_user_id: String(u.id), title, body: text.slice(0, 300), created_at: new Date().toISOString()
+    }).catch(err => console.warn('Chat alert failed:', err))));
+    if (announce) await push(others, `📢 Announcement from ${currentUser.full_name}`);
+    else if (tags.all) await push(others, `💬 ${currentUser.full_name} tagged everyone in Team Chat`);
+    else if (tags.ids.length) await push(others.filter(u => tags.ids.includes(String(u.id))), `💬 ${currentUser.full_name} tagged you in Team Chat`);
     renderChatView(true);
   } catch (e) {
     console.warn('Chat send failed', e);
@@ -3184,14 +3265,79 @@ async function deleteChatMessage(id) {
   try { await db.collection('group_chat').doc(id).delete(); } catch (e) { alert('Could not delete that message.'); }
 }
 
+// ---- @ suggestions ----
+function closeChatMentionMenu() {
+  const menu = document.getElementById('chatMentionMenu');
+  if (menu) menu.style.display = 'none';
+  chatMentionMatches = [];
+}
+
+function updateChatMentionMenu() {
+  const input = document.getElementById('chatInput');
+  const menu = document.getElementById('chatMentionMenu');
+  if (!input || !menu || !currentUser) return;
+  const before = input.value.slice(0, input.selectionStart);
+  const m = /(^|\s)@([^\s@]{0,30})$/.exec(before);
+  if (!m) { closeChatMentionMenu(); return; }
+  const q = m[2].toLowerCase();
+  const items = [];
+  if ('all'.startsWith(q) || 'everyone'.startsWith(q)) items.push({ label: '@all', sub: 'Notify everyone', insert: '@all ' });
+  chatActiveUsers()
+    .filter(u => String(u.id) !== String(currentUser.id) && String(u.full_name).toLowerCase().split(/\s+/).some(w => w.startsWith(q)))
+    .slice(0, 6)
+    .forEach(u => items.push({ label: '@' + u.full_name, sub: u.role, insert: '@' + u.full_name + ' ' }));
+  if (!items.length) { closeChatMentionMenu(); return; }
+  chatMentionMatches = items.map(i => ({ ...i, start: before.length - m[2].length - 1 }));
+  chatMentionIndex = 0;
+  drawChatMentionMenu();
+}
+
+function drawChatMentionMenu() {
+  const menu = document.getElementById('chatMentionMenu');
+  menu.innerHTML = chatMentionMatches.map((i, n) =>
+    `<button type="button" class="chat-mention-item ${n === chatMentionIndex ? 'active' : ''}" data-mention-pick="${n}"><span>${diaryEsc(i.label)}</span><small>${diaryEsc(i.sub)}</small></button>`).join('');
+  menu.style.display = '';
+}
+
+function pickChatMention(n) {
+  const item = chatMentionMatches[n];
+  const input = document.getElementById('chatInput');
+  if (!item || !input) return;
+  const caret = input.selectionStart;
+  input.value = input.value.slice(0, item.start) + item.insert + input.value.slice(caret);
+  const pos = item.start + item.insert.length;
+  input.setSelectionRange(pos, pos);
+  closeChatMentionMenu();
+  input.focus();
+}
+
 function setupChatListeners() {
   const input = document.getElementById('chatInput');
   if (!input) return;
   document.getElementById('chatSend').addEventListener('click', sendChatMessage);
-  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; });
-  // On a computer Enter sends (Shift+Enter for a new line); on a phone Enter starts a new line and the Send button sends
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    updateChatMentionMenu();
+  });
   input.addEventListener('keydown', e => {
+    if (chatMentionMatches.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); chatMentionIndex = (chatMentionIndex + 1) % chatMentionMatches.length; drawChatMentionMenu(); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); chatMentionIndex = (chatMentionIndex - 1 + chatMentionMatches.length) % chatMentionMatches.length; drawChatMentionMenu(); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickChatMention(chatMentionIndex); return; }
+      if (e.key === 'Escape') { closeChatMentionMenu(); return; }
+    }
+    // On a computer Enter sends (Shift+Enter for a new line); on a phone Enter starts a new line and the Send button sends
     if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendChatMessage(); }
+  });
+  // pick with the mouse or a tap without the box losing focus
+  document.getElementById('chatMentionMenu').addEventListener('mousedown', e => {
+    const b = e.target.closest('[data-mention-pick]');
+    if (b) { e.preventDefault(); pickChatMention(parseInt(b.dataset.mentionPick)); }
+  });
+  document.getElementById('chatMentionMenu').addEventListener('touchend', e => {
+    const b = e.target.closest('[data-mention-pick]');
+    if (b) { e.preventDefault(); pickChatMention(parseInt(b.dataset.mentionPick)); }
   });
   document.getElementById('chatMessages').addEventListener('click', e => {
     const b = e.target.closest('[data-chat-delete]');
