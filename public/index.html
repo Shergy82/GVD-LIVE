@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GVD LIVE</title>
-  <link rel="stylesheet" href="/styles.css?v=13.0">
+  <link rel="stylesheet" href="/styles.css?v=14.0">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
@@ -31,6 +31,7 @@
       <button class="nav-item manager-admin-only" data-target="view-invoices" id="navInvoicesBtn"><span class="nav-ico">🧾</span><span class="nav-lbl">Invoices</span></button>
       <button class="nav-item manager-admin-only" data-target="view-finance" id="navFinanceBtn"><span class="nav-ico">💷</span><span class="nav-lbl">Finance</span></button>
       <button class="nav-item manager-admin-only" data-target="view-diary" id="navDiaryBtn"><span class="nav-ico">📖</span><span class="nav-lbl">Diary</span></button>
+      <button class="nav-item" data-target="view-feedback" id="navFeedbackBtn"><span class="nav-ico">⭐</span><span class="nav-lbl">Feedback</span></button>
       <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn"><span class="nav-ico">⚙️</span><span class="nav-lbl">Admin Settings</span> <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
       <!-- Operative Links -->
@@ -368,7 +369,7 @@
                 </div>
 
                 <div class="print-instruction" style="font-size: 1.05rem; font-weight: 600; color: #334155; max-width: 520px; margin: 0 auto 24px auto; line-height: 1.5;">
-                  Scan this QR code using your phone camera to view the live, real-time works schedule for this property.
+                  Scan this QR code using your phone camera to view the live, real-time works schedule for this property, and to tell us how we did.
                 </div>
               </div>
 
@@ -436,6 +437,22 @@
       <div id="diaryGrid" class="diary-grid"></div>
       <h3 style="margin: 20px 0 10px;">This month</h3>
       <div id="diaryAgenda"></div>
+    </div>
+
+    <div id="view-feedback" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Customer Feedback</h2>
+          <p>What our customers say about our work. Left by customers through the QR code on site.</p>
+        </div>
+      </div>
+      <div id="fbSummary"></div>
+      <div class="fb-toolbar">
+        <div class="fb-chips" id="fbChips"></div>
+        <select id="fbSite" class="form-control"></select>
+        <input type="text" id="fbSearch" class="form-control" placeholder="Search name, address or comment...">
+      </div>
+      <div id="fbList"></div>
     </div>
 
     <div id="view-invoices" class="app-view manager-admin-only" style="display: none;">
@@ -1018,6 +1035,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=49.0"></script>
+  <script src="/app.js?v=50.0"></script>
 </body>
 </html>

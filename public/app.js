@@ -398,6 +398,7 @@ function hashSimple(str) {
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
+  setupFeedbackListeners();
   registerServiceWorker();
 
   initFirestoreSync();
@@ -479,6 +480,7 @@ function onUserAuthenticated() {
   updateCleanPushUI();
   if (isManagerOrHigher) startDiarySync();
   startPOSync();
+  startFeedbackSync();
   if (isManagerOrHigher) startFinanceSync();
 
   if (isManagerOrHigher) {
@@ -600,6 +602,8 @@ function renderActiveView() {
     renderInvoicesView();
   } else if (viewId === 'view-finance') {
     renderFinanceView();
+  } else if (viewId === 'view-feedback') {
+    renderFeedbackView();
   }
 }
 
@@ -2750,6 +2754,242 @@ function loadCustomerPublicView(token) {
       `;
     }).join('');
   }
+
+  renderCustomerFeedbackForm(site);
+}
+
+
+// -------------------------------------------------------------------
+// CUSTOMER FEEDBACK
+// Customers leave feedback from the QR code page (no login). Every registered user can read it in the Feedback page;
+// only Owners / Admins / Managers can remove NEGATIVE comments (a copy is kept in feedback_removed).
+// -------------------------------------------------------------------
+let allFeedback = [];
+let feedbackUnsub = null;
+let fbFilter = 'all';
+let fbPageOpenedAt = Date.now();
+
+const FB_LABELS = { 1: 'Poor', 2: 'Not great', 3: 'Okay', 4: 'Good', 5: 'Excellent' };
+const fbSentiment = r => (r >= 4 ? 'pos' : r === 3 ? 'neu' : 'neg');
+const fbStars = r => `<span class="fb-stars" aria-label="${r} out of 5 stars">${'★'.repeat(r)}<span class="off">${'★'.repeat(5 - r)}</span></span>`;
+const fbDate = iso => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+
+function startFeedbackSync() {
+  if (feedbackUnsub || !db || !currentUser) return;
+  feedbackUnsub = db.collection('feedback').onSnapshot(snapshot => {
+    allFeedback = snapshot.docs.map(d => ({ ...d.data(), id: d.id }))
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    const v = document.getElementById('view-feedback');
+    if (v && v.style.display !== 'none') renderFeedbackView();
+  }, err => console.warn('Firestore feedback error:', err));
+}
+
+function stopFeedbackSync() {
+  if (feedbackUnsub) feedbackUnsub();
+  feedbackUnsub = null;
+  allFeedback = [];
+}
+
+/** The customer's form, shown under the live schedule on the QR code page */
+function renderCustomerFeedbackForm(site) {
+  const host = document.querySelector('#view-customer-public .customer-print-preview');
+  if (!host || document.getElementById('custFeedbackCard')) return; // already there: never redraw while they are typing
+  const card = document.createElement('div');
+  card.id = 'custFeedbackCard';
+  card.className = 'fb-public-card';
+  host.appendChild(card);
+  fbPageOpenedAt = Date.now();
+  drawCustomerFeedbackForm(site, card);
+  if (new URLSearchParams(window.location.search).get('feedback')) card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function drawCustomerFeedbackForm(site, card) {
+  card.innerHTML = `
+    <div class="fb-public-title">How did we do?</div>
+    <p class="fb-public-sub">We would love to hear about your experience with us at <strong>${diaryEsc(site.address)}</strong>. Your feedback helps us recognise great work and keep improving.</p>
+    <div class="fb-stars-input" role="radiogroup" aria-label="Your rating">
+      ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="fb-star-btn" data-star="${n}" role="radio" aria-checked="false" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}
+    </div>
+    <div class="fb-rating-label" id="fbRatingLabel">Tap a star to rate us</div>
+    <div class="fb-grid">
+      <label class="fb-field">Your name *<input type="text" id="fbName" maxlength="80" autocomplete="name"></label>
+      <label class="fb-field">Property address *<input type="text" id="fbAddress" maxlength="200" autocomplete="street-address" value="${diaryEsc(site.address)}"></label>
+      <label class="fb-field">Email (optional)<input type="email" id="fbEmail" maxlength="120" autocomplete="email"></label>
+      <label class="fb-field">Phone (optional)<input type="tel" id="fbPhone" maxlength="30" autocomplete="tel"></label>
+      <label class="fb-field wide">Your feedback *<textarea id="fbComment" rows="5" maxlength="2000" placeholder="Tell us what went well, or what we could do better..."></textarea></label>
+    </div>
+    <label class="fb-consent"><input type="checkbox" id="fbConsent"> <span>I am happy for my name, address and comments to be recorded with this feedback and shared with the GVD team.</span></label>
+    <input type="text" id="fbWebsite" class="fb-hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div class="fb-error" id="fbError" role="alert"></div>
+    <button type="button" class="fb-submit" id="fbSubmit">Send feedback</button>`;
+
+  let rating = 0;
+  const label = card.querySelector('#fbRatingLabel');
+  const paint = n => card.querySelectorAll('.fb-star-btn').forEach(b => {
+    const on = parseInt(b.dataset.star) <= n;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', String(parseInt(b.dataset.star) === rating));
+  });
+  card.querySelectorAll('.fb-star-btn').forEach(b => {
+    b.addEventListener('click', () => { rating = parseInt(b.dataset.star); paint(rating); label.textContent = `${rating} star${rating > 1 ? 's' : ''} - ${FB_LABELS[rating]}`; });
+    b.addEventListener('mouseenter', () => paint(parseInt(b.dataset.star)));
+    b.addEventListener('mouseleave', () => paint(rating));
+  });
+
+  card.querySelector('#fbSubmit').addEventListener('click', async () => {
+    const val = id => (card.querySelector('#' + id).value || '').trim();
+    const err = card.querySelector('#fbError');
+    const fail = m => { err.textContent = m; };
+    fail('');
+    if (card.querySelector('#fbWebsite').value) return; // spam trap: real people never see this box
+    if (!rating) return fail('Please tap a star to rate us.');
+    if (!val('fbName')) return fail('Please enter your name.');
+    if (!val('fbAddress')) return fail('Please enter the property address.');
+    if (val('fbComment').length < 5) return fail('Please tell us a little about your experience.');
+    if (val('fbEmail') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val('fbEmail'))) return fail('That email address does not look right.');
+    if (!card.querySelector('#fbConsent').checked) return fail('Please tick the box to confirm you are happy for us to record your feedback.');
+    if (Date.now() - fbPageOpenedAt < 4000) return fail('Please take a moment to check your answers, then press Send again.');
+    const last = parseInt(localStorage.getItem('gvd_fb_last') || '0');
+    if (Date.now() - last < 30000) return fail('Your feedback has just been sent. Thank you!');
+
+    const btn = card.querySelector('#fbSubmit');
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    try {
+      await db.collection('feedback').add({
+        site_id: String(site.id),
+        site_ref: formatSiteId(site.id),
+        site_address: site.address,
+        rating,
+        sentiment: fbSentiment(rating),
+        comment: val('fbComment').slice(0, 2000),
+        customer_name: val('fbName').slice(0, 80),
+        customer_address: val('fbAddress').slice(0, 200),
+        customer_email: val('fbEmail').slice(0, 120),
+        customer_phone: val('fbPhone').slice(0, 30),
+        consent: true,
+        source: 'customer_qr',
+        created_at: new Date().toISOString()
+      });
+      localStorage.setItem('gvd_fb_last', String(Date.now()));
+      card.innerHTML = `
+        <div class="fb-thanks">
+          <div class="fb-thanks-tick">✓</div>
+          <div class="fb-public-title">Thank you, ${diaryEsc(val('fbName') || 'again')}!</div>
+          <p class="fb-public-sub">Your feedback has been sent to the team. We really appreciate you taking the time.</p>
+        </div>`;
+    } catch (e) {
+      console.warn('Feedback failed', e);
+      btn.disabled = false;
+      btn.textContent = 'Send feedback';
+      fail('Sorry, that did not send. Please check your connection and try again.');
+    }
+  });
+}
+
+/** Everything the in-app Feedback page needs, wired once */
+function setupFeedbackListeners() {
+  const view = document.getElementById('view-feedback');
+  if (!view) return;
+  view.addEventListener('click', e => {
+    const chip = e.target.closest('[data-fb-filter]');
+    if (chip) { fbFilter = chip.dataset.fbFilter; renderFeedbackView(); return; }
+    const del = e.target.closest('[data-fb-delete]');
+    if (del) deleteFeedback(del.dataset.fbDelete);
+  });
+  document.getElementById('fbSearch').addEventListener('input', renderFeedbackList);
+  document.getElementById('fbSite').addEventListener('change', renderFeedbackList);
+}
+
+function fbFiltered() {
+  const site = (document.getElementById('fbSite') || {}).value || '';
+  const q = ((document.getElementById('fbSearch') || {}).value || '').trim().toLowerCase();
+  return allFeedback.filter(f =>
+    (fbFilter === 'all' || fbSentiment(f.rating) === fbFilter) &&
+    (!site || String(f.site_id) === site) &&
+    (!q || [f.customer_name, f.customer_address, f.site_address, f.comment].some(t => String(t || '').toLowerCase().includes(q))));
+}
+
+function renderFeedbackView() {
+  if (!currentUser) return;
+  const total = allFeedback.length;
+  const avg = total ? allFeedback.reduce((t, f) => t + (f.rating || 0), 0) / total : 0;
+  const count = n => allFeedback.filter(f => f.rating === n).length;
+  const pos = allFeedback.filter(f => f.rating >= 4).length;
+
+  document.getElementById('fbSummary').innerHTML = total === 0 ? '' : `
+    <div class="fb-summary-card">
+      <div class="fb-score">
+        <div class="fb-score-num">${avg.toFixed(1)}</div>
+        ${fbStars(Math.round(avg))}
+        <div class="fb-score-sub">${total} review${total === 1 ? '' : 's'} · ${Math.round((pos / total) * 100)}% positive</div>
+      </div>
+      <div class="fb-bars">
+        ${[5, 4, 3, 2, 1].map(n => `<div class="fb-bar-row"><span>${n} ★</span><div class="fb-bar-track"><div class="fb-bar-fill" style="width: ${(count(n) / total) * 100}%;"></div></div><span>${count(n)}</span></div>`).join('')}
+      </div>
+    </div>`;
+
+  const chips = [['all', `All (${total})`], ['pos', `Positive (${pos})`], ['neu', `Okay (${count(3)})`], ['neg', `Negative (${count(1) + count(2)})`]];
+  document.getElementById('fbChips').innerHTML = chips.map(([k, l]) => `<button type="button" class="fb-chip ${fbFilter === k ? 'active' : ''}" data-fb-filter="${k}">${l}</button>`).join('');
+
+  const siteSel = document.getElementById('fbSite');
+  const keep = siteSel.value;
+  const sites = {};
+  allFeedback.forEach(f => { sites[f.site_id] = f.site_address || f.site_ref || f.site_id; });
+  siteSel.innerHTML = `<option value="">All properties</option>` + Object.keys(sites).map(id => `<option value="${diaryEsc(id)}">${diaryEsc(sites[id])}</option>`).join('');
+  siteSel.value = Object.keys(sites).includes(keep) ? keep : '';
+
+  renderFeedbackList();
+}
+
+function renderFeedbackList() {
+  const host = document.getElementById('fbList');
+  if (!host) return;
+  const mgmt = isManagementUser(currentUser);
+  const list = fbFiltered();
+  if (list.length === 0) {
+    host.innerHTML = `<div class="fb-empty">${allFeedback.length === 0 ? 'No feedback yet. When a customer scans the QR code and leaves a review it will appear here.' : 'No feedback matches those filters.'}</div>`;
+    return;
+  }
+  host.innerHTML = list.map(f => {
+    const kind = fbSentiment(f.rating);
+    const tag = { pos: 'Positive', neu: 'Okay', neg: 'Negative' }[kind];
+    const contact = mgmt ? [
+      f.customer_email ? `<a href="mailto:${diaryEsc(f.customer_email)}">${diaryEsc(f.customer_email)}</a>` : '',
+      f.customer_phone ? `<a href="tel:${diaryEsc(f.customer_phone)}">${diaryEsc(f.customer_phone)}</a>` : ''
+    ].filter(Boolean).join(' · ') : '';
+    return `
+      <div class="fb-card ${kind}">
+        <div class="fb-card-top">
+          <div>${fbStars(f.rating || 0)} <span class="fb-tag ${kind}" style="margin-left: 8px;">${tag}</span></div>
+          <span class="fb-date">${fbDate(f.created_at)}</span>
+        </div>
+        <div class="fb-quote">${diaryEsc(f.comment)}</div>
+        <div class="fb-who">
+          <div>
+            <div class="fb-who-name">${diaryEsc(f.customer_name)}</div>
+            <div class="fb-who-detail">📍 ${diaryEsc(f.customer_address || f.site_address)}${f.site_ref ? ` · Site ${diaryEsc(f.site_ref)}` : ''}${contact ? `<br>${contact}` : ''}</div>
+          </div>
+          ${mgmt && kind === 'neg' ? `<button type="button" class="fb-del" data-fb-delete="${diaryEsc(f.id)}">🗑 Remove comment</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function deleteFeedback(id) {
+  const f = allFeedback.find(x => x.id === id);
+  if (!f || !isManagementUser(currentUser)) return;
+  if (!(f.rating <= 2)) { alert('Only negative feedback (1 or 2 stars) can be removed.'); return; }
+  if (!confirm(`Remove this ${f.rating}-star comment from ${f.customer_name}?\n\nA record of who removed it is kept in the audit log.`)) return;
+  try {
+    await db.collection('feedback_removed').doc(id).set({
+      ...f, removed_by: currentUser.full_name, removed_by_id: String(currentUser.id), removed_at: new Date().toISOString()
+    });
+    await db.collection('feedback').doc(id).delete();
+  } catch (e) {
+    console.warn('Could not remove feedback', e);
+    alert('Could not remove that comment. Please try again.');
+  }
 }
 
 // -------------------------------------------------------------------
@@ -3098,6 +3338,7 @@ async function handleLogout() {
   }
   stopDiarySync();
   stopPOSync();
+  stopFeedbackSync();
   stopFinanceSync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
