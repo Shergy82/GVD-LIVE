@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GVD LIVE</title>
-  <link rel="stylesheet" href="/styles.css?v=15.0">
+  <link rel="stylesheet" href="/styles.css?v=16.0">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
@@ -31,6 +31,7 @@
       <button class="nav-item manager-admin-only" data-target="view-invoices" id="navInvoicesBtn"><span class="nav-ico">🧾</span><span class="nav-lbl">Invoices</span></button>
       <button class="nav-item manager-admin-only" data-target="view-finance" id="navFinanceBtn"><span class="nav-ico">💷</span><span class="nav-lbl">Finance</span></button>
       <button class="nav-item manager-admin-only" data-target="view-diary" id="navDiaryBtn"><span class="nav-ico">📖</span><span class="nav-lbl">Diary</span></button>
+      <button class="nav-item" data-target="view-chat" id="navChatBtn"><span class="nav-ico">💬</span><span class="nav-lbl">Team Chat</span> <span id="chatBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       <button class="nav-item" data-target="view-feedback" id="navFeedbackBtn"><span class="nav-ico">⭐</span><span class="nav-lbl">Feedback</span></button>
       <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn"><span class="nav-ico">⚙️</span><span class="nav-lbl">Admin Settings</span> <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
@@ -437,6 +438,26 @@
       <div id="diaryGrid" class="diary-grid"></div>
       <h3 style="margin: 20px 0 10px;">This month</h3>
       <div id="diaryAgenda"></div>
+    </div>
+
+    <div id="view-chat" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Team Chat</h2>
+          <p>Everyone at GVD in one place. Announcements from the office are highlighted and alert every phone.</p>
+        </div>
+      </div>
+      <div id="chatPinned"></div>
+      <div class="chat-box">
+        <div id="chatMessages" class="chat-messages"></div>
+        <div class="chat-composer">
+          <label id="chatAnnounceRow" class="chat-announce-row" style="display: none;"><input type="checkbox" id="chatAnnounce"> <span>📢 Send as an announcement (alerts everyone's phone)</span></label>
+          <div class="chat-input-row">
+            <textarea id="chatInput" rows="1" maxlength="2000" placeholder="Message the team..."></textarea>
+            <button type="button" class="btn btn-primary" id="chatSend">Send</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="view-feedback" class="app-view" style="display: none;">
@@ -1035,6 +1056,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=51.0"></script>
+  <script src="/app.js?v=52.0"></script>
 </body>
 </html>

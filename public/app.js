@@ -399,6 +399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
   setupFeedbackListeners();
+  setupChatListeners();
   registerServiceWorker();
 
   initFirestoreSync();
@@ -481,6 +482,7 @@ function onUserAuthenticated() {
   if (isManagerOrHigher) startDiarySync();
   startPOSync();
   startFeedbackSync();
+  startChatSync();
   if (isManagerOrHigher) startFinanceSync();
 
   if (isManagerOrHigher) {
@@ -604,6 +606,8 @@ function renderActiveView() {
     renderFinanceView();
   } else if (viewId === 'view-feedback') {
     renderFeedbackView();
+  } else if (viewId === 'view-chat') {
+    renderChatView(true);
   }
 }
 
@@ -3025,6 +3029,176 @@ async function deleteFeedback(id) {
   }
 }
 
+
+// -------------------------------------------------------------------
+// TEAM CHAT
+// One group chat for every registered user. Owners / Admins can post announcements, which are highlighted,
+// pinned at the top and pushed to every phone. Everyone can delete their own messages; Owners / Admins can delete any.
+// -------------------------------------------------------------------
+let chatMessages = [];
+let chatUnsub = null;
+
+const chatSeenKey = () => `gvd_chat_seen_${currentUser ? currentUser.id : ''}`;
+
+function startChatSync() {
+  if (chatUnsub || !db || !currentUser) return;
+  chatUnsub = db.collection('group_chat').orderBy('created_at').limitToLast(300).onSnapshot(snapshot => {
+    chatMessages = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
+    // first ever visit: start from now, so old history is not counted as unread
+    if (!localStorage.getItem(chatSeenKey())) {
+      const newest = chatMessages.length ? chatMessages[chatMessages.length - 1].created_at : new Date().toISOString();
+      localStorage.setItem(chatSeenKey(), newest);
+    }
+    const v = document.getElementById('view-chat');
+    if (v && v.style.display !== 'none') renderChatView(false); else updateChatBadge();
+  }, err => console.warn('Firestore group_chat error:', err));
+}
+
+function stopChatSync() {
+  if (chatUnsub) chatUnsub();
+  chatUnsub = null;
+  chatMessages = [];
+  updateChatBadge();
+}
+
+function updateChatBadge() {
+  const el = document.getElementById('chatBadge');
+  if (!el) return;
+  const seen = currentUser ? (localStorage.getItem(chatSeenKey()) || '') : '';
+  const n = currentUser ? chatMessages.filter(m => String(m.sender_id) !== String(currentUser.id) && (m.created_at || '') > seen).length : 0;
+  el.textContent = n > 99 ? '99+' : String(n);
+  el.style.display = n > 0 ? '' : 'none';
+}
+
+function chatDayLabel(iso) {
+  const d = new Date(iso);
+  const key = x => diaryDateKey(x);
+  const today = new Date();
+  const yest = new Date(); yest.setDate(today.getDate() - 1);
+  if (key(d) === key(today)) return 'Today';
+  if (key(d) === key(yest)) return 'Yesterday';
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function chatInitials(name) {
+  return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0].toUpperCase()).join('');
+}
+
+function renderChatView(forceBottom) {
+  if (!currentUser) return;
+  const box = document.getElementById('chatMessages');
+  if (!box) return;
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const canAnnounce = isOwnerOrAdminUser(currentUser);
+  const isAdmin = canAnnounce;
+  document.getElementById('chatAnnounceRow').style.display = canAnnounce ? '' : 'none';
+
+  // pinned: the most recent announcement from the last 7 days
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const latest = chatMessages.filter(m => m.kind === 'announcement' && (m.created_at || '') > weekAgo).pop();
+  document.getElementById('chatPinned').innerHTML = latest
+    ? `<div class="chat-pinned">📌 <b>Announcement</b> from ${diaryEsc(latest.sender_name)} · ${diaryEsc(chatDayLabel(latest.created_at))}<div style="margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;">${diaryEsc(latest.text)}</div></div>`
+    : '';
+
+  if (chatMessages.length === 0) {
+    box.innerHTML = '<div class="chat-empty">No messages yet.<br>Say hello to the team 👋</div>';
+  } else {
+    let lastDay = '';
+    box.innerHTML = chatMessages.map(m => {
+      const day = diaryDateKey(new Date(m.created_at));
+      const sep = day !== lastDay ? `<div class="chat-day">${diaryEsc(chatDayLabel(m.created_at))}</div>` : '';
+      lastDay = day;
+      const mine = String(m.sender_id) === String(currentUser.id);
+      const time = new Date(m.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const del = (mine || isAdmin) ? `<button type="button" data-chat-delete="${diaryEsc(m.id)}">Delete</button>` : '';
+      if (m.kind === 'announcement') {
+        return `${sep}<div class="chat-announce"><div class="chat-tag">📢 Announcement</div><div class="chat-text">${diaryEsc(m.text)}</div><div class="chat-meta"><span>${diaryEsc(m.sender_name)} · ${time}</span>${del}</div></div>`;
+      }
+      const role = ['Owner', 'Admin', 'Manager'].includes(m.sender_role) ? `<span class="chat-role">${diaryEsc(m.sender_role)}</span>` : '';
+      return `${sep}
+        <div class="chat-row ${mine ? 'mine' : ''}">
+          ${mine ? '' : `<div class="chat-avatar" style="background: ${userColor(m.sender_id)};">${diaryEsc(chatInitials(m.sender_name))}</div>`}
+          <div class="chat-bubble">
+            ${mine ? '' : `<div class="chat-name" style="color: ${userColor(m.sender_id)};">${diaryEsc(m.sender_name)}${role}</div>`}
+            <div class="chat-text">${diaryEsc(m.text)}</div>
+            <div class="chat-meta"><span>${time}</span>${del}</div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+  if (forceBottom || nearBottom) box.scrollTop = box.scrollHeight;
+
+  // looking at the chat marks everything as read
+  const v = document.getElementById('view-chat');
+  if (v && v.style.display !== 'none' && chatMessages.length) {
+    localStorage.setItem(chatSeenKey(), chatMessages[chatMessages.length - 1].created_at);
+  }
+  updateChatBadge();
+}
+
+async function sendChatMessage() {
+  if (!currentUser || !db) return;
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const announce = isOwnerOrAdminUser(currentUser) && document.getElementById('chatAnnounce').checked;
+  const btn = document.getElementById('chatSend');
+  btn.disabled = true;
+  try {
+    await db.collection('group_chat').add({
+      text: text.slice(0, 2000),
+      sender_id: String(currentUser.id),
+      sender_name: currentUser.full_name,
+      sender_role: currentUser.role,
+      kind: announce ? 'announcement' : 'message',
+      created_at: new Date().toISOString()
+    });
+    input.value = '';
+    input.style.height = 'auto';
+    document.getElementById('chatAnnounce').checked = false;
+    if (announce) {
+      // a push to everyone else (the existing notification service delivers it, even to phones that are asleep)
+      const others = allUsers.filter(u => u.status === 'Active' && String(u.id) !== String(currentUser.id));
+      await Promise.all(others.map(u => db.collection('notifications').add({
+        target_user_id: String(u.id),
+        title: `📢 Announcement from ${currentUser.full_name}`,
+        body: text.slice(0, 300),
+        created_at: new Date().toISOString()
+      }).catch(err => console.warn('Announcement alert failed:', err))));
+    }
+    renderChatView(true);
+  } catch (e) {
+    console.warn('Chat send failed', e);
+    alert('Sorry, that message did not send. Please check your connection and try again.');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+async function deleteChatMessage(id) {
+  const m = chatMessages.find(x => x.id === id);
+  if (!m || !currentUser) return;
+  if (!(String(m.sender_id) === String(currentUser.id) || isOwnerOrAdminUser(currentUser))) return;
+  if (!confirm('Delete this message for everyone?')) return;
+  try { await db.collection('group_chat').doc(id).delete(); } catch (e) { alert('Could not delete that message.'); }
+}
+
+function setupChatListeners() {
+  const input = document.getElementById('chatInput');
+  if (!input) return;
+  document.getElementById('chatSend').addEventListener('click', sendChatMessage);
+  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; });
+  // On a computer Enter sends (Shift+Enter for a new line); on a phone Enter starts a new line and the Send button sends
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendChatMessage(); }
+  });
+  document.getElementById('chatMessages').addEventListener('click', e => {
+    const b = e.target.closest('[data-chat-delete]');
+    if (b) deleteChatMessage(b.dataset.chatDelete);
+  });
+}
+
 // -------------------------------------------------------------------
 // EVENT HANDLERS & AUTH LOGIC
 // -------------------------------------------------------------------
@@ -3372,6 +3546,7 @@ async function handleLogout() {
   stopDiarySync();
   stopPOSync();
   stopFeedbackSync();
+  stopChatSync();
   stopFinanceSync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
