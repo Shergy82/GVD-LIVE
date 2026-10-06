@@ -4990,6 +4990,49 @@ function money(v) {
   return (n < 0 ? '-£' : '£') + Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/**
+ * Cost every booked shift so that a person's cost on any one day can NEVER exceed their day rate, however many jobs
+ * they are booked on. The day is two halves (AM, PM). An AM shift uses the morning, a PM shift the afternoon, an
+ * all-day shift both. Each half is worth half the day rate and is shared equally between the shifts using it:
+ *   4 AM jobs on £200        -> £100 for the morning, £25 each
+ *   2 all-day jobs on £200   -> £200 for the day, £100 each
+ *   all-day + AM on £200     -> £200 for the day: £150 and £50
+ * Worked in whole pence (largest remainder), so the shares add up to exactly the person's cost for the day.
+ * Returns a Map of shift -> { frac (share of a day), pence, overlap (booked on more than one job in the same half) }.
+ */
+function allocateShiftCosts() {
+  const groups = {};
+  allShifts.forEach(sh => {
+    if (!sh.operative_id || sh.is_drying_day) return;
+    const k = `${sh.operative_id}|${sh.shift_date}`;
+    (groups[k] = groups[k] || []).push(sh);
+  });
+  const out = new Map();
+  Object.keys(groups).forEach(k => {
+    const shifts = groups[k].slice().sort((x, y) => String(x.site_id).localeCompare(String(y.site_id)) || String(x.id).localeCompare(String(y.id)));
+    const usesAm = sh => sh.shift_period !== 'pm';
+    const usesPm = sh => sh.shift_period !== 'am';
+    const am = shifts.filter(usesAm).length;
+    const pm = shifts.filter(usesPm).length;
+    const dayFrac = (am > 0 ? 0.5 : 0) + (pm > 0 ? 0.5 : 0);
+    const opId = String(shifts[0].operative_id);
+    const rate = financeRates[opId];
+    const paid = financePay[opId] !== 'price' && rate != null;
+    const totalPence = paid ? Math.round(rate * 100 * dayFrac) : 0;
+    const weights = shifts.map(sh => (usesAm(sh) ? 0.5 / am : 0) + (usesPm(sh) ? 0.5 / pm : 0));
+    const raw = weights.map(w => (dayFrac ? totalPence * w / dayFrac : 0));
+    const pence = raw.map(Math.floor);
+    let left = totalPence - pence.reduce((t, v) => t + v, 0);
+    raw.map((v, i) => ({ i, r: v - Math.floor(v) })).sort((x, y) => y.r - x.r || x.i - y.i).forEach(o => { if (left > 0) { pence[o.i]++; left--; } });
+    shifts.forEach((sh, i) => out.set(sh, {
+      frac: weights[i],
+      pence: pence[i],
+      overlap: (usesAm(sh) && am > 1) || (usesPm(sh) && pm > 1),
+    }));
+  });
+  return out;
+}
+
 function computeSiteFinance(site) {
   const sid = String(site.id);
   const pos = allPOs.filter(po => String(po.site_id) === sid && po.status !== 'Cancelled');
@@ -5003,29 +5046,29 @@ function computeSiteFinance(site) {
   const byOp = {};
   let labour = 0, labourPlanned = 0;
   const noRate = new Set();
-  // A person's day (or half day) is shared equally between everything they are booked on in that slot, across all sites:
-  // £200 a day with 4 morning jobs = £100 for the morning, £25 each.
-  const slotOf = sh => `${sh.operative_id}|${sh.shift_date}|${sh.shift_period === 'am' ? 'am' : sh.shift_period === 'pm' ? 'pm' : 'full'}`;
-  const slotCount = {};
-  allShifts.forEach(sh => {
-    if (!sh.operative_id || sh.is_drying_day) return;
-    const k = slotOf(sh);
-    slotCount[k] = (slotCount[k] || 0) + 1;
-  });
+  // One person's cost on one day can never exceed their day rate: the day is worked out once per person across ALL sites
+  // and shared out between the jobs (see allocateShiftCosts).
+  const alloc = allocateShiftCosts();
+  const doubleBooked = new Set();
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
-    const frac = (sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1) / (slotCount[slotOf(sh)] || 1);
+    const a = alloc.get(sh) || { frac: 0, pence: 0, overlap: false };
+    const frac = a.frac;
+    if (a.overlap) {
+      const u0 = allUsers.find(x => String(x.id) === String(sh.operative_id));
+      doubleBooked.add(`${u0 ? u0.full_name : 'Unknown'} on ${sh.shift_date}`);
+    }
     const rate = financeRates[String(sh.operative_id)];
     const priceWork = financePay[String(sh.operative_id)] === 'price';
     const isFuture = (sh.shift_date || '') > todayKey;
-    const cost = priceWork ? 0 : Math.round((rate || 0) * frac * 100) / 100;
+    const cost = priceWork || rate == null ? 0 : a.pence / 100;
     if (isFuture) { labourPlanned += cost; return; }
     const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
     const name = u ? u.full_name : 'Unknown';
     if (rate == null && !priceWork) noRate.add(name);
     const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0, priceWork };
     row.days = Math.round((row.days + frac) * 1000) / 1000;
-    row.cost += cost;
-    labour += cost;
+    row.cost = Math.round((row.cost + cost) * 100) / 100;
+    labour = Math.round((labour + cost) * 100) / 100;
   });
 
   const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
@@ -5044,7 +5087,7 @@ function computeSiteFinance(site) {
     const u = allUsers.find(x => String(x.id) === String(id));
     return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
   });
-  return { contractors, value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
+  return { contractors, value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), doubleBooked: Array.from(doubleBooked), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -5096,6 +5139,7 @@ function renderSiteFinance(site) {
         ${row('Extra costs', money(f.extras))}
         ${row('<strong>Total cost</strong>', '<strong>' + money(f.totalCost) + '</strong>')}
       </tbody></table>
+      ${f.doubleBooked && f.doubleBooked.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ Booked on more than one job at the same time: ${diaryEsc(f.doubleBooked.join('; '))}. Their day rate is shared between those jobs, never charged twice.</p>` : ''}
       ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
