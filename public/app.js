@@ -400,6 +400,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   setupFeedbackListeners();
   setupChatListeners();
+  setupCustomerInvoiceListeners();
   registerServiceWorker();
 
   initFirestoreSync();
@@ -2535,6 +2536,7 @@ function renderAdminSettingsView() {
   loadPushUserIds();
   updatePendingUsersBadge();
   document.getElementById('settingsAppNameInput').value = appSettings.app_name || 'GVD LIVE';
+  fillCompanyForm();
   const includeInput = document.getElementById('settingsIncludeManagementInput');
   if (includeInput) {
     includeInput.checked = appSettings.include_management_in_planning === true;
@@ -2795,6 +2797,324 @@ function renderCustomerSchedule(site) {
       </div>
     `;
   }).join('');
+}
+
+// -------------------------------------------------------------------
+// CUSTOMER INVOICES (Admin or higher). A letterheaded PDF invoice for the project total (the job value on the Finance tab).
+// Every invoice is saved in `customer_invoices` so it can be downloaded again and numbers never repeat.
+// -------------------------------------------------------------------
+let customerInvoices = [];
+
+const ciPence = v => Math.round((parseFloat(v) || 0) * 100);
+const ciMoney = pence => money((pence || 0) / 100);
+
+function ciCompany() {
+  const c = (appSettings && appSettings.company) || {};
+  const terms = parseInt(c.terms_days);
+  return {
+    name: c.name || 'GVD Contracts Ltd', address: c.address || '', phone: c.phone || '', email: c.email || '', web: c.web || '',
+    reg_no: c.reg_no || '', vat_no: c.vat_no || '', bank_name: c.bank_name || '', account_name: c.account_name || '',
+    sort_code: c.sort_code || '', account_no: c.account_no || '', terms_days: isNaN(terms) ? 30 : terms,
+    next_invoice_no: c.next_invoice_no || '', note: c.note || ''
+  };
+}
+
+function fillCompanyForm() {
+  const c = ciCompany();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
+  set('coName', (appSettings.company || {}).name || ''); set('coAddress', c.address); set('coPhone', c.phone); set('coEmail', c.email);
+  set('coWeb', c.web); set('coRegNo', c.reg_no); set('coVatNo', c.vat_no); set('coBankName', c.bank_name); set('coAccName', c.account_name);
+  set('coSortCode', c.sort_code); set('coAccNo', c.account_no); set('coTermsDays', (appSettings.company || {}).terms_days ?? ''); set('coNextNo', c.next_invoice_no); set('coNote', c.note);
+}
+
+async function handleSaveCompany(e) {
+  e.preventDefault();
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  const v = id => (document.getElementById(id).value || '').trim();
+  appSettings.company = {
+    name: v('coName'), address: v('coAddress'), phone: v('coPhone'), email: v('coEmail'), web: v('coWeb'), reg_no: v('coRegNo'), vat_no: v('coVatNo'),
+    bank_name: v('coBankName'), account_name: v('coAccName'), sort_code: v('coSortCode'), account_no: v('coAccNo'),
+    terms_days: v('coTermsDays'), next_invoice_no: v('coNextNo'), note: v('coNote')
+  };
+  if (db) await db.collection('settings').doc('app').set(appSettings);
+  saveLocalStorageData();
+  showGreenToast('Company details saved');
+}
+
+/** Working in whole pence so the figures always add up exactly */
+function ciCalc(netPence, mode, rate) {
+  const vat = mode === 'standard' ? Math.round(netPence * (parseFloat(rate) || 0) / 100) : 0;
+  return { net: netPence, vat, total: netPence + vat };
+}
+
+function ciNextNumber() {
+  const nums = customerInvoices.map(i => parseInt(String(i.number).replace(/\D/g, '')) || 0);
+  const maxN = nums.length ? Math.max(...nums) : 0;
+  const start = parseInt(ciCompany().next_invoice_no) || 1;
+  return 'INV-' + String(Math.max(maxN + 1, start)).padStart(4, '0');
+}
+
+function ciAddDays(dateStr, days) {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return diaryDateKey(d);
+}
+
+function ciUpdateTotals() {
+  const net = parseInt(document.getElementById('ciNet').dataset.pence || '0');
+  const mode = document.getElementById('ciVatMode').value;
+  const rate = document.getElementById('ciVatRate').value;
+  document.getElementById('ciVatRateGroup').style.display = mode === 'standard' ? '' : 'none';
+  const c = ciCalc(net, mode, rate);
+  const row = (l, v, strong) => `<div style="display: flex; justify-content: space-between; ${strong ? 'font-weight: 800; font-size: 1.1rem; border-top: 1px solid var(--border-color); margin-top: 6px; padding-top: 6px;' : ''}"><span>${l}</span><span>${v}</span></div>`;
+  document.getElementById('ciTotals').innerHTML =
+    row('Subtotal', ciMoney(c.net)) +
+    row(mode === 'standard' ? `VAT (${parseFloat(rate) || 0}%)` : mode === 'reverse' ? 'VAT (domestic reverse charge)' : 'VAT', ciMoney(c.vat)) +
+    row('Total due', ciMoney(c.total), true);
+}
+
+function openCustomerInvoiceModal(siteId) {
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  const site = allSites.find(x => parseInt(x.id) === parseInt(siteId));
+  if (!site) return;
+  const f = computeSiteFinance(site);
+  if (f.value == null || !(f.value > 0)) { alert('Enter the Job value first. The invoice is for the project total.'); return; }
+  const co = ciCompany();
+  const today = diaryDateKey(new Date());
+  const net = document.getElementById('ciNet');
+  net.value = money(f.value);
+  net.dataset.pence = String(ciPence(f.value));
+  document.getElementById('ciSiteId').value = String(site.id);
+  document.getElementById('ciNumber').value = ciNextNumber();
+  document.getElementById('ciDate').value = today;
+  document.getElementById('ciDue').value = ciAddDays(today, co.terms_days);
+  document.getElementById('ciCustomerName').value = '';
+  document.getElementById('ciCustomerAddress').value = '';
+  document.getElementById('ciCustomerRef').value = '';
+  document.getElementById('ciSiteAddress').value = site.address || '';
+  document.getElementById('ciDescription').value = `Works at ${site.address || 'site'}`;
+  document.getElementById('ciVatMode').value = 'standard';
+  document.getElementById('ciVatRate').value = '20';
+  document.getElementById('ciNotes').value = co.note || '';
+  const warn = [];
+  if (!co.address || !co.account_no) warn.push('Add your company address and bank details in Admin Settings (Company & Invoice Details) so they print on the invoice.');
+  const already = customerInvoices.filter(i => String(i.site_id) === String(site.id));
+  if (already.length) warn.push(`Already invoiced for this job: ${already.map(i => `${i.number} (${ciMoney(i.total_pence)})`).join(', ')}.`);
+  const w = document.getElementById('ciCompanyWarn');
+  w.innerHTML = warn.map(t => `⚠️ ${diaryEsc(t)}`).join('<br>');
+  w.style.display = warn.length ? '' : 'none';
+  ciUpdateTotals();
+  openModal('modalCustInvoice');
+}
+
+async function handleCreateCustomerInvoice(e) {
+  e.preventDefault();
+  if (!isOwnerOrAdminUser(currentUser) || !db) return;
+  const val = id => (document.getElementById(id).value || '').trim();
+  const site = allSites.find(x => String(x.id) === val('ciSiteId'));
+  if (!site) return;
+  const number = val('ciNumber');
+  if (customerInvoices.some(i => String(i.number).toLowerCase() === number.toLowerCase())) { alert(`Invoice number ${number} has already been used. Please choose another.`); return; }
+  const mode = val('ciVatMode');
+  const rate = mode === 'standard' ? (parseFloat(val('ciVatRate')) || 0) : 0;
+  const calc = ciCalc(parseInt(document.getElementById('ciNet').dataset.pence || '0'), mode, rate);
+  const rec = {
+    id: 'ci_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    number, site_id: String(site.id), site_ref: formatSiteId(site.id), site_address: site.address || '',
+    customer_name: val('ciCustomerName'), customer_address: val('ciCustomerAddress'), customer_ref: val('ciCustomerRef'),
+    description: val('ciDescription'), net_pence: calc.net, vat_mode: mode, vat_rate: rate, vat_pence: calc.vat, total_pence: calc.total,
+    invoice_date: val('ciDate'), due_date: val('ciDue'), notes: val('ciNotes'),
+    company: ciCompany(),
+    created_by: currentUser.full_name, created_by_id: String(currentUser.id), created_at: new Date().toISOString()
+  };
+  const btn = document.getElementById('ciSubmit');
+  btn.disabled = true;
+  try {
+    await db.collection('customer_invoices').doc(rec.id).set(rec);
+    closeModal('modalCustInvoice');
+    try {
+      await ciDownloadPdf(rec);
+      showGreenToast(`🧾 Invoice ${rec.number} created`);
+    } catch (pdfErr) {
+      console.warn('Invoice PDF failed', pdfErr);
+      alert(`Invoice ${rec.number} was saved, but the PDF could not be made (${pdfErr.message}). You can download it again from "Invoices raised".`);
+    }
+  } catch (err) {
+    console.warn('Invoice save failed', err);
+    alert('Sorry, the invoice could not be saved. Please check your connection and try again.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function ciImageSize(dataUrl) {
+  return new Promise(resolve => {
+    const i = new Image();
+    i.onload = () => resolve({ w: i.naturalWidth, h: i.naturalHeight });
+    i.onerror = () => resolve(null);
+    i.src = dataUrl;
+  });
+}
+
+async function ciBuildPdf(inv) {
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') throw new Error('the PDF library is still loading, please try again');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const navy = [15, 23, 42], grey = [100, 116, 139], line = [203, 213, 225];
+  const W = 210, M = 15, R = W - M;
+  const co = inv.company || ciCompany();
+  const lines = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
+
+  // ---- letterhead ----
+  doc.setFillColor(...navy);
+  doc.rect(0, 0, W, 5, 'F');
+  const logo = await getLogoBase64();
+  if (logo) {
+    const sz = await ciImageSize(logo);
+    const maxW = 62, maxH = 28;
+    let w = maxW, h = maxH;
+    if (sz && sz.w && sz.h) { const ar = sz.w / sz.h; if (ar > maxW / maxH) { w = maxW; h = maxW / ar; } else { h = maxH; w = maxH * ar; } }
+    try { doc.addImage(logo, 'PNG', M, 13, w, h, undefined, 'FAST'); } catch (e) { console.warn('Logo not added to invoice', e); }
+  }
+  let y = 16;
+  doc.setTextColor(...navy);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  doc.text(co.name || 'GVD Contracts Ltd', R, y, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+  const head = [...lines(co.address)];
+  if (co.phone) head.push('Tel: ' + co.phone);
+  if (co.email) head.push(co.email);
+  if (co.web) head.push(co.web);
+  head.forEach(t => { y += 4.6; doc.text(t, R, y, { align: 'right' }); });
+  const reg = [];
+  if (co.reg_no) reg.push('Company No. ' + co.reg_no);
+  if (co.vat_no) reg.push('VAT No. ' + co.vat_no);
+  if (reg.length) { y += 5.2; doc.setFontSize(8); doc.text(reg.join('   |   '), R, y, { align: 'right' }); }
+  const headEnd = Math.max(y, 13 + 28) + 6;
+  doc.setDrawColor(...line); doc.setLineWidth(0.4); doc.line(M, headEnd, R, headEnd);
+
+  // ---- title + invoice details ----
+  doc.setTextColor(...navy); doc.setFont('helvetica', 'bold'); doc.setFontSize(26);
+  doc.text('INVOICE', M, headEnd + 15);
+  const meta = [['Invoice no.', inv.number], ['Invoice date', formatUKDate(inv.invoice_date)], ['Due date', formatUKDate(inv.due_date)]];
+  if (inv.customer_ref) meta.push(['Your ref', inv.customer_ref]);
+  let my = headEnd + 9;
+  meta.forEach(([l, v]) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+    doc.text(l, 135, my);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...navy);
+    doc.text(String(v), R, my, { align: 'right' });
+    my += 6;
+  });
+
+  // ---- bill to / project ----
+  let by = Math.max(headEnd + 28, my + 4);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...grey);
+  doc.text('BILL TO', M, by);
+  doc.text('PROJECT / SITE', 112, by);
+  doc.setFontSize(11); doc.setTextColor(...navy);
+  let ly = by + 6;
+  doc.text(inv.customer_name || '', M, ly);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60, 72, 90);
+  lines(inv.customer_address).forEach(t => { ly += 5; doc.splitTextToSize(t, 90).forEach((p, i) => { if (i) ly += 5; doc.text(p, M, ly); }); });
+  let ry = by + 6;
+  doc.splitTextToSize(inv.site_address || '', 83).forEach((p, i) => { if (i) ry += 5; doc.text(p, 112, ry); });
+  const blockEnd = Math.max(ly, ry) + 10;
+
+  // ---- line item ----
+  doc.autoTable({
+    startY: blockEnd,
+    head: [['Description', 'Amount']],
+    body: [[inv.description || '', ciMoney(inv.net_pence)]],
+    theme: 'grid',
+    margin: { left: M, right: M },
+    headStyles: { fillColor: navy, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 10, cellPadding: 4 },
+    styles: { fontSize: 10, cellPadding: 5, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2, overflow: 'linebreak' },
+    columnStyles: { 1: { cellWidth: 38, halign: 'right', fontStyle: 'bold' } },
+    didParseCell: d => { if (d.section === 'head' && d.column.index === 1) d.cell.styles.halign = 'right'; }
+  });
+
+  let ty = doc.lastAutoTable.finalY + 8;
+  const ensure = h => { if (ty + h > 272) { doc.addPage(); ty = 20; } };
+  ensure(40);
+  const vatLabel = inv.vat_mode === 'standard' ? `VAT (${inv.vat_rate}%)` : inv.vat_mode === 'reverse' ? 'VAT (domestic reverse charge)' : 'VAT';
+  const trow = (l, v) => { doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60, 72, 90); doc.text(l, 120, ty); doc.text(v, R, ty, { align: 'right' }); ty += 7; };
+  trow('Subtotal', ciMoney(inv.net_pence));
+  trow(vatLabel, ciMoney(inv.vat_pence));
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(116, ty - 5, R - 116, 11, 1.5, 1.5, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+  doc.text('Total due', 120, ty + 2);
+  doc.text(ciMoney(inv.total_pence), R - 3, ty + 2, { align: 'right' });
+  ty += 16;
+  if (inv.vat_mode === 'reverse') {
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...grey);
+    const t = doc.splitTextToSize('Domestic reverse charge: the customer is required to account to HMRC for the VAT due on this supply.', R - M);
+    doc.text(t, M, ty); ty += t.length * 4.5 + 4;
+  }
+
+  // ---- payment details ----
+  const pay = [];
+  if (co.bank_name) pay.push(['Bank', co.bank_name]);
+  if (co.account_name) pay.push(['Account name', co.account_name]);
+  if (co.sort_code) pay.push(['Sort code', co.sort_code]);
+  if (co.account_no) pay.push(['Account number', co.account_no]);
+  pay.push(['Payment reference', inv.number]);
+  ensure(12 + pay.length * 6);
+  doc.setDrawColor(...line); doc.setLineWidth(0.3);
+  const boxH = 12 + pay.length * 6;
+  doc.roundedRect(M, ty, R - M, boxH, 2, 2, 'S');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...grey);
+  doc.text('PAYMENT DETAILS', M + 4, ty + 6);
+  let py = ty + 12;
+  pay.forEach(([l, v]) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey); doc.text(l, M + 4, py);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(...navy); doc.text(String(v), M + 46, py);
+    py += 6;
+  });
+  ty += boxH + 8;
+
+  // ---- terms + notes ----
+  const days = Math.max(0, Math.round((new Date(inv.due_date) - new Date(inv.invoice_date)) / 86400000));
+  const terms = [`Payment terms: ${days} day${days === 1 ? '' : 's'} from the date of invoice. Payment due by ${formatUKDate(inv.due_date)}.`];
+  if (inv.notes) terms.push(inv.notes);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(60, 72, 90);
+  terms.forEach(t => {
+    const wrapped = doc.splitTextToSize(t, R - M);
+    ensure(wrapped.length * 4.5 + 3);
+    doc.text(wrapped, M, ty);
+    ty += wrapped.length * 4.5 + 3;
+  });
+
+  // ---- footer on every page ----
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...line); doc.setLineWidth(0.3); doc.line(M, 284, R, 284);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...grey);
+    doc.text([co.name, ...reg].filter(Boolean).join('  |  '), W / 2, 289, { align: 'center' });
+    if (pages > 1) doc.text(`Page ${p} of ${pages}`, R, 289, { align: 'right' });
+  }
+  return doc;
+}
+
+async function ciDownloadPdf(inv) {
+  const doc = await ciBuildPdf(inv);
+  const safe = String(inv.site_address || 'job').replace(/[^A-Za-z0-9 ]+/g, '').trim().slice(0, 40);
+  doc.save(`Invoice ${inv.number} - ${safe}.pdf`);
+}
+
+function setupCustomerInvoiceListeners() {
+  const form = document.getElementById('custInvoiceForm');
+  if (!form) return;
+  form.addEventListener('submit', handleCreateCustomerInvoice);
+  document.getElementById('ciVatMode').addEventListener('change', ciUpdateTotals);
+  document.getElementById('ciVatRate').addEventListener('input', ciUpdateTotals);
+  document.getElementById('ciDate').addEventListener('change', e => {
+    if (e.target.value) document.getElementById('ciDue').value = ciAddDays(e.target.value, ciCompany().terms_days);
+  });
+  const co = document.getElementById('settingsCompanyForm');
+  if (co) co.addEventListener('submit', handleSaveCompany);
 }
 
 // -------------------------------------------------------------------
@@ -5540,6 +5860,10 @@ function startFinanceSync() {
     financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
   }, warn('finance_costs')));
+  financeUnsubs.push(db.collection('customer_invoices').onSnapshot(snap => {
+    customerInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    refreshFinanceViews();
+  }, warn('customer_invoices')));
   financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
     financePay = {};
@@ -5559,6 +5883,7 @@ function stopFinanceSync() {
   financeCosts = [];
   financeRates = {};
   financePay = {};
+  customerInvoices = [];
 }
 
 let uiRefreshPending = false;
@@ -5716,7 +6041,16 @@ function renderSiteFinance(site) {
         <input type="text" inputmode="decimal" autocomplete="off" id="finJobValue" class="form-control" step="0.01" min="0" value="${f.value != null ? f.value : ''}" placeholder="e.g. 10000" style="width: 180px;">
       </div>
       ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the job value to see profit and margin.</p>' : ''}
+      ${isOwnerOrAdminUser(currentUser) ? `<div style="margin-top: 12px;"><button type="button" class="btn btn-primary" id="finCreateInvoice" style="width: auto;">🧾 Create invoice for ${f.value != null ? money(f.value) : 'the job'}</button></div>` : ''}
     </div>
+    ${(() => {
+      const invs = customerInvoices.filter(i => String(i.site_id) === String(site.id)).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      if (!invs.length) return '';
+      return `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Invoices raised</h4><table class="planner-table" style="min-width: 0;"><tbody>${invs.map(i => `<tr>
+        <td><strong>${diaryEsc(i.number)}</strong><div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(formatUKDate(i.invoice_date))} · ${diaryEsc(i.customer_name)}</div></td>
+        <td style="text-align: right; white-space: nowrap;">${money((i.total_pence || 0) / 100)}</td>
+        <td style="text-align: right;"><button type="button" class="btn btn-outline btn-sm ci-download" data-id="${diaryEsc(i.id)}" style="padding: 2px 10px;">PDF</button></td></tr>`).join('')}</tbody></table></div>`;
+    })()}
 
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px;">
       <div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">JOB VALUE</div><div style="font-size: 1.3rem; font-weight: 800;">${f.value != null ? money(f.value) : '-'}</div></div>
@@ -5758,6 +6092,12 @@ function renderSiteFinance(site) {
     </div>`;
 
   host.querySelector('#finJobValue').addEventListener('change', ev => saveJobValue(site.id, ev.target.value));
+  const ciBtn = host.querySelector('#finCreateInvoice');
+  if (ciBtn) ciBtn.addEventListener('click', () => openCustomerInvoiceModal(site.id));
+  host.querySelectorAll('.ci-download').forEach(b => b.addEventListener('click', () => {
+    const rec = customerInvoices.find(x => x.id === b.dataset.id);
+    if (rec) ciDownloadPdf(rec).catch(e => alert('Could not create the PDF: ' + e.message));
+  }));
   host.querySelector('#finSiteCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(site.id, host.querySelector('#finSiteCostDesc').value, host.querySelector('#finSiteCostCategory').value,

@@ -611,6 +611,31 @@
         </form>
       </div>
 
+      <!-- Company & invoice details (letterhead for customer invoices) -->
+      <div class="site-card" style="margin-bottom: 24px;">
+        <h3 style="margin-bottom: 6px;">Company &amp; Invoice Details</h3>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;">Printed on the letterhead of customer invoices. Fill in once.</p>
+        <form id="settingsCompanyForm">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 16px;">
+            <div class="form-group"><label for="coName">Company name</label><input type="text" id="coName" class="form-control" placeholder="GVD Contracts Ltd"></div>
+            <div class="form-group"><label for="coPhone">Phone</label><input type="tel" id="coPhone" class="form-control"></div>
+            <div class="form-group"><label for="coEmail">Email</label><input type="email" id="coEmail" class="form-control"></div>
+            <div class="form-group"><label for="coWeb">Website</label><input type="text" id="coWeb" class="form-control" placeholder="www.example.com"></div>
+            <div class="form-group" style="grid-column: 1 / -1;"><label for="coAddress">Company address (one line per row)</label><textarea id="coAddress" class="form-control" rows="3"></textarea></div>
+            <div class="form-group"><label for="coRegNo">Company registration no.</label><input type="text" id="coRegNo" class="form-control"></div>
+            <div class="form-group"><label for="coVatNo">VAT registration no.</label><input type="text" id="coVatNo" class="form-control"></div>
+            <div class="form-group"><label for="coBankName">Bank</label><input type="text" id="coBankName" class="form-control"></div>
+            <div class="form-group"><label for="coAccName">Account name</label><input type="text" id="coAccName" class="form-control"></div>
+            <div class="form-group"><label for="coSortCode">Sort code</label><input type="text" id="coSortCode" class="form-control" placeholder="00-00-00"></div>
+            <div class="form-group"><label for="coAccNo">Account number</label><input type="text" id="coAccNo" class="form-control"></div>
+            <div class="form-group"><label for="coTermsDays">Payment terms (days)</label><input type="number" id="coTermsDays" class="form-control" min="0" placeholder="30"></div>
+            <div class="form-group"><label for="coNextNo">Next invoice number (optional)</label><input type="number" id="coNextNo" class="form-control" min="1" placeholder="e.g. 1001"></div>
+            <div class="form-group" style="grid-column: 1 / -1;"><label for="coNote">Standard note printed on every invoice (optional)</label><textarea id="coNote" class="form-control" rows="2" placeholder="e.g. Thank you for your business."></textarea></div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" style="width: auto;">Save company details</button>
+        </form>
+      </div>
+
       <!-- Default Customer QR Admin Contacts Card -->
       <div class="site-card" style="margin-bottom: 24px;">
         <h3 style="margin-bottom: 8px;">Default Customer QR Admin Contacts</h3>
@@ -752,6 +777,50 @@
           <button type="submit" class="btn btn-primary">Save Shift</button>
           <button type="button" class="btn btn-danger" id="btnDeleteShift" style="display: none;">Remove Shift</button>
         </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Create customer invoice (Admin or higher) -->
+  <div class="modal-overlay" id="modalCustInvoice">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Create invoice</h3>
+        <button class="close-btn" data-close="modalCustInvoice">&times;</button>
+      </div>
+      <form id="custInvoiceForm">
+        <input type="hidden" id="ciSiteId">
+        <div id="ciCompanyWarn" style="display: none; color: var(--warning); font-size: 0.85rem; margin-bottom: 10px;"></div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciNumber">Invoice number</label><input type="text" id="ciNumber" class="form-control" required></div>
+          <div class="form-group"><label for="ciDate">Invoice date</label><input type="date" id="ciDate" class="form-control" required></div>
+          <div class="form-group"><label for="ciDue">Due date</label><input type="date" id="ciDue" class="form-control" required></div>
+        </div>
+        <div class="form-group"><label for="ciCustomerName">Customer name</label><input type="text" id="ciCustomerName" class="form-control" required placeholder="Who is being invoiced"></div>
+        <div class="form-group"><label for="ciCustomerAddress">Customer address</label><textarea id="ciCustomerAddress" class="form-control" rows="3" placeholder="One line per row"></textarea></div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciCustomerRef">Customer PO / reference (optional)</label><input type="text" id="ciCustomerRef" class="form-control"></div>
+          <div class="form-group"><label for="ciSiteAddress">Project / site</label><input type="text" id="ciSiteAddress" class="form-control" readonly></div>
+        </div>
+        <div class="form-group"><label for="ciDescription">Description of works</label><textarea id="ciDescription" class="form-control" rows="3" required></textarea></div>
+        <div class="form-group">
+          <label for="ciNet">Project total (ex VAT)</label>
+          <input type="text" id="ciNet" class="form-control" readonly>
+          <small style="color: var(--text-muted);">This is the Job value on the site's Finance tab. Change it there if it is wrong.</small>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciVatMode">VAT</label>
+            <select id="ciVatMode" class="form-control">
+              <option value="standard">Standard rate</option>
+              <option value="none">No VAT</option>
+              <option value="reverse">Domestic reverse charge (CIS)</option>
+            </select>
+          </div>
+          <div class="form-group" id="ciVatRateGroup"><label for="ciVatRate">VAT rate %</label><input type="number" id="ciVatRate" class="form-control" value="20" min="0" max="100" step="0.1"></div>
+        </div>
+        <div id="ciTotals" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; margin: 6px 0 14px;"></div>
+        <div class="form-group"><label for="ciNotes">Notes (optional)</label><textarea id="ciNotes" class="form-control" rows="2"></textarea></div>
+        <button type="submit" class="btn btn-primary" id="ciSubmit">🧾 Create invoice &amp; download PDF</button>
       </form>
     </div>
   </div>
@@ -1058,6 +1127,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=54.0"></script>
+  <script src="/app.js?v=55.0"></script>
 </body>
 </html>
