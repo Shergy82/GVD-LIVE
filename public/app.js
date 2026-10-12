@@ -398,6 +398,9 @@ function hashSimple(str) {
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
+  setupFeedbackListeners();
+  setupChatListeners();
+  setupCustomerInvoiceListeners();
   registerServiceWorker();
 
   initFirestoreSync();
@@ -479,6 +482,8 @@ function onUserAuthenticated() {
   updateCleanPushUI();
   if (isManagerOrHigher) startDiarySync();
   startPOSync();
+  startFeedbackSync();
+  startChatSync();
   if (isManagerOrHigher) startFinanceSync();
 
   if (isManagerOrHigher) {
@@ -600,6 +605,10 @@ function renderActiveView() {
     renderInvoicesView();
   } else if (viewId === 'view-finance') {
     renderFinanceView();
+  } else if (viewId === 'view-feedback') {
+    renderFeedbackView();
+  } else if (viewId === 'view-chat') {
+    renderChatView(true);
   }
 }
 
@@ -2527,6 +2536,7 @@ function renderAdminSettingsView() {
   loadPushUserIds();
   updatePendingUsersBadge();
   document.getElementById('settingsAppNameInput').value = appSettings.app_name || 'GVD LIVE';
+  fillCompanyForm();
   const includeInput = document.getElementById('settingsIncludeManagementInput');
   if (includeInput) {
     includeInput.checked = appSettings.include_management_in_planning === true;
@@ -2729,27 +2739,930 @@ function loadCustomerPublicView(token) {
   document.getElementById('custPubTypeBadge').className = `site-type-badge ${(site.construction_type || '').toLowerCase()}`;
   document.getElementById('custPubTypeBadge').style.display = site.construction_type ? '' : 'none';
 
-  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
-  const container = document.getElementById('custPubShiftsContainer');
+  renderCustomerSchedule(site);
 
-  if (siteShifts.length === 0) {
-    container.innerHTML = `<p style="color: #64748b; padding: 20px;">No current works scheduled for this property.</p>`;
-  } else {
-    container.innerHTML = siteShifts.map(s => {
-      const op = allUsers.find(u => String(u.id) === String(s.operative_id));
-      const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
-      if (s.is_drying_day) {
-        return `<div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;"><strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)}</strong><div style="margin-top: 6px; font-weight: 600;">⏳ Drying Day</div></div>`;
-      }
-      return `
-        <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;">
-          <strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
-          <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? op.full_name : 'Operative'}</div>
-          <div style="margin-top: 4px; color: #475569;">Task: ${s.task}</div>
+  renderCustomerFeedbackForm(site);
+}
+
+
+let custScheduleTab = 'current';
+
+/** The customer's schedule: today and future days on the main tab; days that have passed move to "Completed" */
+function renderCustomerSchedule(site) {
+  const container = document.getElementById('custPubShiftsContainer');
+  if (!container) return;
+  const todayKey = diaryDateKey(new Date());
+  const rank = { am: 0, all_day: 1, pm: 2 };
+  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
+  const byDate = (a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (rank[a.shift_period] ?? 1) - (rank[b.shift_period] ?? 1);
+  const current = siteShifts.filter(s => (s.shift_date || '') >= todayKey).sort(byDate);
+  const completed = siteShifts.filter(s => (s.shift_date || '') < todayKey).sort((a, b) => byDate(b, a));
+
+  let tabs = document.getElementById('custPubTabs');
+  if (!tabs) {
+    tabs = document.createElement('div');
+    tabs.id = 'custPubTabs';
+    tabs.className = 'cust-tabs';
+    container.parentNode.insertBefore(tabs, container);
+    tabs.addEventListener('click', e => {
+      const b = e.target.closest('[data-cust-tab]');
+      if (!b) return;
+      custScheduleTab = b.dataset.custTab;
+      const st = allSites.find(x => x.customer_token === currentCustomerToken);
+      if (st) renderCustomerSchedule(st);
+    });
+  }
+  tabs.innerHTML = `
+    <button type="button" class="cust-tab ${custScheduleTab === 'current' ? 'active' : ''}" data-cust-tab="current">Current &amp; upcoming (${current.length})</button>
+    <button type="button" class="cust-tab ${custScheduleTab === 'completed' ? 'active' : ''}" data-cust-tab="completed">Completed (${completed.length})</button>`;
+
+  const list = custScheduleTab === 'completed' ? completed : current;
+  if (list.length === 0) {
+    container.innerHTML = `<p style="color: #64748b; padding: 20px;">${custScheduleTab === 'completed' ? 'No completed works yet.' : (siteShifts.length === 0 ? 'No current works scheduled for this property.' : 'No more works are currently scheduled.')}</p>`;
+    return;
+  }
+  const done = custScheduleTab === 'completed';
+  container.innerHTML = list.map(s => {
+    const op = allUsers.find(u => String(u.id) === String(s.operative_id));
+    const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
+    const dim = done ? 'opacity: 0.8;' : '';
+    if (s.is_drying_day) {
+      return `<div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}"><strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)}</strong><div style="margin-top: 6px; font-weight: 600;">⏳ Drying Day</div></div>`;
+    }
+    return `
+      <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}">
+        <strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
+        <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? diaryEsc(op.full_name) : 'Operative'}</div>
+        <div style="margin-top: 4px; color: #475569;">Task: ${diaryEsc(s.task)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// -------------------------------------------------------------------
+// CUSTOMER INVOICES (Admin or higher). A letterheaded PDF invoice for the project total (the job value on the Finance tab).
+// Every invoice is saved in `customer_invoices` so it can be downloaded again and numbers never repeat.
+// -------------------------------------------------------------------
+let customerInvoices = [];
+
+const ciPence = v => Math.round((parseFloat(v) || 0) * 100);
+const ciMoney = pence => money((pence || 0) / 100);
+
+function ciCompany() {
+  const c = (appSettings && appSettings.company) || {};
+  const terms = parseInt(c.terms_days);
+  return {
+    name: c.name || 'GVD Contracts Ltd', address: c.address || '', phone: c.phone || '', email: c.email || '', web: c.web || '',
+    reg_no: c.reg_no || '', vat_no: c.vat_no || '', bank_name: c.bank_name || '', account_name: c.account_name || '',
+    sort_code: c.sort_code || '', account_no: c.account_no || '', terms_days: isNaN(terms) ? 30 : terms,
+    next_invoice_no: c.next_invoice_no || '', note: c.note || ''
+  };
+}
+
+function fillCompanyForm() {
+  const c = ciCompany();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
+  set('coName', (appSettings.company || {}).name || ''); set('coAddress', c.address); set('coPhone', c.phone); set('coEmail', c.email);
+  set('coWeb', c.web); set('coRegNo', c.reg_no); set('coVatNo', c.vat_no); set('coBankName', c.bank_name); set('coAccName', c.account_name);
+  set('coSortCode', c.sort_code); set('coAccNo', c.account_no); set('coTermsDays', (appSettings.company || {}).terms_days ?? ''); set('coNextNo', c.next_invoice_no); set('coNote', c.note);
+}
+
+async function handleSaveCompany(e) {
+  e.preventDefault();
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  const v = id => (document.getElementById(id).value || '').trim();
+  appSettings.company = {
+    name: v('coName'), address: v('coAddress'), phone: v('coPhone'), email: v('coEmail'), web: v('coWeb'), reg_no: v('coRegNo'), vat_no: v('coVatNo'),
+    bank_name: v('coBankName'), account_name: v('coAccName'), sort_code: v('coSortCode'), account_no: v('coAccNo'),
+    terms_days: v('coTermsDays'), next_invoice_no: v('coNextNo'), note: v('coNote')
+  };
+  if (db) await db.collection('settings').doc('app').set(appSettings);
+  saveLocalStorageData();
+  showGreenToast('Company details saved');
+}
+
+/** Working in whole pence so the figures always add up exactly */
+function ciCalc(netPence, mode, rate) {
+  const vat = mode === 'standard' ? Math.round(netPence * (parseFloat(rate) || 0) / 100) : 0;
+  return { net: netPence, vat, total: netPence + vat };
+}
+
+function ciNextNumber() {
+  const nums = customerInvoices.map(i => parseInt(String(i.number).replace(/\D/g, '')) || 0);
+  const maxN = nums.length ? Math.max(...nums) : 0;
+  const start = parseInt(ciCompany().next_invoice_no) || 1;
+  return 'INV-' + String(Math.max(maxN + 1, start)).padStart(4, '0');
+}
+
+function ciAddDays(dateStr, days) {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return diaryDateKey(d);
+}
+
+function ciUpdateTotals() {
+  const net = parseInt(document.getElementById('ciNet').dataset.pence || '0');
+  const mode = document.getElementById('ciVatMode').value;
+  const rate = document.getElementById('ciVatRate').value;
+  document.getElementById('ciVatRateGroup').style.display = mode === 'standard' ? '' : 'none';
+  const c = ciCalc(net, mode, rate);
+  const row = (l, v, strong) => `<div style="display: flex; justify-content: space-between; ${strong ? 'font-weight: 800; font-size: 1.1rem; border-top: 1px solid var(--border-color); margin-top: 6px; padding-top: 6px;' : ''}"><span>${l}</span><span>${v}</span></div>`;
+  document.getElementById('ciTotals').innerHTML =
+    row('Subtotal', ciMoney(c.net)) +
+    row(mode === 'standard' ? `VAT (${parseFloat(rate) || 0}%)` : mode === 'reverse' ? 'VAT (domestic reverse charge)' : 'VAT', ciMoney(c.vat)) +
+    row('Total due', ciMoney(c.total), true);
+}
+
+function openCustomerInvoiceModal(siteId) {
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  const site = allSites.find(x => parseInt(x.id) === parseInt(siteId));
+  if (!site) return;
+  const f = computeSiteFinance(site);
+  if (f.value == null || !(f.value > 0)) { alert('Enter the Job value first. The invoice is for the project total.'); return; }
+  const co = ciCompany();
+  const today = diaryDateKey(new Date());
+  const net = document.getElementById('ciNet');
+  net.value = money(f.value);
+  net.dataset.pence = String(ciPence(f.value));
+  document.getElementById('ciSiteId').value = String(site.id);
+  document.getElementById('ciNumber').value = ciNextNumber();
+  document.getElementById('ciDate').value = today;
+  document.getElementById('ciDue').value = ciAddDays(today, co.terms_days);
+  document.getElementById('ciCustomerName').value = '';
+  document.getElementById('ciCustomerAddress').value = '';
+  document.getElementById('ciCustomerRef').value = '';
+  document.getElementById('ciSiteAddress').value = site.address || '';
+  document.getElementById('ciDescription').value = `Works at ${site.address || 'site'}`;
+  document.getElementById('ciVatMode').value = 'standard';
+  document.getElementById('ciVatRate').value = '20';
+  document.getElementById('ciNotes').value = co.note || '';
+  const warn = [];
+  if (!co.address || !co.account_no) warn.push('Add your company address and bank details in Admin Settings (Company & Invoice Details) so they print on the invoice.');
+  const already = customerInvoices.filter(i => String(i.site_id) === String(site.id));
+  if (already.length) warn.push(`Already invoiced for this job: ${already.map(i => `${i.number} (${ciMoney(i.total_pence)})`).join(', ')}.`);
+  const w = document.getElementById('ciCompanyWarn');
+  w.innerHTML = warn.map(t => `⚠️ ${diaryEsc(t)}`).join('<br>');
+  w.style.display = warn.length ? '' : 'none';
+  ciUpdateTotals();
+  openModal('modalCustInvoice');
+}
+
+async function handleCreateCustomerInvoice(e) {
+  e.preventDefault();
+  if (!isOwnerOrAdminUser(currentUser) || !db) return;
+  const val = id => (document.getElementById(id).value || '').trim();
+  const site = allSites.find(x => String(x.id) === val('ciSiteId'));
+  if (!site) return;
+  const number = val('ciNumber');
+  if (customerInvoices.some(i => String(i.number).toLowerCase() === number.toLowerCase())) { alert(`Invoice number ${number} has already been used. Please choose another.`); return; }
+  const mode = val('ciVatMode');
+  const rate = mode === 'standard' ? (parseFloat(val('ciVatRate')) || 0) : 0;
+  const calc = ciCalc(parseInt(document.getElementById('ciNet').dataset.pence || '0'), mode, rate);
+  const rec = {
+    id: 'ci_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    number, site_id: String(site.id), site_ref: formatSiteId(site.id), site_address: site.address || '',
+    customer_name: val('ciCustomerName'), customer_address: val('ciCustomerAddress'), customer_ref: val('ciCustomerRef'),
+    description: val('ciDescription'), net_pence: calc.net, vat_mode: mode, vat_rate: rate, vat_pence: calc.vat, total_pence: calc.total,
+    invoice_date: val('ciDate'), due_date: val('ciDue'), notes: val('ciNotes'),
+    company: ciCompany(),
+    created_by: currentUser.full_name, created_by_id: String(currentUser.id), created_at: new Date().toISOString()
+  };
+  const btn = document.getElementById('ciSubmit');
+  btn.disabled = true;
+  try {
+    await db.collection('customer_invoices').doc(rec.id).set(rec);
+    closeModal('modalCustInvoice');
+    try {
+      await ciDownloadPdf(rec);
+      showGreenToast(`🧾 Invoice ${rec.number} created`);
+    } catch (pdfErr) {
+      console.warn('Invoice PDF failed', pdfErr);
+      alert(`Invoice ${rec.number} was saved, but the PDF could not be made (${pdfErr.message}). You can download it again from "Invoices raised".`);
+    }
+  } catch (err) {
+    console.warn('Invoice save failed', err);
+    alert('Sorry, the invoice could not be saved. Please check your connection and try again.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function ciImageSize(dataUrl) {
+  return new Promise(resolve => {
+    const i = new Image();
+    i.onload = () => resolve({ w: i.naturalWidth, h: i.naturalHeight });
+    i.onerror = () => resolve(null);
+    i.src = dataUrl;
+  });
+}
+
+async function ciBuildPdf(inv) {
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') throw new Error('the PDF library is still loading, please try again');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const navy = [15, 23, 42], grey = [100, 116, 139], line = [203, 213, 225];
+  const W = 210, M = 15, R = W - M;
+  const co = inv.company || ciCompany();
+  const lines = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
+
+  // ---- letterhead ----
+  doc.setFillColor(...navy);
+  doc.rect(0, 0, W, 5, 'F');
+  const logo = await getLogoBase64();
+  if (logo) {
+    const sz = await ciImageSize(logo);
+    const maxW = 62, maxH = 28;
+    let w = maxW, h = maxH;
+    if (sz && sz.w && sz.h) { const ar = sz.w / sz.h; if (ar > maxW / maxH) { w = maxW; h = maxW / ar; } else { h = maxH; w = maxH * ar; } }
+    try { doc.addImage(logo, 'PNG', M, 13, w, h, undefined, 'FAST'); } catch (e) { console.warn('Logo not added to invoice', e); }
+  }
+  let y = 16;
+  doc.setTextColor(...navy);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  doc.text(co.name || 'GVD Contracts Ltd', R, y, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+  const head = [...lines(co.address)];
+  if (co.phone) head.push('Tel: ' + co.phone);
+  if (co.email) head.push(co.email);
+  if (co.web) head.push(co.web);
+  head.forEach(t => { y += 4.6; doc.text(t, R, y, { align: 'right' }); });
+  const reg = [];
+  if (co.reg_no) reg.push('Company No. ' + co.reg_no);
+  if (co.vat_no) reg.push('VAT No. ' + co.vat_no);
+  if (reg.length) { y += 5.2; doc.setFontSize(8); doc.text(reg.join('   |   '), R, y, { align: 'right' }); }
+  const headEnd = Math.max(y, 13 + 28) + 6;
+  doc.setDrawColor(...line); doc.setLineWidth(0.4); doc.line(M, headEnd, R, headEnd);
+
+  // ---- title + invoice details ----
+  doc.setTextColor(...navy); doc.setFont('helvetica', 'bold'); doc.setFontSize(26);
+  doc.text('INVOICE', M, headEnd + 15);
+  const meta = [['Invoice no.', inv.number], ['Invoice date', formatUKDate(inv.invoice_date)], ['Due date', formatUKDate(inv.due_date)]];
+  if (inv.customer_ref) meta.push(['Your ref', inv.customer_ref]);
+  let my = headEnd + 9;
+  meta.forEach(([l, v]) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+    doc.text(l, 135, my);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...navy);
+    doc.text(String(v), R, my, { align: 'right' });
+    my += 6;
+  });
+
+  // ---- bill to / project ----
+  let by = Math.max(headEnd + 28, my + 4);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...grey);
+  doc.text('BILL TO', M, by);
+  doc.text('PROJECT / SITE', 112, by);
+  doc.setFontSize(11); doc.setTextColor(...navy);
+  let ly = by + 6;
+  doc.text(inv.customer_name || '', M, ly);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60, 72, 90);
+  lines(inv.customer_address).forEach(t => { ly += 5; doc.splitTextToSize(t, 90).forEach((p, i) => { if (i) ly += 5; doc.text(p, M, ly); }); });
+  let ry = by + 6;
+  doc.splitTextToSize(inv.site_address || '', 83).forEach((p, i) => { if (i) ry += 5; doc.text(p, 112, ry); });
+  const blockEnd = Math.max(ly, ry) + 10;
+
+  // ---- line item ----
+  doc.autoTable({
+    startY: blockEnd,
+    head: [['Description', 'Amount']],
+    body: [[inv.description || '', ciMoney(inv.net_pence)]],
+    theme: 'grid',
+    margin: { left: M, right: M },
+    headStyles: { fillColor: navy, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 10, cellPadding: 4 },
+    styles: { fontSize: 10, cellPadding: 5, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2, overflow: 'linebreak' },
+    columnStyles: { 1: { cellWidth: 38, halign: 'right', fontStyle: 'bold' } },
+    didParseCell: d => { if (d.section === 'head' && d.column.index === 1) d.cell.styles.halign = 'right'; }
+  });
+
+  let ty = doc.lastAutoTable.finalY + 8;
+  const ensure = h => { if (ty + h > 272) { doc.addPage(); ty = 20; } };
+  ensure(40);
+  const vatLabel = inv.vat_mode === 'standard' ? `VAT (${inv.vat_rate}%)` : inv.vat_mode === 'reverse' ? 'VAT (domestic reverse charge)' : 'VAT';
+  const trow = (l, v) => { doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60, 72, 90); doc.text(l, 120, ty); doc.text(v, R, ty, { align: 'right' }); ty += 7; };
+  trow('Subtotal', ciMoney(inv.net_pence));
+  trow(vatLabel, ciMoney(inv.vat_pence));
+  doc.setFillColor(241, 245, 249);
+  doc.roundedRect(116, ty - 5, R - 116, 11, 1.5, 1.5, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+  doc.text('Total due', 120, ty + 2);
+  doc.text(ciMoney(inv.total_pence), R - 3, ty + 2, { align: 'right' });
+  ty += 16;
+  if (inv.vat_mode === 'reverse') {
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...grey);
+    const t = doc.splitTextToSize('Domestic reverse charge: the customer is required to account to HMRC for the VAT due on this supply.', R - M);
+    doc.text(t, M, ty); ty += t.length * 4.5 + 4;
+  }
+
+  // ---- payment details ----
+  const pay = [];
+  if (co.bank_name) pay.push(['Bank', co.bank_name]);
+  if (co.account_name) pay.push(['Account name', co.account_name]);
+  if (co.sort_code) pay.push(['Sort code', co.sort_code]);
+  if (co.account_no) pay.push(['Account number', co.account_no]);
+  pay.push(['Payment reference', inv.number]);
+  ensure(12 + pay.length * 6);
+  doc.setDrawColor(...line); doc.setLineWidth(0.3);
+  const boxH = 12 + pay.length * 6;
+  doc.roundedRect(M, ty, R - M, boxH, 2, 2, 'S');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...grey);
+  doc.text('PAYMENT DETAILS', M + 4, ty + 6);
+  let py = ty + 12;
+  pay.forEach(([l, v]) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey); doc.text(l, M + 4, py);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(...navy); doc.text(String(v), M + 46, py);
+    py += 6;
+  });
+  ty += boxH + 8;
+
+  // ---- terms + notes ----
+  const days = Math.max(0, Math.round((new Date(inv.due_date) - new Date(inv.invoice_date)) / 86400000));
+  const terms = [`Payment terms: ${days} day${days === 1 ? '' : 's'} from the date of invoice. Payment due by ${formatUKDate(inv.due_date)}.`];
+  if (inv.notes) terms.push(inv.notes);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(60, 72, 90);
+  terms.forEach(t => {
+    const wrapped = doc.splitTextToSize(t, R - M);
+    ensure(wrapped.length * 4.5 + 3);
+    doc.text(wrapped, M, ty);
+    ty += wrapped.length * 4.5 + 3;
+  });
+
+  // ---- footer on every page ----
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...line); doc.setLineWidth(0.3); doc.line(M, 284, R, 284);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...grey);
+    doc.text([co.name, ...reg].filter(Boolean).join('  |  '), W / 2, 289, { align: 'center' });
+    if (pages > 1) doc.text(`Page ${p} of ${pages}`, R, 289, { align: 'right' });
+  }
+  return doc;
+}
+
+async function ciDownloadPdf(inv) {
+  const doc = await ciBuildPdf(inv);
+  const safe = String(inv.site_address || 'job').replace(/[^A-Za-z0-9 ]+/g, '').trim().slice(0, 40);
+  doc.save(`Invoice ${inv.number} - ${safe}.pdf`);
+}
+
+function setupCustomerInvoiceListeners() {
+  const form = document.getElementById('custInvoiceForm');
+  if (!form) return;
+  form.addEventListener('submit', handleCreateCustomerInvoice);
+  document.getElementById('ciVatMode').addEventListener('change', ciUpdateTotals);
+  document.getElementById('ciVatRate').addEventListener('input', ciUpdateTotals);
+  document.getElementById('ciDate').addEventListener('change', e => {
+    if (e.target.value) document.getElementById('ciDue').value = ciAddDays(e.target.value, ciCompany().terms_days);
+  });
+  const co = document.getElementById('settingsCompanyForm');
+  if (co) co.addEventListener('submit', handleSaveCompany);
+}
+
+// -------------------------------------------------------------------
+// CUSTOMER FEEDBACK
+// Customers leave feedback from the QR code page (no login). Every registered user can read it in the Feedback page;
+// only Owners / Admins / Managers can remove comments (a copy is kept in feedback_removed).
+// -------------------------------------------------------------------
+let allFeedback = [];
+let feedbackUnsub = null;
+let fbFilter = 'all';
+let fbPageOpenedAt = Date.now();
+
+const FB_LABELS = { 1: 'Poor', 2: 'Not great', 3: 'Okay', 4: 'Good', 5: 'Excellent' };
+const fbSentiment = r => (r >= 4 ? 'pos' : r === 3 ? 'neu' : 'neg');
+const fbStars = r => `<span class="fb-stars" aria-label="${r} out of 5 stars">${'★'.repeat(r)}<span class="off">${'★'.repeat(5 - r)}</span></span>`;
+const fbDate = iso => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+
+function startFeedbackSync() {
+  if (feedbackUnsub || !db || !currentUser) return;
+  feedbackUnsub = db.collection('feedback').onSnapshot(snapshot => {
+    allFeedback = snapshot.docs.map(d => ({ ...d.data(), id: d.id }))
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    const v = document.getElementById('view-feedback');
+    if (v && v.style.display !== 'none') renderFeedbackView();
+  }, err => console.warn('Firestore feedback error:', err));
+}
+
+function stopFeedbackSync() {
+  if (feedbackUnsub) feedbackUnsub();
+  feedbackUnsub = null;
+  allFeedback = [];
+}
+
+/** The customer's form, shown under the live schedule on the QR code page */
+function renderCustomerFeedbackForm(site) {
+  const host = document.querySelector('#view-customer-public .customer-print-preview');
+  if (!host || document.getElementById('custFeedbackCard')) return; // already there: never redraw while they are typing
+  const card = document.createElement('div');
+  card.id = 'custFeedbackCard';
+  card.className = 'fb-public-card';
+  host.appendChild(card);
+  fbPageOpenedAt = Date.now();
+  drawCustomerFeedbackForm(site, card);
+  if (new URLSearchParams(window.location.search).get('feedback')) card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function drawCustomerFeedbackForm(site, card) {
+  card.innerHTML = `
+    <div class="fb-public-title">How did we do?</div>
+    <p class="fb-public-sub">We would love to hear about your experience with us at <strong>${diaryEsc(site.address)}</strong>. Your feedback helps us recognise great work and keep improving.</p>
+    <div class="fb-stars-input" role="radiogroup" aria-label="Your rating">
+      ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="fb-star-btn" data-star="${n}" role="radio" aria-checked="false" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}
+    </div>
+    <div class="fb-rating-label" id="fbRatingLabel">Tap a star to rate us</div>
+    <div class="fb-grid">
+      <label class="fb-field">Your name *<input type="text" id="fbName" maxlength="80" autocomplete="name"></label>
+      <label class="fb-field">Property address *<input type="text" id="fbAddress" maxlength="200" autocomplete="street-address" value="${diaryEsc(site.address)}"></label>
+      <label class="fb-field">Email (optional)<input type="email" id="fbEmail" maxlength="120" autocomplete="email"></label>
+      <label class="fb-field">Phone (optional)<input type="tel" id="fbPhone" maxlength="30" autocomplete="tel"></label>
+      <label class="fb-field wide">Your feedback *<textarea id="fbComment" rows="5" maxlength="2000" placeholder="Tell us what went well, or what we could do better..."></textarea></label>
+    </div>
+    <label class="fb-consent"><input type="checkbox" id="fbConsent"> <span>I am happy for my name, address and comments to be recorded with this feedback and shared with the GVD team.</span></label>
+    <input type="text" id="fbWebsite" class="fb-hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div class="fb-error" id="fbError" role="alert"></div>
+    <button type="button" class="fb-submit" id="fbSubmit">Send feedback</button>`;
+
+  let rating = 0;
+  const label = card.querySelector('#fbRatingLabel');
+  const paint = n => card.querySelectorAll('.fb-star-btn').forEach(b => {
+    const on = parseInt(b.dataset.star) <= n;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', String(parseInt(b.dataset.star) === rating));
+  });
+  card.querySelectorAll('.fb-star-btn').forEach(b => {
+    b.addEventListener('click', () => { rating = parseInt(b.dataset.star); paint(rating); label.textContent = `${rating} star${rating > 1 ? 's' : ''} - ${FB_LABELS[rating]}`; });
+    b.addEventListener('mouseenter', () => paint(parseInt(b.dataset.star)));
+    b.addEventListener('mouseleave', () => paint(rating));
+  });
+
+  card.querySelector('#fbSubmit').addEventListener('click', async () => {
+    const val = id => (card.querySelector('#' + id).value || '').trim();
+    const err = card.querySelector('#fbError');
+    const fail = m => { err.textContent = m; };
+    fail('');
+    if (card.querySelector('#fbWebsite').value) return; // spam trap: real people never see this box
+    if (!rating) return fail('Please tap a star to rate us.');
+    if (!val('fbName')) return fail('Please enter your name.');
+    if (!val('fbAddress')) return fail('Please enter the property address.');
+    if (val('fbComment').length < 5) return fail('Please tell us a little about your experience.');
+    if (val('fbEmail') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val('fbEmail'))) return fail('That email address does not look right.');
+    if (!card.querySelector('#fbConsent').checked) return fail('Please tick the box to confirm you are happy for us to record your feedback.');
+    if (Date.now() - fbPageOpenedAt < 4000) return fail('Please take a moment to check your answers, then press Send again.');
+    const last = parseInt(localStorage.getItem('gvd_fb_last') || '0');
+    if (Date.now() - last < 30000) return fail('Your feedback has just been sent. Thank you!');
+
+    const btn = card.querySelector('#fbSubmit');
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    try {
+      await db.collection('feedback').add({
+        site_id: String(site.id),
+        site_ref: formatSiteId(site.id),
+        site_address: site.address,
+        rating,
+        sentiment: fbSentiment(rating),
+        comment: val('fbComment').slice(0, 2000),
+        customer_name: val('fbName').slice(0, 80),
+        customer_address: val('fbAddress').slice(0, 200),
+        customer_email: val('fbEmail').slice(0, 120),
+        customer_phone: val('fbPhone').slice(0, 30),
+        consent: true,
+        source: 'customer_qr',
+        created_at: new Date().toISOString()
+      });
+      localStorage.setItem('gvd_fb_last', String(Date.now()));
+      card.innerHTML = `
+        <div class="fb-thanks">
+          <div class="fb-thanks-tick">✓</div>
+          <div class="fb-public-title">Thank you, ${diaryEsc(val('fbName') || 'again')}!</div>
+          <p class="fb-public-sub">Your feedback has been sent to the team. We really appreciate you taking the time.</p>
+        </div>`;
+    } catch (e) {
+      console.warn('Feedback failed', e);
+      btn.disabled = false;
+      btn.textContent = 'Send feedback';
+      fail('Sorry, that did not send. Please check your connection and try again.');
+    }
+  });
+}
+
+/** Everything the in-app Feedback page needs, wired once */
+function setupFeedbackListeners() {
+  const view = document.getElementById('view-feedback');
+  if (!view) return;
+  view.addEventListener('click', e => {
+    const chip = e.target.closest('[data-fb-filter]');
+    if (chip) { fbFilter = chip.dataset.fbFilter; renderFeedbackView(); return; }
+    const del = e.target.closest('[data-fb-delete]');
+    if (del) deleteFeedback(del.dataset.fbDelete);
+  });
+  document.getElementById('fbSearch').addEventListener('input', renderFeedbackList);
+  document.getElementById('fbSite').addEventListener('change', renderFeedbackList);
+}
+
+function fbFiltered() {
+  const site = (document.getElementById('fbSite') || {}).value || '';
+  const q = ((document.getElementById('fbSearch') || {}).value || '').trim().toLowerCase();
+  return allFeedback.filter(f =>
+    (fbFilter === 'all' || fbSentiment(f.rating) === fbFilter) &&
+    (!site || String(f.site_id) === site) &&
+    (!q || [f.customer_name, f.customer_address, f.site_address, f.comment].some(t => String(t || '').toLowerCase().includes(q))));
+}
+
+function renderFeedbackView() {
+  if (!currentUser) return;
+  const total = allFeedback.length;
+  const avg = total ? allFeedback.reduce((t, f) => t + (f.rating || 0), 0) / total : 0;
+  const count = n => allFeedback.filter(f => f.rating === n).length;
+  const pos = allFeedback.filter(f => f.rating >= 4).length;
+
+  document.getElementById('fbSummary').innerHTML = total === 0 ? '' : `
+    <div class="fb-summary-card">
+      <div class="fb-score">
+        <div class="fb-score-num">${avg.toFixed(1)}</div>
+        ${fbStars(Math.round(avg))}
+        <div class="fb-score-sub">${total} review${total === 1 ? '' : 's'} · ${Math.round((pos / total) * 100)}% positive</div>
+      </div>
+      <div class="fb-bars">
+        ${[5, 4, 3, 2, 1].map(n => `<div class="fb-bar-row"><span>${n} ★</span><div class="fb-bar-track"><div class="fb-bar-fill" style="width: ${(count(n) / total) * 100}%;"></div></div><span>${count(n)}</span></div>`).join('')}
+      </div>
+    </div>`;
+
+  const chips = [['all', `All (${total})`], ['pos', `Positive (${pos})`], ['neu', `Okay (${count(3)})`], ['neg', `Negative (${count(1) + count(2)})`]];
+  document.getElementById('fbChips').innerHTML = chips.map(([k, l]) => `<button type="button" class="fb-chip ${fbFilter === k ? 'active' : ''}" data-fb-filter="${k}">${l}</button>`).join('');
+
+  const siteSel = document.getElementById('fbSite');
+  const keep = siteSel.value;
+  const sites = {};
+  allFeedback.forEach(f => { sites[f.site_id] = f.site_address || f.site_ref || f.site_id; });
+  siteSel.innerHTML = `<option value="">All properties</option>` + Object.keys(sites).map(id => `<option value="${diaryEsc(id)}">${diaryEsc(sites[id])}</option>`).join('');
+  siteSel.value = Object.keys(sites).includes(keep) ? keep : '';
+
+  renderFeedbackList();
+}
+
+function renderFeedbackList() {
+  const host = document.getElementById('fbList');
+  if (!host) return;
+  const mgmt = isManagementUser(currentUser);
+  const list = fbFiltered();
+  if (list.length === 0) {
+    host.innerHTML = `<div class="fb-empty">${allFeedback.length === 0 ? 'No feedback yet. When a customer scans the QR code and leaves a review it will appear here.' : 'No feedback matches those filters.'}</div>`;
+    return;
+  }
+  host.innerHTML = list.map(f => {
+    const kind = fbSentiment(f.rating);
+    const tag = { pos: 'Positive', neu: 'Okay', neg: 'Negative' }[kind];
+    const contact = mgmt ? [
+      f.customer_email ? `<a href="mailto:${diaryEsc(f.customer_email)}">${diaryEsc(f.customer_email)}</a>` : '',
+      f.customer_phone ? `<a href="tel:${diaryEsc(f.customer_phone)}">${diaryEsc(f.customer_phone)}</a>` : ''
+    ].filter(Boolean).join(' · ') : '';
+    return `
+      <div class="fb-card ${kind}">
+        <div class="fb-card-top">
+          <div>${fbStars(f.rating || 0)} <span class="fb-tag ${kind}" style="margin-left: 8px;">${tag}</span></div>
+          <span class="fb-date">${fbDate(f.created_at)}</span>
         </div>
-      `;
+        <div class="fb-quote">${diaryEsc(f.comment)}</div>
+        <div class="fb-who">
+          <div>
+            <div class="fb-who-name">${diaryEsc(f.customer_name)}</div>
+            <div class="fb-who-detail">📍 ${diaryEsc(f.customer_address || f.site_address)}${f.site_ref ? ` · Site ${diaryEsc(f.site_ref)}` : ''}${contact ? `<br>${contact}` : ''}</div>
+          </div>
+          ${mgmt ? `<button type="button" class="fb-del" data-fb-delete="${diaryEsc(f.id)}">🗑 Remove comment</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function deleteFeedback(id) {
+  const f = allFeedback.find(x => x.id === id);
+  if (!f || !isManagementUser(currentUser)) return;
+  if (!confirm(`Remove this ${f.rating}-star comment from ${f.customer_name}?\n\nA record of who removed it is kept in the audit log.`)) return;
+  try {
+    await db.collection('feedback_removed').doc(id).set({
+      ...f, removed_by: currentUser.full_name, removed_by_id: String(currentUser.id), removed_at: new Date().toISOString()
+    });
+    await db.collection('feedback').doc(id).delete();
+  } catch (e) {
+    console.warn('Could not remove feedback', e);
+    alert('Could not remove that comment. Please try again.');
+  }
+}
+
+
+// -------------------------------------------------------------------
+// TEAM CHAT
+// One group chat for every registered user. Owners / Admins can post announcements, which are highlighted,
+// pinned at the top and pushed to every phone. Typing @ tags a person (or @all): they get a push and a pop-up in the app.
+// Everyone can delete their own messages; Owners / Admins can delete any.
+// -------------------------------------------------------------------
+let chatMessages = [];
+let chatUnsub = null;
+let chatFirstSnapshot = true;
+let chatMentionMatches = [];
+let chatMentionIndex = 0;
+
+const chatSeenKey = () => `gvd_chat_seen_${currentUser ? currentUser.id : ''}`;
+const chatActiveUsers = () => allUsers.filter(u => u.status === 'Active');
+const chatFirstName = u => String(u.full_name || '').trim().split(/\s+/)[0] || '';
+const chatEscRe = t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Who a message tags: { all, ids } from the @names in the text */
+function chatFindMentions(text, senderId) {
+  const users = chatActiveUsers();
+  const lower = String(text || '').toLowerCase();
+  const all = /(^|[^\w])@(all|everyone)(?![\w])/i.test(text);
+  const firstCount = {};
+  users.forEach(u => { const f = chatFirstName(u).toLowerCase(); firstCount[f] = (firstCount[f] || 0) + 1; });
+  const ids = users.filter(u => {
+    if (String(u.id) === String(senderId)) return false;
+    if (lower.includes('@' + String(u.full_name).toLowerCase())) return true;
+    const f = chatFirstName(u).toLowerCase();
+    return f && firstCount[f] === 1 && new RegExp('(^|[^\\w])@' + chatEscRe(f) + '(?![\\w])', 'i').test(text);
+  }).map(u => String(u.id));
+  return { all, ids };
+}
+
+const chatMentionsMe = m => !!currentUser && String(m.sender_id) !== String(currentUser.id) &&
+  (m.mention_all === true || (Array.isArray(m.mentions) && m.mentions.map(String).includes(String(currentUser.id))));
+
+/** Safe HTML for a message, with @tags highlighted (stronger when it is you) */
+function chatFormatText(text) {
+  const users = chatActiveUsers();
+  const firstCount = {};
+  users.forEach(u => { const f = chatFirstName(u).toLowerCase(); firstCount[f] = (firstCount[f] || 0) + 1; });
+  const names = ['everyone', 'all'];
+  users.forEach(u => { names.push(u.full_name); if (firstCount[chatFirstName(u).toLowerCase()] === 1) names.push(chatFirstName(u)); });
+  const alt = names.filter(Boolean).sort((x, y) => y.length - x.length).map(n => chatEscRe(diaryEsc(n))).join('|');
+  const html = diaryEsc(text);
+  if (!alt) return html;
+  const mine = currentUser ? [String(currentUser.full_name).toLowerCase(), chatFirstName(currentUser).toLowerCase(), 'all', 'everyone'] : [];
+  return html.replace(new RegExp('(^|[^\\w])@(' + alt + ')(?![\\w])', 'gi'), (m0, pre, name) =>
+    `${pre}<span class="chat-mention ${mine.includes(name.toLowerCase().replace(/&#39;/g, "'")) ? 'me' : ''}">@${name}</span>`);
+}
+
+function startChatSync() {
+  if (chatUnsub || !db || !currentUser) return;
+  chatFirstSnapshot = true;
+  chatUnsub = db.collection('group_chat').orderBy('created_at').limitToLast(300).onSnapshot(snapshot => {
+    chatMessages = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
+    // first ever visit: start from now, so old history is not counted as unread
+    if (!localStorage.getItem(chatSeenKey())) {
+      const newest = chatMessages.length ? chatMessages[chatMessages.length - 1].created_at : new Date().toISOString();
+      localStorage.setItem(chatSeenKey(), newest);
+    }
+    const v = document.getElementById('view-chat');
+    const viewing = !!v && v.style.display !== 'none' && !document.hidden;
+
+    // pop-up when someone tags you (new tags as they arrive; on opening the app, the latest one you have not seen)
+    if (!viewing) {
+      const seen = localStorage.getItem(chatSeenKey()) || '';
+      let fresh;
+      if (chatFirstSnapshot) fresh = chatMessages.filter(m => chatMentionsMe(m) && (m.created_at || '') > seen).pop();
+      else fresh = snapshot.docChanges().filter(c => c.type === 'added').map(c => ({ ...c.doc.data(), id: c.doc.id })).filter(chatMentionsMe).pop();
+      if (fresh) showChatMentionBanner(fresh);
+    }
+    chatFirstSnapshot = false;
+
+    if (v && v.style.display !== 'none') renderChatView(false); else updateChatBadge();
+  }, err => console.warn('Firestore group_chat error:', err));
+}
+
+function stopChatSync() {
+  if (chatUnsub) chatUnsub();
+  chatUnsub = null;
+  chatMessages = [];
+  const b = document.getElementById('chatMentionBanner');
+  if (b) b.remove();
+  updateChatBadge();
+}
+
+/** Red dot on the Team Chat button while there is anything new (an @ when you have been tagged) */
+function updateChatBadge() {
+  const btn = document.getElementById('navChatBtn');
+  if (!btn) return;
+  const seen = currentUser ? (localStorage.getItem(chatSeenKey()) || '') : '';
+  const unread = currentUser ? chatMessages.filter(m => String(m.sender_id) !== String(currentUser.id) && (m.created_at || '') > seen) : [];
+  btn.classList.toggle('has-unread-chat', unread.length > 0);
+  btn.classList.toggle('has-unread-mention', unread.some(chatMentionsMe));
+  btn.title = unread.length ? `${unread.length} new message${unread.length === 1 ? '' : 's'}` : '';
+}
+
+function showChatMentionBanner(m) {
+  let b = document.getElementById('chatMentionBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'chatMentionBanner';
+    b.className = 'chat-mention-banner';
+    document.body.appendChild(b);
+  }
+  b.innerHTML = `
+    <div class="cm-title">💬 ${diaryEsc(m.sender_name)} ${m.mention_all ? 'tagged everyone' : 'tagged you'} in Team Chat</div>
+    <div class="cm-text">${diaryEsc(m.text)}</div>
+    <div class="cm-actions"><button type="button" class="cm-open">Open chat</button><button type="button" class="cm-close">Dismiss</button></div>`;
+  b.querySelector('.cm-open').onclick = () => { b.remove(); showView('view-chat'); };
+  b.querySelector('.cm-close').onclick = () => b.remove();
+  if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) {} }
+}
+
+function chatDayLabel(iso) {
+  const d = new Date(iso);
+  const key = x => diaryDateKey(x);
+  const today = new Date();
+  const yest = new Date(); yest.setDate(today.getDate() - 1);
+  if (key(d) === key(today)) return 'Today';
+  if (key(d) === key(yest)) return 'Yesterday';
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function chatInitials(name) {
+  return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0].toUpperCase()).join('');
+}
+
+function renderChatView(forceBottom) {
+  if (!currentUser) return;
+  const box = document.getElementById('chatMessages');
+  if (!box) return;
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const canAnnounce = isOwnerOrAdminUser(currentUser);
+  const isAdmin = canAnnounce;
+  document.getElementById('chatAnnounceRow').style.display = canAnnounce ? '' : 'none';
+
+  // pinned: the most recent announcement from the last 7 days
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const latest = chatMessages.filter(m => m.kind === 'announcement' && (m.created_at || '') > weekAgo).pop();
+  document.getElementById('chatPinned').innerHTML = latest
+    ? `<div class="chat-pinned">📌 <b>Announcement</b> from <b>${diaryEsc(latest.sender_name)}</b> · ${diaryEsc(chatDayLabel(latest.created_at))}<div style="margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;">${chatFormatText(latest.text)}</div></div>`
+    : '';
+
+  if (chatMessages.length === 0) {
+    box.innerHTML = '<div class="chat-empty">No messages yet.<br>Say hello to the team 👋</div>';
+  } else {
+    let lastDay = '';
+    box.innerHTML = chatMessages.map(m => {
+      const day = diaryDateKey(new Date(m.created_at));
+      const sep = day !== lastDay ? `<div class="chat-day">${diaryEsc(chatDayLabel(m.created_at))}</div>` : '';
+      lastDay = day;
+      const mine = String(m.sender_id) === String(currentUser.id);
+      const time = new Date(m.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const del = (mine || isAdmin) ? `<button type="button" data-chat-delete="${diaryEsc(m.id)}">Delete</button>` : '';
+      const role = ['Owner', 'Admin', 'Manager'].includes(m.sender_role) ? `<span class="chat-role">${diaryEsc(m.sender_role)}</span>` : '';
+      if (m.kind === 'announcement') {
+        return `${sep}<div class="chat-announce"><div class="chat-tag">📢 Announcement from ${diaryEsc(m.sender_name)}${role}</div><div class="chat-text">${chatFormatText(m.text)}</div><div class="chat-meta"><span>${diaryEsc(m.sender_name)} · ${time}</span>${del}</div></div>`;
+      }
+      return `${sep}
+        <div class="chat-row ${mine ? 'mine' : ''} ${chatMentionsMe(m) ? 'tagged' : ''}">
+          ${mine ? '' : `<div class="chat-avatar" style="background: ${userColor(m.sender_id)};">${diaryEsc(chatInitials(m.sender_name))}</div>`}
+          <div class="chat-bubble">
+            <div class="chat-name" style="color: ${userColor(m.sender_id)};">${diaryEsc(m.sender_name)}${role}</div>
+            <div class="chat-text">${chatFormatText(m.text)}</div>
+            <div class="chat-meta"><span>${time}</span>${del}</div>
+          </div>
+        </div>`;
     }).join('');
   }
+  if (forceBottom || nearBottom) box.scrollTop = box.scrollHeight;
+
+  // looking at the chat marks everything as read
+  const v = document.getElementById('view-chat');
+  if (v && v.style.display !== 'none' && chatMessages.length) {
+    localStorage.setItem(chatSeenKey(), chatMessages[chatMessages.length - 1].created_at);
+    const banner = document.getElementById('chatMentionBanner');
+    if (banner) banner.remove();
+  }
+  updateChatBadge();
+}
+
+async function sendChatMessage() {
+  if (!currentUser || !db) return;
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  closeChatMentionMenu();
+  const announce = isOwnerOrAdminUser(currentUser) && document.getElementById('chatAnnounce').checked;
+  const tags = chatFindMentions(text, currentUser.id);
+  const btn = document.getElementById('chatSend');
+  btn.disabled = true;
+  try {
+    await db.collection('group_chat').add({
+      text: text.slice(0, 2000),
+      sender_id: String(currentUser.id),
+      sender_name: currentUser.full_name,
+      sender_role: currentUser.role,
+      kind: announce ? 'announcement' : 'message',
+      mentions: tags.ids,
+      mention_all: tags.all,
+      created_at: new Date().toISOString()
+    });
+    input.value = '';
+    input.style.height = 'auto';
+    document.getElementById('chatAnnounce').checked = false;
+
+    // phone alerts (delivered by the existing notification service, even to phones that are asleep):
+    // announcements go to everyone; otherwise only the people tagged, or everyone for @all
+    const others = chatActiveUsers().filter(u => String(u.id) !== String(currentUser.id));
+    const push = (users, title) => Promise.all(users.map(u => db.collection('notifications').add({
+      target_user_id: String(u.id), title, body: text.slice(0, 300), created_at: new Date().toISOString()
+    }).catch(err => console.warn('Chat alert failed:', err))));
+    if (announce) await push(others, `📢 Announcement from ${currentUser.full_name}`);
+    else if (tags.all) await push(others, `💬 ${currentUser.full_name} tagged everyone in Team Chat`);
+    else if (tags.ids.length) await push(others.filter(u => tags.ids.includes(String(u.id))), `💬 ${currentUser.full_name} tagged you in Team Chat`);
+    renderChatView(true);
+  } catch (e) {
+    console.warn('Chat send failed', e);
+    alert('Sorry, that message did not send. Please check your connection and try again.');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+async function deleteChatMessage(id) {
+  const m = chatMessages.find(x => x.id === id);
+  if (!m || !currentUser) return;
+  if (!(String(m.sender_id) === String(currentUser.id) || isOwnerOrAdminUser(currentUser))) return;
+  if (!confirm('Delete this message for everyone?')) return;
+  try { await db.collection('group_chat').doc(id).delete(); } catch (e) { alert('Could not delete that message.'); }
+}
+
+// ---- @ suggestions ----
+function closeChatMentionMenu() {
+  const menu = document.getElementById('chatMentionMenu');
+  if (menu) menu.style.display = 'none';
+  chatMentionMatches = [];
+}
+
+function updateChatMentionMenu() {
+  const input = document.getElementById('chatInput');
+  const menu = document.getElementById('chatMentionMenu');
+  if (!input || !menu || !currentUser) return;
+  const before = input.value.slice(0, input.selectionStart);
+  const m = /(^|\s)@([^\s@]{0,30})$/.exec(before);
+  if (!m) { closeChatMentionMenu(); return; }
+  const q = m[2].toLowerCase();
+  const items = [];
+  if ('all'.startsWith(q) || 'everyone'.startsWith(q)) items.push({ label: '@all', sub: 'Notify everyone', insert: '@all ' });
+  chatActiveUsers()
+    .filter(u => String(u.id) !== String(currentUser.id) && String(u.full_name).toLowerCase().split(/\s+/).some(w => w.startsWith(q)))
+    .slice(0, 6)
+    .forEach(u => items.push({ label: '@' + u.full_name, sub: u.role, insert: '@' + u.full_name + ' ' }));
+  if (!items.length) { closeChatMentionMenu(); return; }
+  chatMentionMatches = items.map(i => ({ ...i, start: before.length - m[2].length - 1 }));
+  chatMentionIndex = 0;
+  drawChatMentionMenu();
+}
+
+function drawChatMentionMenu() {
+  const menu = document.getElementById('chatMentionMenu');
+  menu.innerHTML = chatMentionMatches.map((i, n) =>
+    `<button type="button" class="chat-mention-item ${n === chatMentionIndex ? 'active' : ''}" data-mention-pick="${n}"><span>${diaryEsc(i.label)}</span><small>${diaryEsc(i.sub)}</small></button>`).join('');
+  menu.style.display = '';
+}
+
+function pickChatMention(n) {
+  const item = chatMentionMatches[n];
+  const input = document.getElementById('chatInput');
+  if (!item || !input) return;
+  const caret = input.selectionStart;
+  input.value = input.value.slice(0, item.start) + item.insert + input.value.slice(caret);
+  const pos = item.start + item.insert.length;
+  input.setSelectionRange(pos, pos);
+  closeChatMentionMenu();
+  input.focus();
+}
+
+function setupChatListeners() {
+  const input = document.getElementById('chatInput');
+  if (!input) return;
+  document.getElementById('chatSend').addEventListener('click', sendChatMessage);
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    updateChatMentionMenu();
+  });
+  input.addEventListener('keydown', e => {
+    if (chatMentionMatches.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); chatMentionIndex = (chatMentionIndex + 1) % chatMentionMatches.length; drawChatMentionMenu(); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); chatMentionIndex = (chatMentionIndex - 1 + chatMentionMatches.length) % chatMentionMatches.length; drawChatMentionMenu(); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickChatMention(chatMentionIndex); return; }
+      if (e.key === 'Escape') { closeChatMentionMenu(); return; }
+    }
+    // On a computer Enter sends (Shift+Enter for a new line); on a phone Enter starts a new line and the Send button sends
+    if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendChatMessage(); }
+  });
+  // pick with the mouse or a tap without the box losing focus
+  document.getElementById('chatMentionMenu').addEventListener('mousedown', e => {
+    const b = e.target.closest('[data-mention-pick]');
+    if (b) { e.preventDefault(); pickChatMention(parseInt(b.dataset.mentionPick)); }
+  });
+  document.getElementById('chatMentionMenu').addEventListener('touchend', e => {
+    const b = e.target.closest('[data-mention-pick]');
+    if (b) { e.preventDefault(); pickChatMention(parseInt(b.dataset.mentionPick)); }
+  });
+  document.getElementById('chatMessages').addEventListener('click', e => {
+    const b = e.target.closest('[data-chat-delete]');
+    if (b) deleteChatMessage(b.dataset.chatDelete);
+  });
 }
 
 // -------------------------------------------------------------------
@@ -3098,6 +4011,8 @@ async function handleLogout() {
   }
   stopDiarySync();
   stopPOSync();
+  stopFeedbackSync();
+  stopChatSync();
   stopFinanceSync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
@@ -4945,6 +5860,10 @@ function startFinanceSync() {
     financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
   }, warn('finance_costs')));
+  financeUnsubs.push(db.collection('customer_invoices').onSnapshot(snap => {
+    customerInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    refreshFinanceViews();
+  }, warn('customer_invoices')));
   financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
     financePay = {};
@@ -4964,6 +5883,7 @@ function stopFinanceSync() {
   financeCosts = [];
   financeRates = {};
   financePay = {};
+  customerInvoices = [];
 }
 
 let uiRefreshPending = false;
@@ -4990,6 +5910,49 @@ function money(v) {
   return (n < 0 ? '-£' : '£') + Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/**
+ * Cost every booked shift so that a person's cost on any one day can NEVER exceed their day rate, however many jobs
+ * they are booked on. The day is two halves (AM, PM). An AM shift uses the morning, a PM shift the afternoon, an
+ * all-day shift both. Each half is worth half the day rate and is shared equally between the shifts using it:
+ *   4 AM jobs on £200        -> £100 for the morning, £25 each
+ *   2 all-day jobs on £200   -> £200 for the day, £100 each
+ *   all-day + AM on £200     -> £200 for the day: £150 and £50
+ * Worked in whole pence (largest remainder), so the shares add up to exactly the person's cost for the day.
+ * Returns a Map of shift -> { frac (share of a day), pence, overlap (booked on more than one job in the same half) }.
+ */
+function allocateShiftCosts() {
+  const groups = {};
+  allShifts.forEach(sh => {
+    if (!sh.operative_id || sh.is_drying_day) return;
+    const k = `${sh.operative_id}|${sh.shift_date}`;
+    (groups[k] = groups[k] || []).push(sh);
+  });
+  const out = new Map();
+  Object.keys(groups).forEach(k => {
+    const shifts = groups[k].slice().sort((x, y) => String(x.site_id).localeCompare(String(y.site_id)) || String(x.id).localeCompare(String(y.id)));
+    const usesAm = sh => sh.shift_period !== 'pm';
+    const usesPm = sh => sh.shift_period !== 'am';
+    const am = shifts.filter(usesAm).length;
+    const pm = shifts.filter(usesPm).length;
+    const dayFrac = (am > 0 ? 0.5 : 0) + (pm > 0 ? 0.5 : 0);
+    const opId = String(shifts[0].operative_id);
+    const rate = financeRates[opId];
+    const paid = financePay[opId] !== 'price' && rate != null;
+    const totalPence = paid ? Math.round(rate * 100 * dayFrac) : 0;
+    const weights = shifts.map(sh => (usesAm(sh) ? 0.5 / am : 0) + (usesPm(sh) ? 0.5 / pm : 0));
+    const raw = weights.map(w => (dayFrac ? totalPence * w / dayFrac : 0));
+    const pence = raw.map(Math.floor);
+    let left = totalPence - pence.reduce((t, v) => t + v, 0);
+    raw.map((v, i) => ({ i, r: v - Math.floor(v) })).sort((x, y) => y.r - x.r || x.i - y.i).forEach(o => { if (left > 0) { pence[o.i]++; left--; } });
+    shifts.forEach((sh, i) => out.set(sh, {
+      frac: weights[i],
+      pence: pence[i],
+      overlap: (usesAm(sh) && am > 1) || (usesPm(sh) && pm > 1),
+    }));
+  });
+  return out;
+}
+
 function computeSiteFinance(site) {
   const sid = String(site.id);
   const pos = allPOs.filter(po => String(po.site_id) === sid && po.status !== 'Cancelled');
@@ -5003,20 +5966,29 @@ function computeSiteFinance(site) {
   const byOp = {};
   let labour = 0, labourPlanned = 0;
   const noRate = new Set();
+  // One person's cost on one day can never exceed their day rate: the day is worked out once per person across ALL sites
+  // and shared out between the jobs (see allocateShiftCosts).
+  const alloc = allocateShiftCosts();
+  const doubleBooked = new Set();
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
-    const frac = sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1;
+    const a = alloc.get(sh) || { frac: 0, pence: 0, overlap: false };
+    const frac = a.frac;
+    if (a.overlap) {
+      const u0 = allUsers.find(x => String(x.id) === String(sh.operative_id));
+      doubleBooked.add(`${u0 ? u0.full_name : 'Unknown'} on ${sh.shift_date}`);
+    }
     const rate = financeRates[String(sh.operative_id)];
     const priceWork = financePay[String(sh.operative_id)] === 'price';
     const isFuture = (sh.shift_date || '') > todayKey;
-    const cost = priceWork ? 0 : (rate || 0) * frac;
+    const cost = priceWork || rate == null ? 0 : a.pence / 100;
     if (isFuture) { labourPlanned += cost; return; }
     const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
     const name = u ? u.full_name : 'Unknown';
     if (rate == null && !priceWork) noRate.add(name);
     const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0, priceWork };
-    row.days += frac;
-    row.cost += cost;
-    labour += cost;
+    row.days = Math.round((row.days + frac) * 1000) / 1000;
+    row.cost = Math.round((row.cost + cost) * 100) / 100;
+    labour = Math.round((labour + cost) * 100) / 100;
   });
 
   const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
@@ -5035,7 +6007,7 @@ function computeSiteFinance(site) {
     const u = allUsers.find(x => String(x.id) === String(id));
     return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
   });
-  return { contractors, value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
+  return { contractors, value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), doubleBooked: Array.from(doubleBooked), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -5069,7 +6041,16 @@ function renderSiteFinance(site) {
         <input type="text" inputmode="decimal" autocomplete="off" id="finJobValue" class="form-control" step="0.01" min="0" value="${f.value != null ? f.value : ''}" placeholder="e.g. 10000" style="width: 180px;">
       </div>
       ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the job value to see profit and margin.</p>' : ''}
+      ${isOwnerOrAdminUser(currentUser) ? `<div style="margin-top: 12px;"><button type="button" class="btn btn-primary" id="finCreateInvoice" style="width: auto;">🧾 Create invoice for ${f.value != null ? money(f.value) : 'the job'}</button></div>` : ''}
     </div>
+    ${(() => {
+      const invs = customerInvoices.filter(i => String(i.site_id) === String(site.id)).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      if (!invs.length) return '';
+      return `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Invoices raised</h4><table class="planner-table" style="min-width: 0;"><tbody>${invs.map(i => `<tr>
+        <td><strong>${diaryEsc(i.number)}</strong><div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(formatUKDate(i.invoice_date))} · ${diaryEsc(i.customer_name)}</div></td>
+        <td style="text-align: right; white-space: nowrap;">${money((i.total_pence || 0) / 100)}</td>
+        <td style="text-align: right;"><button type="button" class="btn btn-outline btn-sm ci-download" data-id="${diaryEsc(i.id)}" style="padding: 2px 10px;">PDF</button></td></tr>`).join('')}</tbody></table></div>`;
+    })()}
 
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px;">
       <div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">JOB VALUE</div><div style="font-size: 1.3rem; font-weight: 800;">${f.value != null ? money(f.value) : '-'}</div></div>
@@ -5087,6 +6068,7 @@ function renderSiteFinance(site) {
         ${row('Extra costs', money(f.extras))}
         ${row('<strong>Total cost</strong>', '<strong>' + money(f.totalCost) + '</strong>')}
       </tbody></table>
+      ${f.doubleBooked && f.doubleBooked.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ Booked on more than one job at the same time: ${diaryEsc(f.doubleBooked.join('; '))}. Their day rate is shared between those jobs, never charged twice.</p>` : ''}
       ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
@@ -5110,6 +6092,12 @@ function renderSiteFinance(site) {
     </div>`;
 
   host.querySelector('#finJobValue').addEventListener('change', ev => saveJobValue(site.id, ev.target.value));
+  const ciBtn = host.querySelector('#finCreateInvoice');
+  if (ciBtn) ciBtn.addEventListener('click', () => openCustomerInvoiceModal(site.id));
+  host.querySelectorAll('.ci-download').forEach(b => b.addEventListener('click', () => {
+    const rec = customerInvoices.find(x => x.id === b.dataset.id);
+    if (rec) ciDownloadPdf(rec).catch(e => alert('Could not create the PDF: ' + e.message));
+  }));
   host.querySelector('#finSiteCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(site.id, host.querySelector('#finSiteCostDesc').value, host.querySelector('#finSiteCostCategory').value,
