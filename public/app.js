@@ -2123,7 +2123,20 @@ function loadProjectPage(siteId) {
 // COMPLETED JOB REPORT (Owner / Admin): full PDF of a job incl. photos, for the completion folder
 // -------------------------------------------------------------------
 // Loads a photo (URL or data URL) and returns a downscaled JPEG data URL, or null if it can't be read
-async function jobReportPhoto(src) {
+async function jobReportPhoto(photo) {
+  // Same-origin /files/<id> first (the browser blocks cross-origin reads of the Storage URL), then fall back
+  const sources = [];
+  if (photo.id && String(photo.id).startsWith('photo_') && photo.storage_path) sources.push(`/files/${encodeURIComponent(photo.id)}`);
+  if (photo.data_url) sources.push(photo.data_url);
+  if (photo.file_url) sources.push(photo.file_url);
+  for (const src of sources) {
+    const r = await jobReportPhotoFrom(src);
+    if (r) return r;
+  }
+  return null;
+}
+
+async function jobReportPhotoFrom(src) {
   if (!src) return null;
   try {
     let blobUrl = src, made = false;
@@ -2261,7 +2274,7 @@ async function downloadJobReport(site, btn) {
     for (let i = 0; i < sitePhotos.length; i++) {
       setBtn(`⏳ Photos ${i + 1}/${sitePhotos.length}...`);
       const p = sitePhotos[i];
-      const img = await jobReportPhoto(p.file_url || p.data_url);
+      const img = await jobReportPhoto(p);
       if (col === 0 && y + cellH > 280) { doc.addPage(); y = 20; }
       const x = M + col * (colW + 6);
       if (img) {
