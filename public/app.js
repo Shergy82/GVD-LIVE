@@ -1776,14 +1776,16 @@ function formatShiftPeriodBadge(period) {
 // OPERATIVE "MY SHIFTS" VIEW & AUTOMATIC SEEN TIMESTAMP ON APP OPEN
 // -------------------------------------------------------------------
 let myShiftsTab = 'today'; // always starts on today's work
+const SHIFT_GRACE_DAYS = 3; // operatives keep access to a job (e.g. to attach photos) for this many days after the shift
 
 function renderMyShiftsView() {
   const container = document.getElementById('myShiftsContainer');
   if (!currentUser) return;
   const todayKey = diaryDateKey(new Date());
   const periodRank = { am: 0, all_day: 1, pm: 2 };
+  const graceKey = addDaysISO(todayKey, -SHIFT_GRACE_DAYS);
   const upcoming = allShifts
-    .filter(s => String(s.operative_id) === String(currentUser.id) && (s.shift_date || '') >= todayKey)
+    .filter(s => String(s.operative_id) === String(currentUser.id) && (s.shift_date || '') >= graceKey)
     .sort((a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (periodRank[a.shift_period] ?? 1) - (periodRank[b.shift_period] ?? 1));
   const myShifts = myShiftsTab === 'today' ? upcoming.filter(s => s.shift_date === todayKey) : upcoming;
 
@@ -1822,7 +1824,7 @@ function renderMyShiftsView() {
       let heading = '';
       if (myShiftsTab === 'all' && s.shift_date !== lastDate) {
         lastDate = s.shift_date;
-        const label = s.shift_date === todayKey ? 'Today' : s.shift_date === addDaysISO(todayKey, 1) ? 'Tomorrow' : '';
+        const label = s.shift_date < todayKey ? 'Recent' : s.shift_date === todayKey ? 'Today' : s.shift_date === addDaysISO(todayKey, 1) ? 'Tomorrow' : '';
         heading = `<h3 style="grid-column: 1 / -1; margin: 8px 0 -4px;">${label ? label + ' - ' : ''}${formatShortUKDayDate(s.shift_date)}</h3>`;
       }
       const site = allSites.find(st => parseInt(st.id) === parseInt(s.site_id));
