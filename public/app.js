@@ -2082,8 +2082,12 @@ function loadProjectPage(siteId) {
         ? `<button class="btn btn-secondary btn-sm" id="btnRestoreProject">↩️ Restore Project</button>`
         : `<button class="btn btn-warning btn-sm" id="btnArchiveProject" style="background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24;">📦 Archive Project</button>`;
 
-      actionsContainer.innerHTML = `${archiveRestoreHtml} <button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>`;
+      const reportBtnHtml = isOwnerOrAdminUser(currentUser) ? `<button class="btn btn-primary btn-sm" id="btnJobReport">📄 Completed Job Report</button> ` : '';
+      actionsContainer.innerHTML = `${reportBtnHtml}${archiveRestoreHtml} <button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>`;
       actionsContainer.style.display = 'flex';
+
+      const repBtn = document.getElementById('btnJobReport');
+      if (repBtn) repBtn.onclick = () => downloadJobReport(site, repBtn);
 
       const arcBtn = document.getElementById('btnArchiveProject');
       if (arcBtn) arcBtn.onclick = () => handleArchiveSite(site.id);
@@ -2112,6 +2116,188 @@ function loadProjectPage(siteId) {
   renderPlasterCalc(site);
   renderPOTab(site);
   renderSiteFinance(site);
+}
+
+
+// -------------------------------------------------------------------
+// COMPLETED JOB REPORT (Owner / Admin): full PDF of a job incl. photos, for the completion folder
+// -------------------------------------------------------------------
+// Loads a photo (URL or data URL) and returns a downscaled JPEG data URL, or null if it can't be read
+async function jobReportPhoto(src) {
+  if (!src) return null;
+  try {
+    let blobUrl = src, made = false;
+    if (!src.startsWith('data:')) {
+      const res = await fetch(src);
+      if (!res.ok) return null;
+      blobUrl = URL.createObjectURL(await res.blob()); made = true;
+    }
+    const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = blobUrl; });
+    const max = 1000, sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * sc); c.height = Math.round(img.naturalHeight * sc);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    if (made) URL.revokeObjectURL(blobUrl);
+    return { data: c.toDataURL('image/jpeg', 0.78), w: c.width, h: c.height };
+  } catch (e) { console.warn('Report photo skipped', e); return null; }
+}
+
+async function downloadJobReport(site, btn) {
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') { alert('The PDF library is still loading, please try again.'); return; }
+  const original = btn ? btn.textContent : '';
+  const setBtn = t => { if (btn) { btn.textContent = t; btn.disabled = t !== original; } };
+  try {
+    setBtn('⏳ Building report...');
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const navy = [15, 23, 42], grey = [100, 116, 139], line = [203, 213, 225];
+    const W = 210, M = 15, R = W - M;
+    const nowStr = new Date().toLocaleString('en-GB');
+    let y = 0;
+
+    const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id))
+      .sort((a, b) => (a.shift_date || '').localeCompare(b.shift_date || ''));
+    const workShifts = siteShifts.filter(s => !s.is_drying_day);
+    const finishShift = siteShifts.filter(s => s.is_finish).pop();
+    const dates = siteShifts.map(s => s.shift_date).filter(Boolean);
+    const sitePhotos = allPhotos.filter(p => String(p.site_id) === String(site.id))
+      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+    const sitePdfs = allPdfs.filter(p => String(p.site_id) === String(site.id));
+    const sitePOs = allPOs.filter(p => String(p.site_id) === String(site.id));
+    const operatives = [...new Set(workShifts.map(s => (allUsers.find(u => String(u.id) === String(s.operative_id)) || {}).full_name).filter(Boolean))];
+    const contactIds = Array.isArray(site.customer_contacts) ? site.customer_contacts.map(String) : [];
+    const contacts = allUsers.filter(u => contactIds.includes(String(u.id)));
+
+    // ---- header ----
+    doc.setFillColor(...navy); doc.rect(0, 0, W, 5, 'F');
+    const logo = await getLogoBase64();
+    if (logo) {
+      const sz = await ciImageSize(logo);
+      let w = 50, h = 22;
+      if (sz && sz.w && sz.h) { const ar = sz.w / sz.h; if (ar > 50 / 22) { w = 50; h = 50 / ar; } else { h = 22; w = 22 * ar; } }
+      try { doc.addImage(logo, 'PNG', M, 12, w, h, undefined, 'FAST'); } catch (e) { /* logo optional */ }
+    }
+    doc.setTextColor(...navy); doc.setFont('helvetica', 'bold'); doc.setFontSize(20);
+    doc.text('JOB COMPLETION REPORT', R, 22, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+    doc.text(`Generated ${nowStr} by ${currentUser.full_name || 'Admin'}`, R, 28, { align: 'right' });
+    doc.setDrawColor(...line); doc.setLineWidth(0.4); doc.line(M, 37, R, 37);
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...navy);
+    const addrLines = doc.splitTextToSize(site.address || '', R - M);
+    doc.text(addrLines, M, 46);
+    y = 46 + addrLines.length * 6;
+
+    const first = dates[0], last = dates[dates.length - 1];
+    const summary = [
+      ['Site reference', formatSiteId(site.id)],
+      ['Construction type', site.construction_type || '-'],
+      ['Status', site.is_archived ? 'Archived' : (finishShift ? 'Completed' : 'Active')],
+      ['First shift', first ? formatUKDate(first) : '-'],
+      ['Completed / last shift', finishShift ? formatUKDate(finishShift.shift_date) : (last ? formatUKDate(last) : '-')],
+      ['Shifts worked', String(workShifts.length)],
+      ['Operatives', operatives.join(', ') || '-'],
+      ['Photos on file', String(sitePhotos.length)]
+    ];
+    if (contacts.length) summary.push(['Customer contact', contacts.map(c => c.full_name + (c.phone ? ' (' + c.phone + ')' : '')).join(', ')]);
+    SITE_INFO_FIELDS.forEach(([key, label]) => { if ((site[key] || '').trim()) summary.push([label, site[key].trim()]); });
+    doc.autoTable({
+      startY: y + 2, body: summary, theme: 'plain', margin: { left: M, right: M },
+      styles: { fontSize: 10, cellPadding: 1.8, textColor: [30, 41, 59], overflow: 'linebreak' },
+      columnStyles: { 0: { cellWidth: 48, textColor: grey, fontStyle: 'bold' } }
+    });
+    y = doc.lastAutoTable.finalY + 8;
+
+    // ---- shift history ----
+    const section = (title) => {
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+      doc.text(title, M, y);
+      y += 3;
+    };
+    const tableStyle = {
+      theme: 'grid', margin: { left: M, right: M },
+      headStyles: { fillColor: navy, textColor: [255, 255, 255], fontSize: 9 },
+      styles: { fontSize: 9, cellPadding: 2.5, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2, overflow: 'linebreak' }
+    };
+    section('Shift history');
+    if (siteShifts.length) {
+      doc.autoTable({
+        ...tableStyle, startY: y,
+        head: [['Date', 'Period', 'Operative', 'Task']],
+        body: siteShifts.map(s => {
+          const op = allUsers.find(u => String(u.id) === String(s.operative_id));
+          const per = s.is_drying_day ? '-' : (s.shift_period === 'am' ? 'AM' : s.shift_period === 'pm' ? 'PM' : 'All day');
+          return [formatUKDate(s.shift_date), per, s.is_drying_day ? '-' : (op ? op.full_name : 'Unassigned'), (s.is_drying_day ? 'Drying day' : (s.task || '')) + (s.is_finish ? '  [FINISH]' : '')];
+        })
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    } else { doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...grey); doc.text('No shifts recorded.', M, y + 5); y += 12; }
+
+    // ---- documents & POs ----
+    if (sitePdfs.length || sitePOs.length) {
+      section('Documents & purchase orders');
+      const rows = [
+        ...sitePdfs.map(p => ['Document', p.filename || p.name || 'PDF', p.uploader_name || '', formatUKDate(p.created_at)]),
+        ...sitePOs.map(p => ['Purchase order', p.po_number || '', p.requested_by_name || p.requested_by || '', formatUKDate(p.created_at || p.requested_at)])
+      ];
+      doc.autoTable({ ...tableStyle, startY: y, head: [['Type', 'Reference / file', 'By', 'Date']], body: rows });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
+    // ---- photos ----
+    doc.addPage(); y = 20;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+    doc.text(`Photos (${sitePhotos.length})`, M, y); y += 6;
+    if (!sitePhotos.length) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...grey);
+      doc.text('No photos were uploaded for this job.', M, y + 4);
+    }
+    const colW = (R - M - 6) / 2, cellH = 78;
+    let col = 0, skipped = 0;
+    for (let i = 0; i < sitePhotos.length; i++) {
+      setBtn(`⏳ Photos ${i + 1}/${sitePhotos.length}...`);
+      const p = sitePhotos[i];
+      const img = await jobReportPhoto(p.file_url || p.data_url);
+      if (col === 0 && y + cellH > 280) { doc.addPage(); y = 20; }
+      const x = M + col * (colW + 6);
+      if (img) {
+        const ar = img.w / img.h;
+        let w = colW, h = colW / ar;
+        if (h > cellH - 10) { h = cellH - 10; w = h * ar; }
+        try { doc.addImage(img.data, 'JPEG', x + (colW - w) / 2, y, w, h, undefined, 'FAST'); } catch (e) { skipped++; }
+      } else {
+        skipped++;
+        doc.setDrawColor(...line); doc.rect(x, y, colW, cellH - 10);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+        doc.text('Photo could not be loaded', x + colW / 2, y + (cellH - 10) / 2, { align: 'center' });
+      }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...grey);
+      doc.text(`${i + 1}. ${p.uploader_name || 'Operative'} - ${formatUKDate(p.created_at)}`, x, y + cellH - 4);
+      if (col === 1) { col = 0; y += cellH; } else col = 1;
+    }
+    if (skipped) console.warn(`${skipped} photo(s) could not be added to the report`);
+
+    // ---- footer page numbers ----
+    const pages = doc.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...grey);
+      doc.text(`${formatSiteId(site.id)} - ${site.address || ''}`.slice(0, 90), M, 289);
+      doc.text(`Page ${i} of ${pages}`, R, 289, { align: 'right' });
+    }
+
+    const safe = (site.address || 'job').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 50);
+    doc.save(`Completion-Report-${formatSiteId(site.id)}-${safe}.pdf`);
+    showGreenToast(skipped ? `📄 Report saved (${skipped} photo${skipped > 1 ? 's' : ''} could not be loaded)` : '📄 Completion report saved');
+  } catch (err) {
+    console.error('Job report error:', err);
+    alert('Could not build the report: ' + err.message);
+  } finally {
+    setBtn(original);
+  }
 }
 
 async function handleArchiveSite(siteId) {
@@ -4851,12 +5037,11 @@ function renderDiaryView() {
     });
   });
 
-  const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`;
-  const monthEntries = allDiary.filter(e => (e.date || '').startsWith(prefix))
+  const monthEntries = allDiary.filter(e => (e.date || '') >= todayKey)
     .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
   const agenda = document.getElementById('diaryAgenda');
   if (monthEntries.length === 0) {
-    agenda.innerHTML = '<p style="color: var(--text-muted);">Nothing in the diary this month.</p>';
+    agenda.innerHTML = '<p style="color: var(--text-muted);">No upcoming diary entries.</p>';
     return;
   }
   agenda.innerHTML = monthEntries.map(e => {
