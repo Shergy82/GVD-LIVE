@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GVD LIVE</title>
-  <link rel="stylesheet" href="/styles.css?v=18.0">
+  <link rel="stylesheet" href="/styles.css?v=19.0">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
@@ -28,7 +28,6 @@
       <button class="nav-item manager-admin-only" data-target="view-planner" id="navPlannerBtn"><span class="nav-ico">📅</span><span class="nav-lbl">Planner</span></button>
       <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn"><span class="nav-ico">🏗️</span><span class="nav-lbl">Sites & Projects</span></button>
       <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn"><span class="nav-ico">📊</span><span class="nav-lbl">Labour Sheet</span></button>
-      <button class="nav-item manager-admin-only" data-target="view-invoices" id="navInvoicesBtn"><span class="nav-ico">🧾</span><span class="nav-lbl">Invoices</span></button>
       <button class="nav-item manager-admin-only" data-target="view-finance" id="navFinanceBtn"><span class="nav-ico">💷</span><span class="nav-lbl">Finance</span></button>
       <button class="nav-item manager-admin-only" data-target="view-diary" id="navDiaryBtn"><span class="nav-ico">📖</span><span class="nav-lbl">Diary</span></button>
       <button class="nav-item" data-target="view-chat" id="navChatBtn"><span class="nav-ico">💬</span><span class="nav-lbl">Team Chat</span></button>
@@ -479,6 +478,10 @@
     </div>
 
     <div id="view-invoices" class="app-view manager-admin-only" style="display: none;">
+      <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="fin-subtab" data-view="view-finance">💷 Job finance</button>
+        <button type="button" class="fin-subtab active" data-view="view-invoices">🧾 Invoices</button>
+      </div>
       <div class="section-header">
         <div class="section-title-group">
           <h2>Invoices</h2>
@@ -512,6 +515,10 @@
     </div>
 
     <div id="view-finance" class="app-view manager-admin-only" style="display: none;">
+      <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="fin-subtab active" data-view="view-finance">💷 Job finance</button>
+        <button type="button" class="fin-subtab" data-view="view-invoices">🧾 Invoices</button>
+      </div>
       <div class="section-header">
         <div class="section-title-group">
           <h2>Finance</h2>
@@ -1145,6 +1152,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=58.0"></script>
+  <script src="/app.js?v=59.0"></script>
 </body>
 </html>

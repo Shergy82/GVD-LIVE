@@ -1511,3 +1511,21 @@ body {
 .chat-hint { font-size: 0.72rem; color: var(--text-muted); margin-top: 6px; padding-left: 4px; }
 .chat-box, .chat-messages, .chat-composer { max-width: 100%; box-sizing: border-box; }
 .chat-messages { overflow-x: hidden; }
+
+/* Finance / Invoices sub-tabs */
+.fin-subtab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 10px 16px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+}
+.fin-subtab:hover, .fin-subtab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.fin-subtabs { border-bottom: 1px solid var(--border-color); }

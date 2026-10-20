@@ -567,7 +567,7 @@ function showView(viewId) {
   updateMobileMenuLabel(viewId);
 
   document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.target === viewId);
+    btn.classList.toggle('active', btn.dataset.target === viewId || (viewId === 'view-invoices' && btn.dataset.target === 'view-finance'));
   });
 
   renderActiveView();
@@ -3881,6 +3881,8 @@ function setupEventListeners() {
       showView(btn.dataset.target);
     });
   });
+
+  document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
 
   document.getElementById('linkRegister').addEventListener('click', (e) => { e.preventDefault(); showView('view-register'); });
   document.getElementById('linkBackToLogin').addEventListener('click', (e) => { e.preventDefault(); showView('view-login'); });
