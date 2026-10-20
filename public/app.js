@@ -594,7 +594,7 @@ function showView(viewId) {
   updateMobileMenuLabel(viewId);
 
   document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.target === viewId || (viewId === 'view-invoices' && btn.dataset.target === 'view-finance'));
+    btn.classList.toggle('active', btn.dataset.target === viewId || ((viewId === 'view-invoices' || viewId === 'view-reports') && btn.dataset.target === 'view-finance'));
   });
 
   renderActiveView();
@@ -632,6 +632,8 @@ function renderActiveView() {
     renderInvoicesView();
   } else if (viewId === 'view-finance') {
     renderFinanceView();
+  } else if (viewId === 'view-reports') {
+    renderReportsView();
   } else if (viewId === 'view-feedback') {
     renderFeedbackView();
   } else if (viewId === 'view-chat') {
@@ -2054,7 +2056,8 @@ function renderSitesList() {
             ${siteTypeBadgeHtml(site)}
           </div>
           <h3 class="site-card-address">${site.address}</h3>
-          ${isMgmt ? `<select class="form-control site-manager-select" data-site-id="${site.id}" title="Manager responsible for this job" style="margin-top: 8px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Manager: not assigned</option>${managerUsers().map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(site.manager_id) ? ' selected' : ''}>Manager: ${diaryEsc(u.full_name)}</option>`).join('')}</select>` : ''}
+          ${isMgmt ? `<select class="form-control site-manager-select" data-site-id="${site.id}" title="Manager responsible for this job" style="margin-top: 8px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Manager: not assigned</option>${managerUsers().map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(site.manager_id) ? ' selected' : ''}>Manager: ${diaryEsc(u.full_name)}</option>`).join('')}</select>
+          <select class="form-control site-branch-select" data-site-id="${site.id}" title="Branch / department" style="margin-top: 6px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Branch: none</option>${repBranches().map(b => `<option value="${diaryEsc(b)}"${(site.branch || '').trim() === b ? ' selected' : ''}>Branch: ${diaryEsc(b)}</option>`).join('')}<option value="__new__">+ New branch...</option></select>` : ''}
         </div>
         ${isMgmt ? `
           <div style="margin-top: 18px; display: flex; gap: 10px; width: 100%;" class="no-print">
@@ -2068,7 +2071,7 @@ function renderSitesList() {
 
   container.querySelectorAll('.site-card').forEach(card => {
     card.addEventListener('click', (e) => {
-      if (e.target.closest('.site-manager-select')) return;
+      if (e.target.closest('.site-manager-select') || e.target.closest('.site-branch-select')) return;
       if (e.target.closest('.archive-site-card-btn') || e.target.closest('.restore-site-card-btn') || e.target.closest('.delete-site-card-btn')) {
         return;
       }
@@ -2084,6 +2087,20 @@ function renderSitesList() {
       if (!site) return;
       site.manager_id = sel.value || null;
       try { await db.collection('sites').doc(String(site.id)).update({ manager_id: site.manager_id }); showGreenToast(site.manager_id ? `Job assigned to ${siteManagerName(site)}` : 'Manager cleared'); }
+      catch (err) { alert('Could not save: ' + err.message); }
+      renderSitesList();
+    });
+  });
+
+  container.querySelectorAll('.site-branch-select').forEach(sel => {
+    sel.addEventListener('click', e => e.stopPropagation());
+    sel.addEventListener('change', async () => {
+      const site = allSites.find(x => String(x.id) === String(sel.dataset.siteId));
+      if (!site) return;
+      let v = sel.value;
+      if (v === '__new__') { v = (prompt('Name of the new branch / department (e.g. Stoke):') || '').trim(); if (!v) { renderSitesList(); return; } }
+      site.branch = v || null;
+      try { await db.collection('sites').doc(String(site.id)).update({ branch: site.branch }); showGreenToast(v ? `Branch set to ${v}` : 'Branch cleared'); }
       catch (err) { alert('Could not save: ' + err.message); }
       renderSitesList();
     });
@@ -3944,6 +3961,7 @@ function setupEventListeners() {
   });
 
   document.getElementById('btnAssignUnassignedSites').addEventListener('click', assignUnassignedToMe);
+  if (typeof setupReportsListeners === 'function') setupReportsListeners();
   refreshJobScopeSelects();
   document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
   document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
@@ -6412,7 +6430,22 @@ function renderSiteFinance(site) {
       <td style="text-align: right;">${money(c.amount)}</td>
       <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
 
+  const fjT = financeJobs[String(site.id)] || {};
+  const trackerInput = (key, label, type, ph) => `<label style="font-size: 0.75rem; color: var(--text-muted); display: block;">${label}<input type="${type}" class="form-control fin-track" data-key="${key}" value="${diaryEsc(fjT[key] || '')}"${ph ? ` placeholder="${ph}"` : ''} style="margin-top: 2px;"></label>`;
   host.innerHTML = `
+    <div class="site-card" style="margin-bottom: 16px;">
+      <h4 style="margin-bottom: 8px;">Job tracker <span style="font-weight: 400; font-size: 0.8rem; color: var(--text-muted);">- used by the finance reports. Install and completion dates come from the planner; only fill in dates here to override them.</span></h4>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px;">
+        ${trackerInput('client', 'Client', 'text', 'e.g. Stoke City Council')}
+        ${trackerInput('client_po', 'Client PO', 'text', '')}
+        ${trackerInput('handover_date', 'Handover docs sent', 'date')}
+        ${trackerInput('paid_date', 'Date paid', 'date')}
+        ${trackerInput('install_override', 'Install date (override)', 'date')}
+        ${trackerInput('completion_override', 'Completion date (override)', 'date')}
+      </div>
+      <label style="display: flex; gap: 8px; align-items: center; margin-top: 10px; cursor: pointer;"><input type="checkbox" id="finTrackIssues"${fjT.flag_issues ? ' checked' : ''}> <strong>Flag as ISSUES</strong></label>
+      <input type="text" class="form-control fin-track" data-key="issue_note" value="${diaryEsc(fjT.issue_note || '')}" placeholder="What is the issue? (shows in the reports)" style="margin-top: 6px;">
+    </div>
     <div class="site-card" style="margin-bottom: 16px;">
       <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
         <label for="finJobValue" style="font-weight: 700;">Job value (quote) £ ex VAT</label>
@@ -6470,6 +6503,9 @@ function renderSiteFinance(site) {
     </div>`;
 
   host.querySelector('#finJobValue').addEventListener('change', ev => saveJobValue(site.id, ev.target.value));
+  const saveTrack = (patch) => db.collection('finance_jobs').doc(String(site.id)).set({ site_id: String(site.id), ...patch, updated_at: new Date().toISOString() }, { merge: true }).catch(err => alert('Could not save: ' + err.message));
+  host.querySelectorAll('.fin-track').forEach(inp => inp.addEventListener('change', () => saveTrack({ [inp.dataset.key]: inp.value.trim() || null })));
+  host.querySelector('#finTrackIssues').addEventListener('change', ev => saveTrack({ flag_issues: ev.target.checked }));
   const ciBtn = host.querySelector('#finCreateInvoice');
   if (ciBtn) ciBtn.addEventListener('click', () => openCustomerInvoiceModal(site.id));
   host.querySelectorAll('.ci-download').forEach(b => b.addEventListener('click', () => {

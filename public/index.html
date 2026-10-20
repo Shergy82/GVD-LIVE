@@ -485,6 +485,7 @@
       <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
         <button type="button" class="fin-subtab" data-view="view-finance">💷 Job finance</button>
         <button type="button" class="fin-subtab active" data-view="view-invoices">🧾 Invoices</button>
+        <button type="button" class="fin-subtab" data-view="view-reports">📊 Reports</button>
       </div>
       <div class="section-header">
         <div class="section-title-group">
@@ -519,10 +520,45 @@
       </div>
     </div>
 
+    <div id="view-reports" class="app-view manager-admin-only" style="display: none;">
+      <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="fin-subtab" data-view="view-finance">💷 Job finance</button>
+        <button type="button" class="fin-subtab" data-view="view-invoices">🧾 Invoices</button>
+        <button type="button" class="fin-subtab active" data-view="view-reports">📊 Reports</button>
+      </div>
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Reports</h2>
+          <p>Quarterly finance report and weekly activity report, built from the jobs, shifts, invoices and costs already in the app.</p>
+        </div>
+      </div>
+      <div class="site-card" style="margin-bottom: 14px;">
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <div style="display: flex; gap: 4px; background: rgba(255,255,255,0.05); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <button type="button" class="btn btn-outline btn-sm rep-type" data-type="quarter">Quarterly finance</button>
+            <button type="button" class="btn btn-outline btn-sm rep-type" data-type="week">Weekly activity</button>
+          </div>
+          <select id="repFor" class="form-control" style="width: auto;"></select>
+          <span id="repQuarterWrap"><select id="repQuarter" class="form-control" style="width: auto;"></select></span>
+          <span id="repWeekWrap" style="display: none; gap: 6px; align-items: center;">
+            <button type="button" class="btn btn-secondary btn-sm" id="repWeekPrev">←</button>
+            <strong id="repWeekLabel" style="min-width: 190px; text-align: center;"></strong>
+            <button type="button" class="btn btn-secondary btn-sm" id="repWeekNext">→</button>
+            <button type="button" class="btn btn-outline btn-sm" id="repWeekThis">This week</button>
+          </span>
+          <span style="flex: 1;"></span>
+          <button type="button" class="btn btn-primary btn-sm" id="btnRepPdf">📄 Download PDF</button>
+          <button type="button" class="btn btn-outline btn-sm" id="btnRepCsv">📊 Download Excel (CSV)</button>
+        </div>
+      </div>
+      <div id="repOutput"></div>
+    </div>
+
     <div id="view-finance" class="app-view manager-admin-only" style="display: none;">
       <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
         <button type="button" class="fin-subtab active" data-view="view-finance">💷 Job finance</button>
         <button type="button" class="fin-subtab" data-view="view-invoices">🧾 Invoices</button>
+        <button type="button" class="fin-subtab" data-view="view-reports">📊 Reports</button>
       </div>
       <div class="section-header">
         <div class="section-title-group">
@@ -1158,6 +1194,7 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=61.0"></script>
+  <script src="/app.js?v=62.0"></script>
+  <script src="/reports.js?v=1.0"></script>
 </body>
 </html>
