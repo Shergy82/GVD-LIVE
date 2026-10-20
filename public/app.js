@@ -3968,6 +3968,11 @@ function setupEventListeners() {
 
   document.getElementById('btnAssignUnassignedSites').addEventListener('click', assignUnassignedToMe);
   if (typeof setupReportsListeners === 'function') setupReportsListeners();
+  document.getElementById('diaryFilter').addEventListener('change', ev => {
+    diaryFilter = ev.target.value;
+    try { localStorage.setItem('gvd_diary_filter', diaryFilter); } catch (e) {}
+    renderDiaryView();
+  });
   refreshJobScopeSelects();
   document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
   document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
@@ -5130,15 +5135,42 @@ function stopDiarySync() {
   allDiary = [];
 }
 
+// Diary is filtered by people, not by job: everyone, just me, a role, or one person
+let diaryFilter = 'all';
+try { diaryFilter = localStorage.getItem('gvd_diary_filter') || 'all'; } catch (e) {}
+function diaryFilterMatches(e) {
+  if (diaryFilter === 'all') return true;
+  const ids = (e.assignee_ids || []).map(String);
+  if (diaryFilter === 'me') return ids.includes(String(currentUser.id));
+  if (diaryFilter.startsWith('role:')) {
+    const role = diaryFilter.slice(5);
+    return ids.some(id => { const u = allUsers.find(x => String(x.id) === id); return u && (role === 'Operative' ? !isManagementUser(u) : role === 'Manager' ? u.role === 'Manager' : u.role === role); });
+  }
+  if (diaryFilter.startsWith('user:')) return ids.includes(diaryFilter.slice(5));
+  return true;
+}
+function refreshDiaryFilterSelect() {
+  const sel = document.getElementById('diaryFilter');
+  if (!sel) return;
+  const people = allUsers.filter(u => u.status === 'Active' || allDiary.some(e => (e.assignee_ids || []).map(String).includes(String(u.id))))
+    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+  sel.innerHTML = '<option value="all">👥 Everyone</option><option value="me">👤 My entries</option>' +
+    '<option value="role:Manager">Managers</option><option value="role:Admin">Admins</option><option value="role:Owner">Owners</option><option value="role:Operative">Operatives</option>' +
+    '<optgroup label="People">' + people.map(u => `<option value="user:${diaryEsc(u.id)}">${diaryEsc(u.full_name)}</option>`).join('') + '</optgroup>';
+  if (!Array.from(sel.options).some(o => o.value === diaryFilter)) diaryFilter = 'all';
+  sel.value = diaryFilter;
+}
+
 function renderDiaryView() {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  refreshDiaryFilterSelect();
   const year = diaryMonth.getFullYear();
   const month = diaryMonth.getMonth();
   document.getElementById('diaryMonthLabel').textContent = diaryMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
   const todayKey = diaryDateKey(new Date());
   const byDate = {};
-  const diaryEntries = allDiary.filter(e => !e.site_id || siteInScope(allSites.find(s => String(s.id) === String(e.site_id))));
+  const diaryEntries = allDiary.filter(diaryFilterMatches);
   diaryEntries.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
   Object.values(byDate).forEach(list => list.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
 
