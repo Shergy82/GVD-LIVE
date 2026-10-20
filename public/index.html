@@ -255,6 +255,7 @@
           <p>Manage site details, construction types, photos, PDFs and customer QR cards</p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <select class="form-control job-scope-select manager-admin-only" title="Whose jobs to show" style="width: auto;"></select>
           <div style="display: flex; gap: 4px; background: rgba(255,255,255,0.05); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <button class="btn btn-primary btn-sm" id="btnFilterActiveSites" style="font-size: 0.8rem; padding: 4px 10px;">Active Sites</button>
             <button class="btn btn-outline btn-sm" id="btnFilterArchivedSites" style="font-size: 0.8rem; padding: 4px 10px;">📦 Archived Sites</button>
@@ -500,6 +501,7 @@
       <div class="site-card">
         <h3 style="margin-bottom: 10px;">Invoice register</h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px;">
+          <select class="form-control job-scope-select manager-admin-only" title="Whose jobs to show"></select>
           <input type="text" id="invSearch" class="form-control" placeholder="Search invoice no, PO, merchant...">
           <select id="invFilterSite" class="form-control"></select>
           <select id="invFilterMerchant" class="form-control"></select>
@@ -525,6 +527,7 @@
           <p>Job values against materials, labour and extra costs. Owners, Admins and Managers only. All figures exclude VAT.</p>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <select class="form-control job-scope-select manager-admin-only" title="Whose jobs to show" style="width: auto;"></select>
           <select id="finFilterStatus" class="form-control" style="width: auto;">
             <option value="active">Active jobs</option>
             <option value="archived">Archived jobs</option>
@@ -1152,6 +1155,6 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=59.0"></script>
+  <script src="/app.js?v=60.0"></script>
 </body>
 </html>

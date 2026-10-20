@@ -41,6 +41,33 @@ function isManagementUser(user) {
   return user.role === 'Owner' || user.role === 'Admin' || user.role === 'Manager' || user.email === 'phil@gvdcontracts.com';
 }
 
+// ---- Job scope: managers see their own jobs by default, everyone's on request ----
+let jobScope = 'mine';
+try { jobScope = localStorage.getItem('gvd_job_scope') === 'all' ? 'all' : 'mine'; } catch (e) {}
+function managerUsers() { return allUsers.filter(u => isManagementUser(u)).sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))); }
+// Jobs with no manager yet show for everyone until someone takes them, so nothing disappears
+function siteInScope(site) {
+  if (!site) return true;
+  if (!currentUser || !isManagementUser(currentUser) || jobScope === 'all') return true;
+  return !site.manager_id || String(site.manager_id) === String(currentUser.id);
+}
+function siteManagerName(site) {
+  const u = site && site.manager_id ? allUsers.find(x => String(x.id) === String(site.manager_id)) : null;
+  return u ? u.full_name : '';
+}
+function refreshJobScopeSelects() {
+  document.querySelectorAll('.job-scope-select').forEach(sel => {
+    sel.innerHTML = '<option value="mine">👤 My jobs</option><option value="all">👥 Everyone\'s jobs</option>';
+    sel.value = jobScope;
+  });
+}
+function setJobScope(v) {
+  jobScope = v === 'all' ? 'all' : 'mine';
+  try { localStorage.setItem('gvd_job_scope', jobScope); } catch (e) {}
+  refreshJobScopeSelects();
+  renderActiveView();
+}
+
 function isOwnerOrAdminUser(user) {
   if (!user) return false;
   return user.role === 'Owner' || user.role === 'Admin' || user.email === 'phil@gvdcontracts.com';
@@ -1970,6 +1997,8 @@ function renderSitesList() {
     sitesToDisplay = sitesToDisplay.filter(st => !st.is_archived);
   }
 
+  // Managers see their own jobs (plus any not yet given a manager) unless they pick everyone's
+  if (isManagementUser(currentUser)) sitesToDisplay = sitesToDisplay.filter(siteInScope);
   // Management roles see all filtered sites; operatives see assigned sites
   if (!isManagementUser(currentUser)) {
     const assignedSiteIds = allShifts.filter(s => String(s.operative_id) === String(currentUser.id)).map(s => parseInt(s.site_id));
@@ -2007,6 +2036,7 @@ function renderSitesList() {
             ${siteTypeBadgeHtml(site)}
           </div>
           <h3 class="site-card-address">${site.address}</h3>
+          ${isMgmt ? `<select class="form-control site-manager-select" data-site-id="${site.id}" title="Manager responsible for this job" style="margin-top: 8px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Manager: not assigned</option>${managerUsers().map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(site.manager_id) ? ' selected' : ''}>Manager: ${diaryEsc(u.full_name)}</option>`).join('')}</select>` : ''}
         </div>
         ${isMgmt ? `
           <div style="margin-top: 18px; display: flex; gap: 10px; width: 100%;" class="no-print">
@@ -2020,11 +2050,24 @@ function renderSitesList() {
 
   container.querySelectorAll('.site-card').forEach(card => {
     card.addEventListener('click', (e) => {
+      if (e.target.closest('.site-manager-select')) return;
       if (e.target.closest('.archive-site-card-btn') || e.target.closest('.restore-site-card-btn') || e.target.closest('.delete-site-card-btn')) {
         return;
       }
       activeSiteId = parseInt(card.dataset.siteId);
       loadProjectPage(activeSiteId);
+    });
+  });
+
+  container.querySelectorAll('.site-manager-select').forEach(sel => {
+    sel.addEventListener('click', e => e.stopPropagation());
+    sel.addEventListener('change', async () => {
+      const site = allSites.find(x => String(x.id) === String(sel.dataset.siteId));
+      if (!site) return;
+      site.manager_id = sel.value || null;
+      try { await db.collection('sites').doc(String(site.id)).update({ manager_id: site.manager_id }); showGreenToast(site.manager_id ? `Job assigned to ${siteManagerName(site)}` : 'Manager cleared'); }
+      catch (err) { alert('Could not save: ' + err.message); }
+      renderSitesList();
     });
   });
 
@@ -3882,6 +3925,8 @@ function setupEventListeners() {
     });
   });
 
+  refreshJobScopeSelects();
+  document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
   document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
 
   document.getElementById('linkRegister').addEventListener('click', (e) => { e.preventDefault(); showView('view-register'); });
@@ -4541,6 +4586,7 @@ async function handleCreateSite(e) {
       address,
       construction_type,
       customer_token,
+      manager_id: isManagementUser(currentUser) ? String(currentUser.id) : null,
       created_at: new Date().toISOString()
     };
 
@@ -6014,7 +6060,7 @@ function renderInvoicesView() {
   const merchSel = document.getElementById('invFilterMerchant');
   const invoices = allPdfs.filter(f => f.file_type === 'invoice');
   const prevSite = siteSel.value, prevMerch = merchSel.value;
-  siteSel.innerHTML = '<option value="">All jobs</option><option value="overhead">🏢 Overhead / general</option>' + allSites.map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
+  siteSel.innerHTML = '<option value="">All jobs</option><option value="overhead">🏢 Overhead / general</option>' + allSites.filter(siteInScope).map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
   const merchants = Array.from(new Set(invoices.map(f => invMerchantOf(f)).filter(Boolean))).sort();
   merchSel.innerHTML = '<option value="">All merchants</option>' + merchants.map(m => `<option value="${diaryEsc(m)}">${diaryEsc(m)}</option>`).join('');
   siteSel.value = prevSite; merchSel.value = prevMerch;
@@ -6035,6 +6081,7 @@ function renderInvoiceRegister() {
   const merchF = document.getElementById('invFilterMerchant').value;
   const rows = allPdfs.filter(f => f.file_type === 'invoice')
     .filter(f => !siteF || String(f.site_id) === siteF)
+    .filter(f => !siteF && jobScope === 'mine' ? (!invSiteById(f.site_id) || f.site_id === OVERHEAD_SITE.id || siteInScope(invSiteById(f.site_id))) : true)
     .filter(f => !merchF || invMerchantOf(f) === merchF)
     .filter(f => !q || [f.invoice_no, f.po_number, invMerchantOf(f), f.filename].join(' ').toLowerCase().includes(q))
     .sort((a, b) => String(b.invoice_date || b.created_at).localeCompare(String(a.invoice_date || a.created_at)));
@@ -6460,6 +6507,7 @@ function renderFinanceView(force) {
   const statusF = document.getElementById('finFilterStatus').value;
   const q = (document.getElementById('finSearch').value || '').toLowerCase();
   const sites = allSites
+    .filter(siteInScope)
     .filter(s => statusF === 'all' || (statusF === 'archived' ? s.is_archived : !s.is_archived))
     .filter(s => !q || String(s.address).toLowerCase().includes(q))
     .sort((a, b) => String(a.address).localeCompare(String(b.address)));
