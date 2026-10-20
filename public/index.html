@@ -814,14 +814,15 @@
         </div>
         <div class="form-group" id="shiftDuplicateGroup" style="margin-top: 14px;">
           <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
-            <input type="checkbox" id="shiftDuplicateChk"> 🔁 Duplicate shift across consecutive days
+            <input type="checkbox" id="shiftDuplicateChk"> 🔁 Repeat shift over several days
           </label>
           <div id="shiftDuplicateDaysContainer" style="display: none; margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px; border: 1px solid var(--border-color);">
-            <label for="shiftDuplicateDaysInput" style="font-size: 0.85rem; margin-bottom: 6px; display: block; color: var(--text-muted);">Number of consecutive days (including start date):</label>
+            <label for="shiftDuplicateDaysInput" style="font-size: 0.85rem; margin-bottom: 6px; display: block; color: var(--text-muted);">Number of working days (including the start date):</label>
             <div style="display: flex; align-items: center; gap: 10px;">
               <input type="number" id="shiftDuplicateDaysInput" class="form-control" min="2" max="30" value="2" style="width: 90px; padding: 6px 10px;">
-              <span style="font-size: 0.85rem; color: #94a3b8;" id="shiftDuplicateDaysLabel">2 consecutive days</span>
+              <span style="font-size: 0.85rem; color: #94a3b8;" id="shiftDuplicateDaysLabel">2 working days</span>
             </div>
+            <label style="display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.85rem; cursor: pointer;"><input type="checkbox" id="shiftDuplicateWeekends"> Include Saturdays and Sundays</label>
           </div>
         </div>
         <div class="form-group">
@@ -1206,7 +1207,7 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=65.0"></script>
+  <script src="/app.js?v=66.0"></script>
   <script src="/reports.js?v=1.4"></script>
 </body>
 </html>

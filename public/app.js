@@ -4044,7 +4044,7 @@ function setupEventListeners() {
     inputDays.addEventListener('input', () => {
       const val = parseInt(inputDays.value) || 2;
       if (labelDays) {
-        labelDays.textContent = `${val} consecutive days`;
+        labelDays.textContent = `${val} working days`;
       }
     });
   }
@@ -4678,7 +4678,8 @@ function openCreateShiftModal(siteId, opId = null, dateStr = null) {
   if (chkDuplicate) chkDuplicate.checked = false;
   if (containerDuplicate) containerDuplicate.style.display = 'none';
   if (inputDays) inputDays.value = 2;
-  if (labelDays) labelDays.textContent = '2 consecutive days';
+  if (labelDays) labelDays.textContent = '2 working days';
+  const wkChk = document.getElementById('shiftDuplicateWeekends'); if (wkChk) wkChk.checked = false;
 
   openModal('modalShift');
 }
@@ -4786,8 +4787,12 @@ async function handleSaveShift(e) {
     const [year, month, day] = shift_date.split('-').map(Number);
     let createdCount = 0;
 
+    const includeWeekends = !!document.getElementById('shiftDuplicateWeekends')?.checked;
+    let dayOffset = -1;
     for (let i = 0; i < numDays; i++) {
-      const d = new Date(year, month - 1, day + i);
+      // working days only (Mon-Fri) unless weekends are ticked; a single shift always goes on the chosen date
+      let d;
+      do { dayOffset++; d = new Date(year, month - 1, day + dayOffset); } while (isDuplicate && !includeWeekends && isWeekendDay(d));
       const currentDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       
       const nextShiftId = allShifts.length > 0 ? Math.max(...allShifts.map(s => parseInt(s.id) || 0)) + 1 : 1;
@@ -4819,7 +4824,7 @@ async function handleSaveShift(e) {
     renderActiveView();
 
     if (createdCount > 1) {
-      showGreenToast(`⚡ ${createdCount} consecutive shifts assigned!`);
+      showGreenToast(`⚡ ${createdCount} shifts assigned${includeWeekends ? '' : ' (Mon–Fri)'}!`);
     } else if (!isDraftPlanningMode && shift_date >= todayStr) {
       showGreenToast('⚡ Live Shift Saved & Operative Notified!');
     } else if (isDraftPlanningMode) {
