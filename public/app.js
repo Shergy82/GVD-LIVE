@@ -5822,8 +5822,11 @@ function suggestSites(text, sites, limit = 3) {
 // ---- Batch import ----
 let invBatch = [];
 
+const OVERHEAD_SITE = { id: 'overhead', address: 'Overhead / general (no job)' };
+function invSiteById(id) { return String(id) === OVERHEAD_SITE.id ? OVERHEAD_SITE : allSites.find(s => String(s.id) === String(id)); }
+
 function invSiteOptions(selectedId, includeArchived = false) {
-  return `<option value="">Choose job...</option>` + allSites.filter(x => includeArchived || !x.is_archived || String(x.id) === String(selectedId))
+  return `<option value="">Choose job...</option><option value="${OVERHEAD_SITE.id}"${String(selectedId) === OVERHEAD_SITE.id ? ' selected' : ''}>🏢 ${OVERHEAD_SITE.address}</option>` + allSites.filter(x => includeArchived || !x.is_archived || String(x.id) === String(selectedId))
     .map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(selectedId) ? ' selected' : ''}>${diaryEsc(x.address)}${x.is_archived ? ' (archived)' : ''}</option>`).join('');
 }
 
@@ -5948,7 +5951,7 @@ async function recalcPoFromInvoices(poNumber, extraFiles = []) {
 }
 
 async function importInvoiceItem(it) {
-  const site = allSites.find(s => String(s.id) === String(it.siteId));
+  const site = invSiteById(it.siteId);
   if (!site) throw new Error('Choose the job');
   if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
   const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
@@ -6009,7 +6012,7 @@ function renderInvoicesView() {
   const merchSel = document.getElementById('invFilterMerchant');
   const invoices = allPdfs.filter(f => f.file_type === 'invoice');
   const prevSite = siteSel.value, prevMerch = merchSel.value;
-  siteSel.innerHTML = '<option value="">All jobs</option>' + allSites.map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
+  siteSel.innerHTML = '<option value="">All jobs</option><option value="overhead">🏢 Overhead / general</option>' + allSites.map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
   const merchants = Array.from(new Set(invoices.map(f => invMerchantOf(f)).filter(Boolean))).sort();
   merchSel.innerHTML = '<option value="">All merchants</option>' + merchants.map(m => `<option value="${diaryEsc(m)}">${diaryEsc(m)}</option>`).join('');
   siteSel.value = prevSite; merchSel.value = prevMerch;
@@ -6039,7 +6042,7 @@ function renderInvoiceRegister() {
     : 'No invoices found.';
   const canDelete = isOwnerOrAdminUser(currentUser);
   body.innerHTML = rows.map(f => {
-    const site = allSites.find(s => String(s.id) === String(f.site_id));
+    const site = invSiteById(f.site_id);
     return `<tr>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
       <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}</td>
@@ -6049,7 +6052,7 @@ function renderInvoiceRegister() {
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
       <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
       <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
-      <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${site ? '' : ` <button type="button" class="btn btn-primary btn-sm inv-assign" data-id="${diaryEsc(f.id)}">Attach to job</button>`}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+      <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${!site || site === OVERHEAD_SITE ? ` <button type="button" class="btn ${site ? 'btn-outline' : 'btn-primary'} btn-sm inv-assign" data-id="${diaryEsc(f.id)}">${site ? 'Change job' : 'Attach to job'}</button>` : ''}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
   body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => openAssignInvoice(b.dataset.id)));
@@ -6102,7 +6105,7 @@ async function openAssignInvoice(fileId) {
 }
 
 async function assignInvoiceToSite(f, siteId) {
-  const site = allSites.find(s => String(s.id) === String(siteId));
+  const site = invSiteById(siteId);
   if (!site) throw new Error('Job not found');
   await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id) });
   f.site_id = String(site.id);
