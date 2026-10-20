@@ -2812,6 +2812,7 @@ function updatePendingUsersBadge() {
 }
 
 function renderAdminSettingsView() {
+  if (typeof renderInvoiceTemplateCard === 'function') renderInvoiceTemplateCard();
   loadPushUserIds();
   updatePendingUsersBadge();
   document.getElementById('settingsAppNameInput').value = appSettings.app_name || 'GVD LIVE';
@@ -3968,6 +3969,7 @@ function setupEventListeners() {
 
   document.getElementById('btnAssignUnassignedSites').addEventListener('click', assignUnassignedToMe);
   if (typeof setupReportsListeners === 'function') setupReportsListeners();
+  if (typeof setupInvoiceTemplateListeners === 'function') setupInvoiceTemplateListeners();
   refreshJobScopeSelects();
   document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
   document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
@@ -5855,6 +5857,17 @@ async function extractPdfLines(file) {
       const y = Math.round(it.transform[5]);
       (rows[y] = rows[y] || []).push([it.transform[4], it.str]);
     });
+    // typed-in form fields (our operative invoice template) are not part of the page text: read them and put them on the line of their label
+    try {
+      const annots = await page.getAnnotations();
+      annots.forEach(a => {
+        if (a.subtype !== 'Widget' || typeof a.fieldValue !== 'string' || !a.fieldValue.trim() || !a.rect) return;
+        let v = a.fieldValue.trim();
+        if (/^(rate|amount|net_total|total_vat|invoice_total)/.test(a.fieldName || '') && /^[£\s]*\d[\d,]*(\.\d{1,2})?$/.test(v)) v = '£' + parseFloat(v.replace(/[£,\s]/g, '')).toFixed(2);
+        const y = Math.round(a.rect[1] + 4);
+        (rows[y] = rows[y] || []).push([a.rect[0], v]);
+      });
+    } catch (e) { /* plain PDF */ }
     Object.keys(rows).map(Number).sort((a, b) => b - a).forEach(y => {
       const text = rows[y].sort((a, b) => a[0] - b[0]).map(x => x[1]).join(' ').replace(/\s+/g, ' ').trim();
       if (text) lines.push(text);
@@ -6069,13 +6082,15 @@ async function handleInvoiceBatchPicked(e) {
         net: parsed.net, vat: parsed.vat, gross: parsed.gross, invNo: parsed.invNo || '',
         merchant: parsed.merchant || (a.matchedPo ? a.matchedPo.merchant : '') || '', date: parsed.date || '',
         selected: a.confident,
-        contractorId: suggestContractor(parsed.merchant),
+        contractorId: suggestContractor((parsed.merchant || '') + ' ' + ((String(parsed.rawText || '').match(/Operative:\s*([^\n]+)/i) || [])[1] || '')),
         week: guessInvoiceWeek(parsed),
         splits: (() => { const al = parseAllocations(parsed); return al.length >= 2 ? al : null; })(),
+        _single: (() => { const al = parseAllocations(parsed); return al.length === 1 ? al[0].siteId : ''; })(),
         priceNote: !parsed.hasText ? 'Looks like a scan/photo - type the price in.' : parsed.net == null ? 'Price not found - type it in.'
           : parsed.netEstimated ? 'Net price estimated from the total - check it.' : parsed.totalsAgree ? '' : 'Check the amounts.'
       });
     }
+    if (!item.siteId && item._single && !item.splits) item.siteId = item._single;
     invBatch.push(item);
   }
   document.getElementById('invBatchReading').style.display = 'none';

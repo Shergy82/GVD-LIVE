@@ -645,6 +645,24 @@
         </div>
       </div>
 
+      <!-- Operative invoice template -->
+      <div class="site-card" style="margin-bottom: 24px;">
+        <h3 style="margin-bottom: 6px;">🧾 Operative invoice template</h3>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 12px;">A weekly invoice with our logo that operatives fill in for payment. Operatives cannot see this in the app: download it and share it with them (WhatsApp or email). It is laid out so that when their invoice comes back, the Invoices import reads the week, the jobs and the amounts for you.</p>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px;">
+          <button type="button" class="btn btn-primary" id="btnOtBlank">📄 Download blank template</button>
+        </div>
+        <div style="border-top: 1px solid var(--border-color); padding-top: 12px;">
+          <div style="font-weight: 700; margin-bottom: 6px;">Pre-filled for one operative</div>
+          <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 8px;">Fills in their name, the week ending date and the jobs and days they were booked on in the planner that week, so they only add rates and amounts.</p>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+            <select id="otOperative" class="form-control" style="width: auto;"></select>
+            <label style="font-size: 0.85rem;">week ending (Sunday) <input type="date" id="otWeekEnding" class="form-control" style="display: inline-block; width: auto;"></label>
+            <button type="button" class="btn btn-outline" id="btnOtPrefill">📄 Download pre-filled</button>
+          </div>
+        </div>
+      </div>
+
       <!-- App Branding Settings Card -->
       <div class="site-card" style="margin-bottom: 24px;">
         <h3 style="margin-bottom: 16px;">App Name & Logo Branding</h3>
@@ -1214,7 +1232,8 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=69.0"></script>
+  <script src="/app.js?v=70.0"></script>
   <script src="/reports.js?v=1.5"></script>
+  <script src="/invoice-template.js?v=1.1"></script>
 </body>
 </html>
