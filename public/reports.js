@@ -70,8 +70,6 @@ function repAttention(j) {
   const today = repToday();
   if (j.status === 'PIPELINE') return out;
   if (j.f.value == null) out.push('No job value entered, so profit cannot be shown');
-  if (j.f.noRate.length) out.push(`No day rate for ${j.f.noRate.join(', ')} - their labour counts as £0`);
-  if (j.f.doubleBooked.length) out.push(`Someone is booked on two jobs at once (${j.f.doubleBooked.length} case${j.f.doubleBooked.length > 1 ? 's' : ''}) - check the cost split`);
   if (j.status === 'COMPLETE' && !j.invs.length) out.push('Job complete but no invoice raised');
   if (j.status === 'COMPLETE' && !j.handover) out.push('Job complete but handover documents not recorded as sent');
   if (j.status === 'COMPLETE' && j.f.onOrder > 0) out.push(`${money(j.f.onOrder)} of materials still "on order" (estimate, not invoiced) on a completed job`);
@@ -154,7 +152,7 @@ function buildQuarterReport() {
     { label: 'Invoiced, not yet paid', value: `${money(outVal)} (${outstanding.length})` }
   ];
   const attention = [];
-  jobs.forEach(j => repAttention(j).forEach(msg => attention.push([repAddressShort(j.site.address), j.manager, msg])));
+  jobs.forEach(j => { const m = repAttention(j); if (m.length) attention.push([repAddressShort(j.site.address), j.manager, m.join('; ')]); });
   const notUnvalued = jobs.length - vj.length;
   return {
     title: 'Quarterly Finance Report', filename: `Finance_Report_${q.key}_${label.replace(/[^A-Za-z0-9]+/g, '_')}`,
@@ -246,7 +244,7 @@ function buildWeekReport() {
     { label: 'Paid by clients', value: money(sumN(paidJ, j => j.invoicedNet || j.f.value || 0)) }
   ];
   const attention = [];
-  worked.concat(completedJ).filter((j, i, a) => a.indexOf(j) === i).forEach(j => repAttention(j).forEach(msg => attention.push([repAddressShort(j.site.address), j.manager, msg])));
+  worked.concat(completedJ).filter((j, i, a) => a.indexOf(j) === i).forEach(j => { const m = repAttention(j); if (m.length) attention.push([repAddressShort(j.site.address), j.manager, m.join('; ')]); });
   return {
     title: 'Weekly Activity Report', filename: `Weekly_Report_${start}_${label.replace(/[^A-Za-z0-9]+/g, '_')}`,
     subtitle: `${label}  •  Week ${repShort(start)} – ${repShort(end)}`,
