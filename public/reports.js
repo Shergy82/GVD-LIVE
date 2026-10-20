@@ -70,8 +70,8 @@ function repAttention(j) {
   const today = repToday();
   if (j.status === 'PIPELINE') return out;
   if (j.f.value == null) out.push('No job value entered, so profit cannot be shown');
-  if (j.f.noRate.length) out.push(`No day rate for ${j.f.noRate.join(', ')} - their labour counts as £0`);
-  if (j.f.doubleBooked.length) out.push(`Someone is booked on two jobs at once (${j.f.doubleBooked.length} case${j.f.doubleBooked.length > 1 ? 's' : ''}) - check the cost split`);
+  if (j.f.noRate.length && !labourFromInvoices()) out.push(`No day rate for ${j.f.noRate.join(', ')} - their labour counts as £0`);
+  if (j.f.doubleBooked.length && !labourFromInvoices()) out.push(`Someone is booked on two jobs at once (${j.f.doubleBooked.length} case${j.f.doubleBooked.length > 1 ? 's' : ''}) - check the cost split`);
   if (j.status === 'COMPLETE' && !j.invs.length) out.push('Job complete but no invoice raised');
   if (j.status === 'COMPLETE' && !j.handover) out.push('Job complete but handover documents not recorded as sent');
   if (j.status === 'COMPLETE' && j.f.onOrder > 0) out.push(`${money(j.f.onOrder)} of materials still "on order" (estimate, not invoiced) on a completed job`);
@@ -197,7 +197,13 @@ function buildWeekReport() {
   const paidJ = jobs.filter(j => inW(j.paid));
   const extras = financeCosts.filter(c => inW(c.date) && byId[String(c.site_id)]);
   const sumN = (arr, fn) => arr.reduce((t, x) => t + fn(x), 0);
-  const labour = sumN(Object.values(work), w => w.cost);
+  // Labour is costed from operatives' invoices for the week (week_start), or from day rates if that mode is on
+  const viaInv = labourFromInvoices();
+  const wkOf = f => f.week_start || addDaysISO(mondayOfISO(f.invoice_date || String(f.created_at).slice(0, 10)), -7);
+  const labInv = {};
+  allPdfs.filter(f => isLabourInvoice(f) && byId[String(f.site_id)] && wkOf(f) === start).forEach(f => { labInv[String(f.site_id)] = (labInv[String(f.site_id)] || 0) + (parseFloat(f.invoice_net) || 0); });
+  const labourOf = j => viaInv ? (labInv[j.sid] || 0) : work[j.sid].cost;
+  const labour = viaInv ? sumN(Object.values(labInv), v => v) : sumN(Object.values(work), w => w.cost);
 
   const mk = (list, cols, rowFn, extra = {}) => ({ columns: cols, rows: list.map(rowFn), ...extra });
   const secsFor = (title, list, cols, rowFn, footFn) => {
@@ -212,9 +218,9 @@ function buildWeekReport() {
       j => [repAddressShort(j.site.address), j.manager, j.client, repShort(j.install), j.f.value != null ? money(j.f.value) : 'not set']),
     ...secsFor('Jobs completed', completedJ, [{ h: 'Job address' }, { h: 'Manager' }, { h: 'Completed' }, { h: 'Job value', a: 'right' }, { h: 'Total cost', a: 'right' }, { h: 'Profit', a: 'right' }, { h: 'Profit %', a: 'right' }],
       j => [repAddressShort(j.site.address), j.manager, repShort(j.completion), j.f.value != null ? money(j.f.value) : 'not set', money(j.f.totalCost), j.f.profit != null ? money(j.f.profit) : '-', REP_PCT(j.f.profit, j.f.value)]),
-    ...secsFor('On site this week', worked, [{ h: 'Job address' }, { h: 'Manager' }, { h: 'Who was on site' }, { h: 'Operative days', a: 'right' }, { h: 'Labour cost', a: 'right' }, { h: 'Status' }],
-      j => [repAddressShort(j.site.address), j.manager, Array.from(work[j.sid].ops).join(', '), String(Math.round(work[j.sid].frac * 10) / 10), money(work[j.sid].cost), j.status],
-      list => ['TOTAL', '', '', String(Math.round(sumN(list, j => work[j.sid].frac) * 10) / 10), money(sumN(list, j => work[j.sid].cost)), '']),
+    ...secsFor('On site this week', worked, [{ h: 'Job address' }, { h: 'Manager' }, { h: 'Who was on site' }, { h: 'Operative days', a: 'right' }, { h: viaInv ? 'Labour invoiced' : 'Labour cost', a: 'right' }, { h: 'Status' }],
+      j => [repAddressShort(j.site.address), j.manager, Array.from(work[j.sid].ops).join(', '), String(Math.round(work[j.sid].frac * 10) / 10), viaInv && !labInv[j.sid] ? 'awaiting invoice' : money(labourOf(j)), j.status],
+      list => ['TOTAL', '', '', String(Math.round(sumN(list, j => work[j.sid].frac) * 10) / 10), money(sumN(list, j => labourOf(j))), '']),
   ];
   if (supplier.length) sections.push({ heading: `Supplier invoices received (${supplier.length})`, columns: [{ h: 'Date' }, { h: 'Merchant' }, { h: 'Invoice no.' }, { h: 'Job' }, { h: 'Net', a: 'right' }],
     rows: supplier.sort((a, b) => String(a.invoice_date).localeCompare(String(b.invoice_date))).map(f => [repShort(f.invoice_date), invMerchantOf(f), f.invoice_no || '', repAddressShort((invSiteById(f.site_id) || {}).address || ''), money(f.invoice_net)]),
@@ -233,7 +239,7 @@ function buildWeekReport() {
     { label: 'Jobs completed', value: String(completedJ.length) },
     { label: 'Jobs on site', value: String(worked.length) },
     { label: 'Operative days', value: String(Math.round(sumN(Object.values(work), w => w.frac) * 10) / 10) },
-    { label: 'Labour cost', value: money(labour) },
+    { label: viaInv ? 'Labour invoiced for the week' : 'Labour cost', value: money(labour) },
     { label: 'Supplier invoices', value: money(sumN(supplier, f => parseFloat(f.invoice_net) || 0)) },
     { label: 'Extra costs logged', value: money(sumN(extras, c => parseFloat(c.amount) || 0)) },
     { label: 'Invoiced to clients', value: money(sumN(clientInv, i => (i.net_pence || 0) / 100)) },
@@ -245,7 +251,7 @@ function buildWeekReport() {
     title: 'Weekly Activity Report', filename: `Weekly_Report_${start}_${label.replace(/[^A-Za-z0-9]+/g, '_')}`,
     subtitle: `${label}  •  Week ${repShort(start)} – ${repShort(end)}`,
     kpis, sections, attention,
-    notes: ['A job counts as started in the week of its first booked shift and as complete in the week of its finish shift. Labour cost covers shifts up to today only.']
+    notes: ['A job counts as started in the week of its first booked shift and as complete in the week of its finish shift. ' + (viaInv ? 'Labour is the operatives\' invoices covering this week; "awaiting invoice" means days were booked but the invoice has not been imported yet.' : 'Labour cost covers shifts up to today only.')]
   };
 }
 

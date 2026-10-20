@@ -5846,7 +5846,7 @@ function parseInvoiceText(lines) {
   const deliverIdx = lines.findIndex(l => /deliver(y)?\s*to/i.test(l));
   const deliverText = deliverIdx >= 0 ? lines.slice(deliverIdx, deliverIdx + 8).join(' ') : text;
 
-  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, rawText: text, hasText: text.length > 40 };
+  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, rawText: text, lines, hasText: text.length > 40 };
 }
 
 function matchSiteByAddress(text, sites) {
@@ -5903,6 +5903,40 @@ function suggestSites(text, sites, limit = 3) {
     out.push({ site: sw.site, score, hits, exactNumber: numberNextToStreet });
   });
   return out.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+// An operative's weekly invoice often lists several jobs. Pull out "address ... £amount" lines and group them by job.
+function parseAllocations(parsed) {
+  const sites = allSites.filter(s => !s.is_archived);
+  const bySite = new Map();
+  (parsed.lines || []).forEach(line => {
+    if (/total|vat|sub\s*-?total|balance|amount due|retention|cis|deduct/i.test(line)) return;
+    const amts = [...line.matchAll(/(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g)];
+    if (!amts.length) return;
+    const amount = parseFloat(amts[amts.length - 1][1].replace(/,/g, ''));
+    if (!(amount > 0)) return;
+    const g = suggestSites(line, sites, 1)[0];
+    if (!g || g.score < 1) return;
+    bySite.set(String(g.site.id), Math.round(((bySite.get(String(g.site.id)) || 0) + amount) * 100) / 100);
+  });
+  return Array.from(bySite.entries()).map(([siteId, net]) => ({ siteId, net }));
+}
+
+function mondayOfISO(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return diaryDateKey(d);
+}
+// Week the invoice covers: "week ending 18/10/2026" if it says so, otherwise the week before the invoice date
+function guessInvoiceWeek(parsed) {
+  const m = String(parsed.rawText || '').match(/(?:week\s*ending|w\/e|w\.e\.?|week\s*commencing|w\/c)\s*:?\s*(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/i);
+  if (m) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    const iso = `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    if (!isNaN(new Date(iso))) return /commenc|w\/c/i.test(m[0]) ? mondayOfISO(iso) : mondayOfISO(addDaysISO(iso, -6));
+  }
+  const base = parsed.date || diaryDateKey(new Date());
+  return addDaysISO(mondayOfISO(base), -7);
 }
 
 // ---- Batch import ----
@@ -5975,6 +6009,8 @@ async function handleInvoiceBatchPicked(e) {
         merchant: parsed.merchant || (a.matchedPo ? a.matchedPo.merchant : '') || '', date: parsed.date || '',
         selected: a.confident,
         contractorId: suggestContractor(parsed.merchant),
+        week: guessInvoiceWeek(parsed),
+        splits: (() => { const al = parseAllocations(parsed); return al.length >= 2 ? al : null; })(),
         priceNote: !parsed.hasText ? 'Looks like a scan/photo - type the price in.' : parsed.net == null ? 'Price not found - type it in.'
           : parsed.netEstimated ? 'Net price estimated from the total - check it.' : parsed.totalsAgree ? '' : 'Check the amounts.'
       });
@@ -5984,6 +6020,23 @@ async function handleInvoiceBatchPicked(e) {
   document.getElementById('invBatchReading').style.display = 'none';
   e.target.value = '';
   renderInvBatch();
+}
+
+function invSplitSum(it) { return Math.round((it.splits || []).reduce((t, x) => t + (parseFloat(x.net) || 0), 0) * 100) / 100; }
+function invSplitStatus(it) {
+  const diff = Math.round(((it.net || 0) - invSplitSum(it)) * 100) / 100;
+  return Math.abs(diff) < 0.02 ? `<span style="color: var(--success);">✅ Adds up to the invoice net ${formatPounds(it.net)}</span>`
+    : `<span style="color: var(--warning);">⚠️ Allocated ${formatPounds(invSplitSum(it))} of ${formatPounds(it.net) || 'the net price'} - ${diff > 0 ? formatPounds(diff) + ' still to allocate' : formatPounds(-diff) + ' too much'}</span>`;
+}
+function invSplitTotals(row, it) { const el = row.querySelector('.inv-sp-status'); if (el) el.innerHTML = invSplitStatus(it); }
+function invSplitHtml(it) {
+  return `<div style="border: 1px dashed var(--border-color); border-radius: var(--radius-sm); padding: 8px;">
+    <div style="font-weight: 700; font-size: 0.85rem; margin-bottom: 6px;">✂️ Split across jobs <span style="font-weight: 400; color: var(--text-muted);">- each job gets its share of the net price as a cost</span></div>
+    ${it.splits.map((sp, i) => `<div style="display: grid; grid-template-columns: 1fr 130px auto; gap: 6px; margin-bottom: 6px;">
+      <select class="form-control inv-sp-site" data-i="${i}" style="min-height: 34px; padding: 4px 8px;">${invSiteOptions(sp.siteId, true)}</select>
+      <input type="text" inputmode="decimal" autocomplete="off" class="form-control inv-sp-net" data-i="${i}" placeholder="Net £" value="${sp.net != null ? Number(sp.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+      <button type="button" class="btn btn-danger btn-sm inv-sp-del" data-i="${i}">✕</button></div>`).join('')}
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"><button type="button" class="btn btn-outline btn-sm inv-sp-add">+ Add job</button><button type="button" class="btn btn-outline btn-sm inv-sp-off">Back to one job</button><span class="inv-sp-status" style="font-size: 0.8rem;">${invSplitStatus(it)}</span></div></div>`;
 }
 
 function renderInvBatch() {
@@ -6006,6 +6059,10 @@ function renderInvBatch() {
         <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-vat" placeholder="VAT £" value="${it.vat != null ? Number(it.vat).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
         <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-gross" placeholder="Total £" value="${it.gross != null ? Number(it.gross).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
       </div>
+      ${it.contractorId ? `<div style="margin-top: 8px; font-size: 0.8rem;"><label>👷 Labour invoice for the week starting <input type="date" class="form-control inv-week" value="${diaryEsc(it.week || '')}" style="display: inline-block; width: auto; min-height: 32px; padding: 2px 8px;"></label> <span style="color: var(--text-muted);">- counted as labour on the job, not materials</span></div>` : ''}
+      <div style="margin-top: 8px;">
+        ${it.splits ? invSplitHtml(it) : `<button type="button" class="btn btn-outline btn-sm inv-split-on">✂️ Split across several jobs</button>`}
+      </div>
     </div>`;
   }).join('');
   btn.style.display = invBatch.some(i => i.status === 'ready') ? '' : 'none';
@@ -6016,12 +6073,19 @@ function renderInvBatch() {
     bind('.inv-select', ev => { it.selected = ev.target.checked; });
     bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; row.querySelector('.inv-po').innerHTML = invPoOptions(it.siteId, ''); });
     bind('.inv-po', ev => { it.poNumber = ev.target.value; });
-    bind('.inv-contractor', ev => { it.contractorId = ev.target.value; });
+    bind('.inv-contractor', ev => { it.contractorId = ev.target.value; if (it.contractorId && !it.week) it.week = guessInvoiceWeek(it.parsed || {}); renderInvBatch(); });
     bind('.inv-merchant', ev => { it.merchant = ev.target.value.trim(); });
     bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); });
     bind('.inv-net', ev => { it.net = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-vat', ev => { it.vat = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-gross', ev => { it.gross = ev.target.value === '' ? null : parseFloat(ev.target.value); });
+    const wk = row.querySelector('.inv-week'); if (wk) wk.addEventListener('change', ev => { it.week = ev.target.value; });
+    const splitOn = row.querySelector('.inv-split-on'); if (splitOn) splitOn.addEventListener('click', () => { it.splits = [{ siteId: it.siteId || '', net: it.net }, { siteId: '', net: null }]; renderInvBatch(); });
+    row.querySelectorAll('.inv-sp-site').forEach(el => el.addEventListener('change', ev => { it.splits[+el.dataset.i].siteId = ev.target.value; invSplitTotals(row, it); }));
+    row.querySelectorAll('.inv-sp-net').forEach(el => el.addEventListener('change', ev => { const v = ev.target.value.replace(/[£,\s]/g, ''); it.splits[+el.dataset.i].net = v === '' ? null : parseFloat(v); invSplitTotals(row, it); }));
+    row.querySelectorAll('.inv-sp-del').forEach(el => el.addEventListener('click', () => { it.splits.splice(+el.dataset.i, 1); if (it.splits.length < 2) { it.siteId = (it.splits[0] || {}).siteId || it.siteId; it.splits = null; } renderInvBatch(); }));
+    const spAdd = row.querySelector('.inv-sp-add'); if (spAdd) spAdd.addEventListener('click', () => { const left = Math.round(((it.net || 0) - it.splits.reduce((t, x) => t + (x.net || 0), 0)) * 100) / 100; it.splits.push({ siteId: '', net: left > 0 ? left : null }); renderInvBatch(); });
+    const spOff = row.querySelector('.inv-sp-off'); if (spOff) spOff.addEventListener('click', () => { it.siteId = (it.splits[0] || {}).siteId || it.siteId; it.splits = null; renderInvBatch(); });
   });
 }
 
@@ -6037,35 +6101,59 @@ async function recalcPoFromInvoices(poNumber, extraFiles = []) {
 }
 
 async function importInvoiceItem(it) {
-  const site = invSiteById(it.siteId);
-  if (!site) throw new Error('Choose the job');
+  const splits = it.splits && it.splits.length > 1 ? it.splits : [{ siteId: it.siteId, net: it.net }];
+  const sites = splits.map(sp => invSiteById(sp.siteId));
+  if (sites.some(x => !x)) throw new Error(splits.length > 1 ? 'Choose a job for every line of the split' : 'Choose the job');
   if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
-  const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
-  const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `site_files/${site.id}/${fileId}_${safeName}`;
-  const up = await uploadSiteFile(path, it.file);
-  const net = Math.round(it.net * 100) / 100;
-  const poNumber = it.poNumber || `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
-  const record = {
-    id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
-    filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
-    po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '', contractor_id: it.contractorId || null,
-    invoice_net: net, invoice_vat: it.vat == null || isNaN(it.vat) ? null : it.vat, invoice_gross: it.gross == null || isNaN(it.gross) ? null : it.gross,
-    created_at: new Date().toISOString()
-  };
-  await db.collection('pdfs').doc(fileId).set(record);
-  const fields = await recalcPoFromInvoices(poNumber, [record]);
-  if (it.poNumber) {
-    await db.collection('purchase_orders').doc(poNumber).update(fields);
-  } else {
-    await db.collection('purchase_orders').doc(poNumber).set({
-      po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
-      requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
-      merchant: it.merchant || 'Unknown merchant', description: `Invoice ${it.invNo || ''} (no PO)`.trim(), est_value: null,
-      created_at: new Date().toISOString(), ...fields
-    });
+  if (splits.length > 1) {
+    if (splits.some(sp => !(parseFloat(sp.net) > 0))) throw new Error('Enter an amount for every job in the split');
+    if (Math.abs(invSplitSum({ splits }) - it.net) >= 0.02) throw new Error(`The split (${formatPounds(invSplitSum({ splits }))}) does not add up to the invoice net (${formatPounds(it.net)})`);
+    if (new Set(splits.map(sp => String(sp.siteId))).size !== splits.length) throw new Error('The same job is in the split twice');
   }
-  return `${formatPounds(net)} ex VAT added to ${site.address}`;
+  const base = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `site_files/${sites[0].id}/${base}_${safeName}`;
+  const up = await uploadSiteFile(path, it.file);   // one copy of the PDF, shared by every part of a split
+  const total = Math.round(it.net * 100) / 100;
+  const isLabour = !!it.contractorId;
+  const msgs = [];
+  let vatLeft = it.vat == null || isNaN(it.vat) ? null : it.vat, grossLeft = it.gross == null || isNaN(it.gross) ? null : it.gross;
+  for (let i = 0; i < splits.length; i++) {
+    const site = sites[i];
+    const last = i === splits.length - 1;
+    const net = Math.round(parseFloat(splits[i].net) * 100) / 100;
+    const ratio = total ? net / total : 1;
+    const vat = vatLeft == null ? null : last ? Math.round(vatLeft * 100) / 100 : Math.round((it.vat * ratio) * 100) / 100;
+    const gross = grossLeft == null ? null : last ? Math.round(grossLeft * 100) / 100 : Math.round((it.gross * ratio) * 100) / 100;
+    if (vatLeft != null) vatLeft -= vat;
+    if (grossLeft != null) grossLeft -= gross;
+    const fileId = splits.length > 1 ? `${base}_${i + 1}` : base;
+    const single = splits.length === 1;
+    const poNumber = single && it.poNumber ? it.poNumber : `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}${single ? '' : '-' + (i + 1)}`;
+    const record = {
+      id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+      filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
+      po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '', contractor_id: it.contractorId || null,
+      cost_type: isLabour ? 'labour' : 'materials', week_start: isLabour ? (it.week || '') : '',
+      split_group: single ? '' : base, split_total_net: single ? null : total,
+      invoice_net: net, invoice_vat: vat, invoice_gross: gross,
+      created_at: new Date().toISOString()
+    };
+    await db.collection('pdfs').doc(fileId).set(record);
+    const fields = await recalcPoFromInvoices(poNumber, [record]);
+    if (single && it.poNumber) {
+      await db.collection('purchase_orders').doc(poNumber).update(fields);
+    } else {
+      await db.collection('purchase_orders').doc(poNumber).set({
+        po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
+        requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
+        merchant: it.merchant || 'Unknown merchant', description: `${isLabour ? 'Labour invoice' : 'Invoice'} ${it.invNo || ''} (no PO)`.trim(), est_value: null,
+        created_at: new Date().toISOString(), ...fields
+      });
+    }
+    msgs.push(`${formatPounds(net)} to ${site.address}`);
+  }
+  return isLabour ? `Labour ${msgs.join(' · ')}` : `${msgs.join(' · ')} ex VAT added`;
 }
 
 async function handleImportSelectedInvoices() {
@@ -6094,6 +6182,7 @@ async function handleImportSelectedInvoices() {
 // ---- Register ----
 function renderInvoicesView() {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  renderLabourCheck();
   const siteSel = document.getElementById('invFilterSite');
   const merchSel = document.getElementById('invFilterMerchant');
   const invoices = allPdfs.filter(f => f.file_type === 'invoice');
@@ -6103,6 +6192,47 @@ function renderInvoicesView() {
   merchSel.innerHTML = '<option value="">All merchants</option>' + merchants.map(m => `<option value="${diaryEsc(m)}">${diaryEsc(m)}</option>`).join('');
   siteSel.value = prevSite; merchSel.value = prevMerch;
   renderInvoiceRegister();
+}
+
+// Who has worked, and has their weekly invoice arrived? Weeks run Monday to Sunday.
+function renderLabourCheck() {
+  const host = document.getElementById('invLabourCheck');
+  if (!host) return;
+  if (!labourFromInvoices()) { host.style.display = 'none'; return; }
+  const today = diaryDateKey(new Date());
+  const thisMon = mondayOfISO(today);
+  const weeks = [0, 1, 2, 3, 4, 5].map(i => addDaysISO(thisMon, -7 * i));
+  const oldest = weeks[weeks.length - 1];
+  const alloc = allocateShiftCosts();
+  const days = {};
+  allShifts.forEach(sh => {
+    if (!sh.operative_id || sh.is_drying_day || !sh.shift_date || sh.shift_date < oldest || sh.shift_date > today) return;
+    const a = alloc.get(sh); if (!a) return;
+    const k = `${sh.operative_id}|${mondayOfISO(sh.shift_date)}`;
+    days[k] = (days[k] || 0) + a.frac;
+  });
+  const got = {};
+  allPdfs.filter(f => isLabourInvoice(f) && f.contractor_id).forEach(f => {
+    const wk = f.week_start || addDaysISO(mondayOfISO(f.invoice_date || String(f.created_at).slice(0, 10)), -7);
+    const k = `${f.contractor_id}|${wk}`;
+    got[k] = (got[k] || 0) + (parseFloat(f.invoice_net) || 0);
+  });
+  const ids = Array.from(new Set(Object.keys(days).concat(Object.keys(got)).map(k => k.split('|')[0])));
+  const people = ids.map(id => ({ id, name: (allUsers.find(u => String(u.id) === id) || {}).full_name || 'Unknown' })).sort((a, b) => a.name.localeCompare(b.name));
+  let missing = 0;
+  const cell = (id, wk) => {
+    const d = Math.round((days[`${id}|${wk}`] || 0) * 10) / 10, g = got[`${id}|${wk}`];
+    if (g != null) return `<td style="color: var(--success);">${d ? d + 'd · ' : ''}${money(g)} ✅</td>`;
+    if (!d) return '<td style="color: var(--text-muted);">-</td>';
+    if (wk === thisMon) return `<td style="color: var(--text-muted);">${d}d · in progress</td>`;
+    missing++;
+    return `<td style="color: var(--warning); font-weight: 700;">${d}d · no invoice yet</td>`;
+  };
+  const rows = people.map(p => `<tr><td><strong>${diaryEsc(p.name)}</strong></td>${weeks.map(w => cell(p.id, w)).join('')}</tr>`).join('');
+  host.style.display = '';
+  host.innerHTML = `<h3 style="margin-bottom: 4px;">👷 Weekly labour invoices</h3>
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">Days booked in the planner against the invoice received for that week. ${missing ? `<strong style="color: var(--warning);">${missing} week${missing > 1 ? 's' : ''} still waiting for an invoice.</strong>` : 'Nothing outstanding.'} Labour only counts as a cost once its invoice is imported below.</p>
+    ${people.length ? `<div style="overflow-x: auto;"><table class="rep-table"><thead><tr><th>Operative</th>${weeks.map(w => `<th>w/c ${diaryEsc(formatUKDate(w).slice(0, 5))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '<p style="color: var(--text-muted);">No shifts booked in the last six weeks.</p>'}`;
 }
 
 function invMerchantOf(f) {
@@ -6133,7 +6263,7 @@ function renderInvoiceRegister() {
     return `<tr>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
       <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}</td>
-      <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}</td>
+      <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}${isLabourInvoice(f) ? `<div style="font-size: 0.72rem; color: var(--text-muted);">👷 Labour${f.contractor_id ? ' - ' + diaryEsc((allUsers.find(u => String(u.id) === String(f.contractor_id)) || {}).full_name || '') : ''}${f.week_start ? ' - w/c ' + diaryEsc(formatUKDate(f.week_start)) : ''}</div>` : ''}${f.split_group ? `<div style="font-size: 0.72rem; color: var(--text-muted);">✂️ part of ${formatPounds(f.split_total_net)} invoice</div>` : ''}</td>
       <td data-label="PO">${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
       <td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td>
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
@@ -6207,7 +6337,8 @@ async function assignInvoiceToSite(f, siteId) {
 async function deleteInvoice(fileId) {
   const f = allPdfs.find(x => String(x.id) === String(fileId));
   if (!f || !isOwnerOrAdminUser(currentUser) || !confirm('Delete this invoice and take its cost off the job?')) return;
-  if (f.storage_path && typeof firebase.storage === 'function') {
+  const sharedFile = f.storage_path && allPdfs.some(x => x.id !== f.id && x.storage_path === f.storage_path);
+  if (f.storage_path && !sharedFile && typeof firebase.storage === 'function') {
     await getStorageForBucket(f.storage_bucket || STORAGE_BUCKETS[0]).ref(f.storage_path).delete().catch(console.warn);
   }
   await db.collection('pdfs').doc(String(f.id)).delete();
@@ -6352,7 +6483,10 @@ function allocateShiftCosts() {
 function computeSiteFinance(site) {
   const sid = String(site.id);
   const pos = allPOs.filter(po => String(po.site_id) === sid && po.status !== 'Cancelled');
-  const invoiced = pos.filter(po => po.invoice_value != null).reduce((t, po) => t + (parseFloat(po.invoice_value) || 0), 0);
+  const invoicedAll = pos.filter(po => po.invoice_value != null).reduce((t, po) => t + (parseFloat(po.invoice_value) || 0), 0);
+  // Operatives' invoices are labour, not materials
+  const labourInvoiced = Math.round(allPdfs.filter(f => isLabourInvoice(f) && String(f.site_id) === sid).reduce((t, f) => t + (parseFloat(f.invoice_net) || 0), 0) * 100) / 100;
+  const invoiced = Math.max(0, Math.round((invoicedAll - labourInvoiced) * 100) / 100);
   const onOrder = pos.filter(po => po.invoice_value == null && po.est_value != null).reduce((t, po) => t + (parseFloat(po.est_value) || 0), 0);
   const extrasList = financeCosts.filter(c => String(c.site_id) === sid);
   const extras = extrasList.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
@@ -6387,8 +6521,11 @@ function computeSiteFinance(site) {
     labour = Math.round((labour + cost) * 100) / 100;
   });
 
+  // Invoice-based labour: shifts no longer cost anything on their own. The day-rate figure is kept as an estimate only.
+  let labourEstimate = 0;
+  if (labourFromInvoices()) { labourEstimate = labour; labour = 0; }
   const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
-  const totalCost = invoiced + onOrder + labour + extras;
+  const totalCost = invoiced + labourInvoiced + onOrder + labour + extras;
   const profit = value != null ? value - totalCost : null;
   const margin = value ? (profit / value) * 100 : null;
   // Price-work people: what has been invoiced or logged against them on this job (already inside the totals above)
@@ -6403,7 +6540,7 @@ function computeSiteFinance(site) {
     const u = allUsers.find(x => String(x.id) === String(id));
     return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
   });
-  return { contractors, value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), doubleBooked: Array.from(doubleBooked), totalCost, profit, margin };
+  return { contractors, value, invoiced, labourInvoiced, labourEstimate, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), doubleBooked: Array.from(doubleBooked), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -6423,7 +6560,7 @@ function renderSiteFinance(site) {
   const f = computeSiteFinance(site);
 
   const row = (label, val, sub) => `<tr><td>${label}${sub ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${sub}</div>` : ''}</td><td style="text-align: right; white-space: nowrap;">${val}</td></tr>`;
-  const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork ? '<span style="color: var(--text-muted);">Price work - see invoices</span>' : money(o.cost)}</td></tr>`).join('');
+  const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork || labourFromInvoices() ? '<span style="color: var(--text-muted);">Costed from their invoice</span>' : money(o.cost)}</td></tr>`).join('');
   const contractorRows = f.contractors.map(c => `<tr><td>${diaryEsc(c.name)}</td><td style="text-align: right;">${money(c.total)}</td></tr>`).join('');
   const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || ''))).map(c => `<tr>
       <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
@@ -6475,12 +6612,14 @@ function renderSiteFinance(site) {
       <table class="planner-table" style="min-width: 0;"><tbody>
         ${row('Materials invoiced', money(f.invoiced), 'From imported invoices (ex VAT)')}
         ${row('Materials on order', money(f.onOrder), 'POs raised but not yet invoiced (estimates)')}
-        ${row('Labour', money(f.labour), f.labourPlanned > 0 ? `Shifts up to today only. ${money(f.labourPlanned)} of future shifts not counted yet` : 'Shifts up to and including today')}
+        ${labourFromInvoices()
+          ? row('Labour invoiced', money(f.labourInvoiced), `From operatives' weekly invoices (ex VAT). For reference only, booked days at day rates would be about ${money(f.labourEstimate)} - not counted`)
+          : row('Labour', money(f.labour), f.labourPlanned > 0 ? `Shifts up to today only. ${money(f.labourPlanned)} of future shifts not counted yet` : 'Shifts up to and including today')}
         ${row('Extra costs', money(f.extras))}
         ${row('<strong>Total cost</strong>', '<strong>' + money(f.totalCost) + '</strong>')}
       </tbody></table>
-      ${f.doubleBooked && f.doubleBooked.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ Booked on more than one job at the same time: ${diaryEsc(f.doubleBooked.join('; '))}. Their day rate is shared between those jobs, never charged twice.</p>` : ''}
-      ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
+      ${f.doubleBooked && f.doubleBooked.length && !labourFromInvoices() ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ Booked on more than one job at the same time: ${diaryEsc(f.doubleBooked.join('; '))}. Their day rate is shared between those jobs, never charged twice.</p>` : ''}
+      ${f.noRate.length && !labourFromInvoices() ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
     ${contractorRows ? `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Price work paid (ex VAT)</h4><table class="planner-table" style="min-width: 0;"><tbody>${contractorRows}</tbody></table><p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 6px;">Already included in materials / extra costs above.</p></div>` : ''}
@@ -6528,8 +6667,12 @@ async function saveJobValue(siteId, raw) {
     .catch(err => alert('Could not save: ' + err.message));
 }
 
+// Labour is costed from the operatives' weekly invoices (default). 'day_rate' puts the old automatic day-rate costing back.
+function labourFromInvoices() { return appSettings.labour_costing !== 'day_rate'; }
+function isLabourInvoice(f) { return f.file_type === 'invoice' && (f.cost_type === 'labour' || !!f.contractor_id); }
+
 function priceWorkUsers() {
-  return allUsers.filter(u => u.status === 'Active' && financePay[String(u.id)] === 'price')
+  return allUsers.filter(u => u.status === 'Active' && (labourFromInvoices() || financePay[String(u.id)] === 'price'))
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
 }
 
@@ -6584,7 +6727,7 @@ function renderFinanceView(force) {
   document.getElementById('finJobsBody').innerHTML = data.length ? data.map(({ site, f }) => `<tr class="fin-job-row" data-site="${diaryEsc(site.id)}" style="cursor: pointer;">
       <td><strong>${diaryEsc(site.address)}</strong>${site.is_archived ? ' <small>(archived)</small>' : ''}</td>
       <td data-label="Job value">${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}</td>
-      <td data-label="Materials invoiced">${money(f.invoiced)}</td><td data-label="On order">${money(f.onOrder)}</td><td data-label="Labour">${money(f.labour)}</td><td data-label="Extra costs">${money(f.extras)}</td>
+      <td data-label="Materials invoiced">${money(f.invoiced)}</td><td data-label="On order">${money(f.onOrder)}</td><td data-label="Labour">${money(f.labour + f.labourInvoiced)}</td><td data-label="Extra costs">${money(f.extras)}</td>
       <td data-label="Total cost"><strong>${money(f.totalCost)}</strong></td>
       <td data-label="Profit / loss" style="color: ${profitColor(f.profit)}; font-weight: 700;">${f.profit != null ? money(f.profit) : '-'}</td>
       <td data-label="Margin" style="color: ${profitColor(f.profit)}; font-weight: 700;">${marginText(f.margin)}</td></tr>`).join('')
@@ -6617,6 +6760,7 @@ function renderFinanceView(force) {
   document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
   document.querySelectorAll('#finCostsBody .fin-edit-cost').forEach(b => b.addEventListener('click', () => openCostEdit(b.dataset.id)));
 
+  updateLabourModeUi();
   // Day rates (Owner / Admin can edit)
   const canEditRates = isOwnerOrAdminUser(currentUser);
   document.getElementById('finRatesCard').style.display = '';
@@ -6682,7 +6826,28 @@ async function handleSaveCostEdit(e) {
   showGreenToast('Cost updated');
 }
 
+function updateLabourModeUi() {
+  const sel = document.getElementById('finLabourMode');
+  if (!sel) return;
+  sel.value = labourFromInvoices() ? 'invoices' : 'day_rate';
+  sel.disabled = !isOwnerOrAdminUser(currentUser);
+  document.getElementById('finLabourModeHelp').textContent = labourFromInvoices()
+    ? "Booking someone on a shift no longer costs anything by itself. Each operative's weekly invoice is imported on the Invoices tab and its amounts are added to the jobs it covers. Day rates below are kept for reference only."
+    : 'Every booked shift (up to today) costs the person\'s day rate against the job, automatically. Operatives set to price work are costed from their invoices.';
+  const rates = document.getElementById('finRatesCard');
+  if (rates) rates.style.opacity = labourFromInvoices() ? '0.6' : '';
+}
+
 function setupFinanceListeners() {
+  document.getElementById('finLabourMode').addEventListener('change', async ev => {
+    if (!isOwnerOrAdminUser(currentUser)) return;
+    const v = ev.target.value === 'day_rate' ? 'day_rate' : 'invoices';
+    if (!confirm(v === 'invoices' ? 'Cost labour from weekly invoices only? Day-rate labour will stop being counted in every job and report.' : 'Go back to automatic day-rate labour costing? Shift costs will be counted again in every job and report.')) { updateLabourModeUi(); return; }
+    appSettings.labour_costing = v;
+    try { await db.collection('settings').doc('app').set({ labour_costing: v }, { merge: true }); showGreenToast('Labour costing updated'); }
+    catch (err) { alert('Could not save: ' + err.message); }
+    refreshFinanceViews(); renderActiveView(); updateLabourModeUi();
+  });
   document.getElementById('finCostFilterSite').addEventListener('change', renderFinanceView);
   document.getElementById('costEditForm').addEventListener('submit', handleSaveCostEdit);
   document.getElementById('btnCostEditDelete').addEventListener('click', async () => {
