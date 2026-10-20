@@ -430,7 +430,6 @@
           <p>Site visits and appointments. Assigned people get a push notification straight away and a reminder at 7am on the day.</p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <select id="diaryFilter" class="form-control" title="Whose diary entries to show" style="width: auto;"></select>
           <button class="btn btn-secondary btn-sm" id="diaryPrevMonthBtn">←</button>
           <strong id="diaryMonthLabel" style="min-width: 140px; text-align: center;"></strong>
           <button class="btn btn-secondary btn-sm" id="diaryNextMonthBtn">→</button>
@@ -438,6 +437,7 @@
           <button class="btn btn-primary btn-sm" id="diaryAddBtn">+ Add Entry</button>
         </div>
       </div>
+      <div id="diaryFilter" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px;"></div>
       <div id="diaryGrid" class="diary-grid"></div>
       <h3 style="margin: 20px 0 10px;">This month</h3>
       <div id="diaryAgenda"></div>
@@ -1214,7 +1214,7 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=68.0"></script>
+  <script src="/app.js?v=69.0"></script>
   <script src="/reports.js?v=1.5"></script>
 </body>
 </html>

@@ -3968,11 +3968,6 @@ function setupEventListeners() {
 
   document.getElementById('btnAssignUnassignedSites').addEventListener('click', assignUnassignedToMe);
   if (typeof setupReportsListeners === 'function') setupReportsListeners();
-  document.getElementById('diaryFilter').addEventListener('change', ev => {
-    diaryFilter = ev.target.value;
-    try { localStorage.setItem('gvd_diary_filter', diaryFilter); } catch (e) {}
-    renderDiaryView();
-  });
   refreshJobScopeSelects();
   document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
   document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
@@ -5135,30 +5130,32 @@ function stopDiarySync() {
   allDiary = [];
 }
 
-// Diary is filtered by people, not by job: everyone, just me, a role, or one person
-let diaryFilter = 'all';
-try { diaryFilter = localStorage.getItem('gvd_diary_filter') || 'all'; } catch (e) {}
+// Diary is filtered by people: tick whose entries to show (admin level and above), any combination
+let diaryHidden = [];      // people unticked
+let diaryShowOthers = false; // entries that only involve operatives, or nobody
+try { diaryHidden = JSON.parse(localStorage.getItem('gvd_diary_hidden') || '[]'); diaryShowOthers = localStorage.getItem('gvd_diary_others') === '1'; } catch (e) {}
 function diaryFilterMatches(e) {
-  if (diaryFilter === 'all') return true;
+  const mgmtIds = managerUsers().map(u => String(u.id));
   const ids = (e.assignee_ids || []).map(String);
-  if (diaryFilter === 'me') return ids.includes(String(currentUser.id));
-  if (diaryFilter.startsWith('role:')) {
-    const role = diaryFilter.slice(5);
-    return ids.some(id => { const u = allUsers.find(x => String(x.id) === id); return u && (role === 'Operative' ? !isManagementUser(u) : role === 'Manager' ? u.role === 'Manager' : u.role === role); });
-  }
-  if (diaryFilter.startsWith('user:')) return ids.includes(diaryFilter.slice(5));
-  return true;
+  const involved = ids.filter(id => mgmtIds.includes(id));
+  if (!involved.length) return diaryShowOthers;
+  return involved.some(id => !diaryHidden.includes(id));
 }
 function refreshDiaryFilterSelect() {
-  const sel = document.getElementById('diaryFilter');
-  if (!sel) return;
-  const people = allUsers.filter(u => u.status === 'Active' || allDiary.some(e => (e.assignee_ids || []).map(String).includes(String(u.id))))
-    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
-  sel.innerHTML = '<option value="all">👥 Everyone</option><option value="me">👤 My entries</option>' +
-    '<option value="role:Manager">Managers</option><option value="role:Admin">Admins</option><option value="role:Owner">Owners</option><option value="role:Operative">Operatives</option>' +
-    '<optgroup label="People">' + people.map(u => `<option value="user:${diaryEsc(u.id)}">${diaryEsc(u.full_name)}</option>`).join('') + '</optgroup>';
-  if (!Array.from(sel.options).some(o => o.value === diaryFilter)) diaryFilter = 'all';
-  sel.value = diaryFilter;
+  const box = document.getElementById('diaryFilter');
+  if (!box) return;
+  const people = managerUsers().filter(u => u.status === 'Active' || allDiary.some(e => (e.assignee_ids || []).map(String).includes(String(u.id))));
+  const chip = (key, label, on, color) => `<label style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; cursor: pointer; font-size: 0.85rem; font-weight: 700; border: 2px solid ${color}; background: ${on ? color : 'transparent'}; color: ${on ? '#fff' : 'var(--text-main, inherit)'};"><input type="checkbox" data-diary-who="${diaryEsc(key)}"${on ? ' checked' : ''} style="accent-color: ${color};"> ${diaryEsc(label)}</label>`;
+  box.innerHTML = '<span style="font-size: 0.8rem; color: var(--text-muted);">Show:</span>' +
+    people.map(u => chip(String(u.id), u.full_name, !diaryHidden.includes(String(u.id)), userColor(String(u.id)))).join('') +
+    chip('__others__', 'Others', diaryShowOthers, '#64748b');
+  box.querySelectorAll('input[data-diary-who]').forEach(inp => inp.addEventListener('change', () => {
+    const k = inp.dataset.diaryWho;
+    if (k === '__others__') diaryShowOthers = inp.checked;
+    else diaryHidden = inp.checked ? diaryHidden.filter(x => x !== k) : diaryHidden.concat(k);
+    try { localStorage.setItem('gvd_diary_hidden', JSON.stringify(diaryHidden)); localStorage.setItem('gvd_diary_others', diaryShowOthers ? '1' : '0'); } catch (e) {}
+    renderDiaryView();
+  }));
 }
 
 function renderDiaryView() {
