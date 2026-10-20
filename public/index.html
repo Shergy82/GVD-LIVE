@@ -35,6 +35,7 @@
       <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn"><span class="nav-ico">⚙️</span><span class="nav-lbl">Admin Settings</span> <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
       <!-- Operative Links -->
+      <button class="nav-item" data-target="view-my-invoice" id="navMyInvoiceBtn" style="display: none;"><span class="nav-ico">🧾</span><span class="nav-lbl">My Invoice</span></button>
       <button class="nav-item op-only" data-target="view-my-shifts" id="navMyShiftsBtn"><span class="nav-ico">📋</span><span class="nav-lbl">My Shifts</span></button>
       <button class="nav-item op-only" data-target="view-projects" id="navMyProjectsBtn"><span class="nav-ico">🏗️</span><span class="nav-lbl">Sites & Projects</span></button>
     </nav>
@@ -225,6 +226,16 @@
     <!-- ------------------------------------------------------------- -->
     <!-- OPERATIVE "MY SHIFTS" VIEW -->
     <!-- ------------------------------------------------------------- -->
+    <div id="view-my-invoice" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>My Invoice</h2>
+          <p>Your weekly invoice, pre-filled from the planner. Check it, add your rate and submit.</p>
+        </div>
+      </div>
+      <div id="myInvoiceBody"></div>
+    </div>
+
     <div id="view-my-shifts" class="app-view" style="display: none;">
       <div class="section-header">
         <div class="section-title-group">
@@ -493,6 +504,8 @@
           <p>Import merchant invoices. The app finds the PO number in each PDF and adds the cost (ex VAT) to that job.</p>
         </div>
       </div>
+
+      <div class="site-card" id="opInvoiceInbox" style="margin-bottom: 20px; display: none;"></div>
 
       <div class="site-card" id="invLabourCheck" style="margin-bottom: 20px; display: none;"></div>
 
@@ -1026,6 +1039,7 @@
         </select>
         <label for="userModalDayRate" id="userModalRateLabel">Day rate £</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="userModalDayRate" class="form-control" placeholder="e.g. 200">
+        <label style="display: flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer;"><input type="checkbox" id="userModalSubmitsInvoices"> 🧾 Submits weekly invoices (shows them a "My Invoice" page)</label>
         <div id="userModalHoursWrap" style="display: none; margin-top: 8px;">
           <label for="userModalHours">Hours in a full day</label>
           <input type="text" inputmode="decimal" autocomplete="off" id="userModalHours" class="form-control" value="8">
@@ -1232,8 +1246,9 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=70.0"></script>
+  <script src="/app.js?v=71.0"></script>
   <script src="/reports.js?v=1.5"></script>
-  <script src="/invoice-template.js?v=1.1"></script>
+  <script src="/invoice-template.js?v=1.3"></script>
+  <script src="/my-invoice.js?v=1.1"></script>
 </body>
 </html>

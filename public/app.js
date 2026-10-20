@@ -499,6 +499,8 @@ function onUserAuthenticated() {
     el.style.display = (!isManagerOrHigher) ? '' : 'none';
   });
 
+  const myInvBtn = document.getElementById('navMyInvoiceBtn');
+  if (myInvBtn) myInvBtn.style.display = currentUser.submits_invoices ? '' : 'none';
   // Tell the phone menu how many boxes this role has, so each row fills the full width
   const navMenuEl = document.getElementById('navMenu');
   navMenuEl.dataset.count = Array.from(navMenuEl.querySelectorAll('.nav-item')).filter(b => b.style.display !== 'none').length;
@@ -512,6 +514,7 @@ function onUserAuthenticated() {
   startFeedbackSync();
   startChatSync();
   if (isManagerOrHigher) startFinanceSync();
+  if (typeof startMyInvoiceSync === 'function' && (isManagerOrHigher || currentUser.submits_invoices)) startMyInvoiceSync();
 
   if (isManagerOrHigher) {
     showView('view-planner');
@@ -634,6 +637,8 @@ function renderActiveView() {
     renderFinanceView();
   } else if (viewId === 'view-reports') {
     renderReportsView();
+  } else if (viewId === 'view-my-invoice') {
+    if (typeof renderMyInvoiceView === 'function') renderMyInvoiceView();
   } else if (viewId === 'view-feedback') {
     renderFeedbackView();
   } else if (viewId === 'view-chat') {
@@ -4307,6 +4312,7 @@ async function handleLogout() {
   stopFeedbackSync();
   stopChatSync();
   stopFinanceSync();
+  if (typeof stopMyInvoiceSync === 'function') stopMyInvoiceSync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
   localStorage.removeItem('gvd_push_subscribed');
@@ -5340,6 +5346,7 @@ function openUserModal(userId) {
   const hh0 = financeHourly[String(user.id)] || {};
   if (financePay[String(user.id)] === 'hourly') document.getElementById('userModalDayRate').value = hh0.rate != null ? hh0.rate : '';
   document.getElementById('userModalHours').value = hh0.hpd || 8;
+  document.getElementById('userModalSubmitsInvoices').checked = user.submits_invoices === true;
   updateUserModalPayUi();
 
   // Login sharing is only offered for people who have never used the app
@@ -5368,7 +5375,8 @@ async function handleSaveUserModal() {
     job_title: document.getElementById('userModalJob').value.trim(),
     role: document.getElementById('userModalRole').value,
     status: document.getElementById('userModalStatus').value,
-    color: document.getElementById('userModalColor').value
+    color: document.getElementById('userModalColor').value,
+    submits_invoices: document.getElementById('userModalSubmitsInvoices').checked
   };
   Object.assign(user, updates);
   if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
@@ -6258,6 +6266,7 @@ async function handleImportSelectedInvoices() {
 // ---- Register ----
 function renderInvoicesView() {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  if (typeof renderInvoiceInbox === 'function') renderInvoiceInbox();
   renderLabourCheck();
   const siteSel = document.getElementById('invFilterSite');
   const merchSel = document.getElementById('invFilterMerchant');
@@ -6299,6 +6308,8 @@ function renderLabourCheck() {
   const cell = (id, wk) => {
     const d = Math.round((days[`${id}|${wk}`] || 0) * 10) / 10, g = got[`${id}|${wk}`];
     if (g != null) return `<td style="color: var(--success);">${d ? d + 'd · ' : ''}${money(g)} ✅</td>`;
+    const sub = (typeof operativeInvoices !== 'undefined' ? operativeInvoices : []).find(x => x.status === 'submitted' && String(x.user_id) === String(id) && x.week_start === wk);
+    if (sub) return `<td style="color: #60a5fa;">${d ? d + 'd · ' : ''}📨 submitted ${money(sub.net)}</td>`;
     if (!d) return '<td style="color: var(--text-muted);">-</td>';
     if (wk === thisMon) return `<td style="color: var(--text-muted);">${d}d · in progress</td>`;
     missing++;
