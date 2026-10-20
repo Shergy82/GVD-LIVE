@@ -468,6 +468,9 @@ function onUserAuthenticated() {
   localStorage.setItem('gvd_current_user_id', currentUser.id);
   document.getElementById('appHeader').style.display = 'flex';
   document.getElementById('userNameText').textContent = currentUser.full_name;
+  const nameEl = document.getElementById('userNameText');
+  nameEl.style.cursor = 'pointer'; nameEl.title = 'My invoice and details';
+  nameEl.onclick = () => { activeSiteId = null; showView('view-my-invoice'); };
 
   if ('Notification' in window && Notification.permission === 'granted') {
     const dot = document.getElementById('bellStatusDot');
@@ -499,8 +502,6 @@ function onUserAuthenticated() {
     el.style.display = (!isManagerOrHigher) ? '' : 'none';
   });
 
-  const myInvBtn = document.getElementById('navMyInvoiceBtn');
-  if (myInvBtn) myInvBtn.style.display = currentUser.submits_invoices ? '' : 'none';
   // Tell the phone menu how many boxes this role has, so each row fills the full width
   const navMenuEl = document.getElementById('navMenu');
   navMenuEl.dataset.count = Array.from(navMenuEl.querySelectorAll('.nav-item')).filter(b => b.style.display !== 'none').length;
@@ -514,7 +515,7 @@ function onUserAuthenticated() {
   startFeedbackSync();
   startChatSync();
   if (isManagerOrHigher) startFinanceSync();
-  if (typeof startMyInvoiceSync === 'function' && (isManagerOrHigher || currentUser.submits_invoices)) startMyInvoiceSync();
+  if (typeof startMyInvoiceSync === 'function' && true) startMyInvoiceSync();
 
   if (isManagerOrHigher) {
     showView('view-planner');
@@ -2817,7 +2818,6 @@ function updatePendingUsersBadge() {
 }
 
 function renderAdminSettingsView() {
-  if (typeof renderInvoiceTemplateCard === 'function') renderInvoiceTemplateCard();
   loadPushUserIds();
   updatePendingUsersBadge();
   document.getElementById('settingsAppNameInput').value = appSettings.app_name || 'GVD LIVE';
@@ -3974,7 +3974,6 @@ function setupEventListeners() {
 
   document.getElementById('btnAssignUnassignedSites').addEventListener('click', assignUnassignedToMe);
   if (typeof setupReportsListeners === 'function') setupReportsListeners();
-  if (typeof setupInvoiceTemplateListeners === 'function') setupInvoiceTemplateListeners();
   refreshJobScopeSelects();
   document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
   document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
@@ -5346,7 +5345,6 @@ function openUserModal(userId) {
   const hh0 = financeHourly[String(user.id)] || {};
   if (financePay[String(user.id)] === 'hourly') document.getElementById('userModalDayRate').value = hh0.rate != null ? hh0.rate : '';
   document.getElementById('userModalHours').value = hh0.hpd || 8;
-  document.getElementById('userModalSubmitsInvoices').checked = user.submits_invoices === true;
   updateUserModalPayUi();
 
   // Login sharing is only offered for people who have never used the app
@@ -5375,8 +5373,7 @@ async function handleSaveUserModal() {
     job_title: document.getElementById('userModalJob').value.trim(),
     role: document.getElementById('userModalRole').value,
     status: document.getElementById('userModalStatus').value,
-    color: document.getElementById('userModalColor').value,
-    submits_invoices: document.getElementById('userModalSubmitsInvoices').checked
+    color: document.getElementById('userModalColor').value
   };
   Object.assign(user, updates);
   if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));

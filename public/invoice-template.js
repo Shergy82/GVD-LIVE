@@ -4,12 +4,6 @@
 // fixed labels ("Invoice no:", "Week ending:", "Net total", "Total VAT", "Invoice total"), one line per job
 // (job address + days + rate + amount), and the typed-in values are read from the form fields.
 // -------------------------------------------------------------------
-function otLastSunday() {
-  const d = new Date(); d.setHours(12, 0, 0, 0);
-  d.setDate(d.getDate() - d.getDay());   // Sunday on or before today
-  return diaryDateKey(d);
-}
-
 async function buildOperativeInvoicePdf(opts) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
@@ -118,42 +112,4 @@ async function buildOperativeInvoicePdf(opts) {
   ];
   let ny = 792; if (!flat) notes.forEach(n => { const ls = doc.splitTextToSize(n, R - M); doc.text(ls, M, ny); ny += ls.length * 10 + 1; });
   return doc;
-}
-
-async function downloadOperativeInvoice(prefill) {
-  if (typeof window.jspdf === 'undefined') { alert('The PDF library is still loading, please try again.'); return; }
-  let opts = { weekEnding: '', operative: '', lines: [] };
-  if (prefill) {
-    const uid = document.getElementById('otOperative').value;
-    const we = document.getElementById('otWeekEnding').value || otLastSunday();
-    const u = allUsers.find(x => String(x.id) === uid);
-    if (!u) { alert('Choose the operative first.'); return; }
-    const start = addDaysISO(we, -6);
-    const bySite = {};
-    allShifts.filter(sh => String(sh.operative_id) === uid && !sh.is_drying_day && sh.shift_date >= start && sh.shift_date <= we).forEach(sh => {
-      bySite[sh.site_id] = (bySite[sh.site_id] || 0) + (sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1);
-    });
-    const lines = Object.keys(bySite).map(id => ({ address: (allSites.find(s => String(s.id) === String(id)) || {}).address || 'Job ' + id, days: bySite[id] }));
-    opts = { weekEnding: we, operative: u.full_name, lines };
-  } else {
-    opts.weekEnding = '';
-  }
-  const doc = await buildOperativeInvoicePdf(opts);
-  doc.save(prefill ? `Invoice_${opts.operative.replace(/[^A-Za-z0-9]+/g, '_')}_w-e_${opts.weekEnding}.pdf` : 'GVD_Operative_Invoice_Template.pdf');
-}
-
-function renderInvoiceTemplateCard() {
-  const sel = document.getElementById('otOperative');
-  if (!sel) return;
-  const prev = sel.value;
-  sel.innerHTML = '<option value="">Choose operative...</option>' + allUsers.filter(u => u.status === 'Active').sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map(u => `<option value="${diaryEsc(u.id)}">${diaryEsc(u.full_name)}</option>`).join('');
-  sel.value = prev;
-  const we = document.getElementById('otWeekEnding');
-  if (!we.value) we.value = otLastSunday();
-}
-
-function setupInvoiceTemplateListeners() {
-  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
-  on('btnOtBlank', () => downloadOperativeInvoice(false).catch(e => alert('Could not build the template: ' + e.message)));
-  on('btnOtPrefill', () => downloadOperativeInvoice(true).catch(e => alert('Could not build the invoice: ' + e.message)));
 }

@@ -23,13 +23,13 @@ function startMyInvoiceSync() {
   if (!db || !currentUser) return;
   const warn = n => err => console.warn(`Firestore ${n} error:`, err);
   const me = String(currentUser.id);
-  if (currentUser.submits_invoices) {
+  {
     myInvUnsubs.push(db.collection('invoice_profiles').doc(me).onSnapshot(doc => {
       myInvProfile = doc.exists ? doc.data() : null;
       if (!isTypingIn('myInvoiceBody')) renderMyInvoiceView();
     }, warn('invoice_profiles')));
   }
-  const q = isManagementUser(currentUser) ? db.collection('operative_invoices') : (currentUser.submits_invoices ? db.collection('operative_invoices').where('user_id', '==', me) : null);
+  const q = isManagementUser(currentUser) ? db.collection('operative_invoices') : db.collection('operative_invoices').where('user_id', '==', me);
   if (q) myInvUnsubs.push(q.onSnapshot(snap => {
     operativeInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     if (!isTypingIn('myInvoiceBody')) renderMyInvoiceView();
@@ -135,7 +135,7 @@ function renderMyInvoiceView() {
       </tbody></table></div>
       <div style="margin: 8px 0;"><button type="button" class="btn btn-outline btn-sm" id="miAddLine">+ Add a job</button></div>
       <div style="text-align: right; line-height: 1.7;">Net ${money(t.net)}<br>${myInvProfile && myInvProfile.vat_registered ? `VAT ${money(t.vat)}<br>` : ''}<strong style="font-size: 1.1rem;">Total ${money(t.gross)}</strong></div>
-      <div style="margin-top: 10px;"><button type="button" class="btn btn-primary" id="miSubmit" style="width: 100%;" ${complete ? '' : 'disabled title="Save your details first"'}>📨 Submit invoice for ${money(t.gross)}</button>${complete ? '' : '<p style="color: var(--warning); font-size: 0.8rem; margin-top: 6px;">Save your bank details above first.</p>'}</div>`;
+      <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-outline" id="miDraftPdf" ${complete ? '' : 'disabled'}>📄 Download PDF</button><button type="button" class="btn btn-primary" id="miSubmit" style="flex: 1;" ${complete ? '' : 'disabled title="Save your details first"'}>📨 Send to the office · ${money(t.gross)}</button></div><div>${complete ? '' : '<p style="color: var(--warning); font-size: 0.8rem; margin-top: 6px;">Save your bank details above first.</p>'}</div>`;
   }
   html += '</div>';
 
@@ -182,6 +182,10 @@ function miBind(host) {
   on('.mi-del', 'click', el => { myInvDraft.lines.splice(+el.dataset.i, 1); renderMyInvoiceView(); });
   on('#miAddLine', 'click', () => { myInvDraft.lines.push({ siteId: '', days: 1, plannerDays: null, rate: myInvProfile && myInvProfile.default_rate != null ? parseFloat(myInvProfile.default_rate) : null, amount: null, manual: false }); renderMyInvoiceView(); });
   on('#miSubmit', 'click', (el) => submitMyInvoice(el));
+  on('#miDraftPdf', 'click', async () => {
+    const rec = miRecordFromDraft(false);
+    if (rec) miDownloadPdf(rec).catch(e => alert('Could not build the PDF: ' + e.message));
+  });
   on('.mi-pdf', 'click', el => { const rec = operativeInvoices.find(x => x.id === el.dataset.id); if (rec) miDownloadPdf(rec).catch(e => alert('Could not build the PDF: ' + e.message)); });
   on('.mi-withdraw', 'click', async el => {
     if (!confirm('Withdraw this invoice so you can change it?')) return;
@@ -189,22 +193,19 @@ function miBind(host) {
   });
 }
 
-async function submitMyInvoice(btn) {
+function miRecordFromDraft(forSubmit) {
   const d = myInvDraft;
-  if (!miProfileComplete(myInvProfile)) { alert('Save your bank details first.'); return; }
-  if (!d.invNo) { alert('Enter an invoice number.'); return; }
+  if (!miProfileComplete(myInvProfile)) { alert('Save your bank details first.'); return null; }
+  if (!d.invNo) { alert('Enter an invoice number.'); return null; }
   const lines = d.lines.filter(l => l.siteId || l.amount);
-  if (!lines.length) { alert('Add at least one job.'); return; }
-  if (lines.some(l => !l.siteId)) { alert('Choose the job on every line.'); return; }
-  if (lines.some(l => !(parseFloat(l.amount) > 0))) { alert('Every line needs an amount (days × rate).'); return; }
-  if (new Set(lines.map(l => String(l.siteId))).size !== lines.length) { alert('The same job is on two lines - put them on one line.'); return; }
+  if (!lines.length) { alert('Add at least one job.'); return null; }
+  if (lines.some(l => !l.siteId)) { alert('Choose the job on every line.'); return null; }
+  if (lines.some(l => !(parseFloat(l.amount) > 0))) { alert('Every line needs an amount (days × rate).'); return null; }
+  if (new Set(lines.map(l => String(l.siteId))).size !== lines.length) { alert('The same job is on two lines - put them on one line.'); return null; }
   const t = miTotals({ lines });
-  if (!confirm(`Submit invoice ${d.invNo} for ${money(t.gross)}? You can withdraw it until it is approved.`)) return;
-  btn.disabled = true;
   const p = myInvProfile;
-  const id = 'oi_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-  const rec = {
-    id, user_id: String(currentUser.id), user_name: currentUser.full_name, status: 'submitted',
+  return {
+    id: 'oi_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), user_id: String(currentUser.id), user_name: currentUser.full_name, status: 'submitted',
     week_start: miMonday(d.weekEnd), week_end: d.weekEnd, invoice_no: d.invNo, invoice_date: d.invDate,
     lines: lines.map(l => ({ site_id: String(l.siteId), address: miSiteName(l.siteId), days: parseFloat(l.days) || 0, planner_days: l.plannerDays != null ? l.plannerDays : null, rate: l.rate, net: miR2(l.amount) })),
     net: t.net, vat: t.vat, gross: t.gross,
@@ -212,14 +213,23 @@ async function submitMyInvoice(btn) {
     account_name: p.account_name, sort_code: p.sort_code, account_no: p.account_no,
     submitted_at: new Date().toISOString()
   };
+}
+
+async function submitMyInvoice(btn) {
+  const d = myInvDraft;
+  const rec = miRecordFromDraft(true);
+  if (!rec) return;
+  if (!confirm(`Send invoice ${rec.invoice_no} for ${money(rec.gross)} to the office? You can withdraw it until it is approved.`)) return;
+  btn.disabled = true;
+  const p = myInvProfile;
   try {
-    await db.collection('operative_invoices').doc(id).set(rec);
-    if (d.lines.some(l => l.rate != null) && (!p.default_rate)) await db.collection('invoice_profiles').doc(String(currentUser.id)).set({ default_rate: d.lines.find(l => l.rate != null).rate }, { merge: true }).catch(() => {});
+    await db.collection('operative_invoices').doc(rec.id).set(rec);
+    if (!p.default_rate && d.lines.some(l => l.rate != null)) await db.collection('invoice_profiles').doc(String(currentUser.id)).set({ default_rate: d.lines.find(l => l.rate != null).rate }, { merge: true }).catch(() => {});
     await Promise.all(allUsers.filter(u => u.status === 'Active' && isOwnerOrAdminUser(u)).map(u => db.collection('notifications').add({
-      target_user_id: String(u.id), title: '🧾 Invoice submitted', body: `${currentUser.full_name}: week ending ${miDate(d.weekEnd)} - ${money(t.gross)}`, created_at: new Date().toISOString()
+      target_user_id: String(u.id), title: '🧾 Invoice submitted', body: `${currentUser.full_name}: week ending ${miDate(d.weekEnd)} - ${money(rec.gross)}`, created_at: new Date().toISOString()
     }).catch(() => {})));
     myInvDraft = null;
-    showGreenToast('Invoice submitted');
+    showGreenToast('Invoice sent to the office');
   } catch (err) { alert('Could not submit: ' + err.message); btn.disabled = false; }
 }
 
