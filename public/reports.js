@@ -14,7 +14,7 @@ function repMondayOf(iso) {
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
   return diaryDateKey(d);
 }
-function repShort(iso) { return iso ? formatUKDate(iso) : ''; }
+function repShort(iso) { if (!iso) return ''; const p = String(iso).split('T')[0].split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0].slice(2)}` : iso; }
 function repQuarterList() {
   const now = new Date(); let y = now.getFullYear(), q = Math.floor(now.getMonth() / 3) + 1;
   const out = [];
@@ -120,8 +120,8 @@ function buildQuarterReport() {
   }).sort((a, b) => (a.install || '9999').localeCompare(b.install || '9999') || a.site.address.localeCompare(b.site.address));
 
   const columns = [
-    { h: 'Job address' }, { h: 'Postcode' }, { h: 'Client' }, { h: 'Client PO' }, { h: 'Install date' }, { h: 'Completion date' }, { h: 'Handover docs' },
-    { h: 'Job value', a: 'right' }, { h: 'Total cost', a: 'right' }, { h: 'Profit', a: 'right' }, { h: 'Profit %', a: 'right' }, { h: 'Invoice raised' }, { h: 'Date paid' }, { h: 'Status' }
+    { h: 'Job address' }, { h: 'Postcode' }, { h: 'Client' }, { h: 'Client PO' }, { h: 'Install' }, { h: 'Complete' }, { h: 'Handover' },
+    { h: 'Value', a: 'right' }, { h: 'Cost', a: 'right' }, { h: 'Profit', a: 'right' }, { h: '%', a: 'right' }, { h: 'Invoiced' }, { h: 'Paid' }, { h: 'Status' }
   ];
   const rowOf = j => [repAddressShort(j.site.address), repPostcode(j.site.address), j.client, j.po, repShort(j.install), repShort(j.completion), repShort(j.handover),
     j.f.value != null ? money(j.f.value) : 'not set', money(j.f.totalCost), j.f.profit != null ? money(j.f.profit) : '-', REP_PCT(j.f.profit, j.f.value), repShort(j.raised), repShort(j.paid), j.status];
@@ -261,8 +261,8 @@ function repRenderHtml(rep) {
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px;">${rep.kpis.map(k => `<div class="site-card"><div style="font-size: 0.72rem; color: var(--text-muted);">${esc(k.label.toUpperCase())}</div><div style="font-size: 1.15rem; font-weight: 800; ${tone(k.tone)}">${esc(k.value)}</div></div>`).join('')}</div>`;
   if (!rep.sections.length) html += '<div class="site-card" style="color: var(--text-muted);">Nothing to report for this period.</div>';
   rep.sections.forEach(s => {
-    html += `<div class="site-card" style="margin-bottom: 14px; overflow-x: auto;">${s.heading ? `<h4 style="margin-bottom: 8px;">${esc(s.heading)}</h4>` : ''}
-      <table class="planner-table" style="min-width: 900px;"><thead><tr>${s.columns.map(c => `<th${c.a ? ` style="text-align: ${c.a};"` : ''}>${esc(c.h)}</th>`).join('')}</tr></thead><tbody>
+    html += `<div class="site-card" style="margin-bottom: 14px; padding: 12px;">${s.heading ? `<h4 style="margin-bottom: 8px;">${esc(s.heading)}</h4>` : ''}
+      <table class="rep-table"><thead><tr>${s.columns.map(c => `<th${c.a ? ` style="text-align: ${c.a};"` : ''}>${esc(c.h)}</th>`).join('')}</tr></thead><tbody>
       ${s.rows.map(r => `<tr>${r.map((v, i) => {
         const st = s.statusCol === i && REP_STATUS_COL[v];
         const style = [s.columns[i].a ? `text-align: ${s.columns[i].a}` : '', st ? `background: ${st[0]}; color: ${st[1]}; font-weight: 700` : ''].filter(Boolean).join('; ');
@@ -272,7 +272,7 @@ function repRenderHtml(rep) {
       </tbody></table></div>`;
   });
   html += `<div class="site-card" style="margin-bottom: 14px;"><h4 style="margin-bottom: 8px;">${rep.attention.length ? `⚠️ Needs attention (${rep.attention.length})` : '✅ Nothing needs attention'}</h4>
-    ${rep.attention.length ? `<table class="planner-table" style="min-width: 0;"><tbody>${rep.attention.map(a => `<tr><td><strong>${esc(a[0])}</strong><div style="font-size: 0.75rem; color: var(--text-muted);">${esc(a[1])}</div></td><td>${esc(a[2])}</td></tr>`).join('')}</tbody></table>` : '<p style="color: var(--text-muted);">Every job in this report has the information needed to report accurately.</p>'}</div>
+    ${rep.attention.length ? `<table class="rep-table"><tbody>${rep.attention.map(a => `<tr><td><strong>${esc(a[0])}</strong><div style="font-size: 0.75rem; color: var(--text-muted);">${esc(a[1])}</div></td><td>${esc(a[2])}</td></tr>`).join('')}</tbody></table>` : '<p style="color: var(--text-muted);">Every job in this report has the information needed to report accurately.</p>'}</div>
     <div style="color: var(--text-muted); font-size: 0.8rem;">${rep.notes.map(n => `<p style="margin-bottom: 4px;">${esc(n)}</p>`).join('')}</div>`;
   return html;
 }

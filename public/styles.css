@@ -1529,3 +1529,11 @@ body {
   border-bottom-color: var(--primary);
 }
 .fin-subtabs { border-bottom: 1px solid var(--border-color); }
+
+/* Finance reports table: fits the page, wraps text, keeps numbers and dates on one line */
+.rep-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; table-layout: auto; }
+.rep-table th, .rep-table td { padding: 6px 7px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+.rep-table th { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.02em; color: var(--text-muted); white-space: nowrap; }
+.rep-table td:nth-child(n+5):not(:last-child) { white-space: nowrap; }
+.rep-table td:last-child { white-space: nowrap; }
+@media (max-width: 900px) { .rep-table { font-size: 0.72rem; } #repOutput .site-card { overflow-x: auto; } .rep-table { min-width: 820px; } }
