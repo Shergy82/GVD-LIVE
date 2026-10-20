@@ -5822,9 +5822,9 @@ function suggestSites(text, sites, limit = 3) {
 // ---- Batch import ----
 let invBatch = [];
 
-function invSiteOptions(selectedId) {
-  return `<option value="">Choose job...</option>` + allSites.filter(x => !x.is_archived || String(x.id) === String(selectedId))
-    .map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(selectedId) ? ' selected' : ''}>${diaryEsc(x.address)}</option>`).join('');
+function invSiteOptions(selectedId, includeArchived = false) {
+  return `<option value="">Choose job...</option>` + allSites.filter(x => includeArchived || !x.is_archived || String(x.id) === String(selectedId))
+    .map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(selectedId) ? ' selected' : ''}>${diaryEsc(x.address)}${x.is_archived ? ' (archived)' : ''}</option>`).join('');
 }
 
 function invPoOptions(siteId, selectedPo) {
@@ -6069,7 +6069,7 @@ async function openAssignInvoice(fileId) {
   overlay.innerHTML = `<div class="modal-card"><div class="modal-header"><h3>Attach invoice to a job</h3></div>
     <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">${diaryEsc(invMerchantOf(f) || f.filename)} · ${diaryEsc(f.invoice_no || 'no invoice no.')} · ${diaryEsc(formatPounds(f.invoice_net) || '-')} net</p>
     <div id="invAssignSuggest" style="margin-bottom: 12px;">⏳ Reading the invoice for an address...</div>
-    <select id="invAssignSite" class="form-control">${invSiteOptions('')}</select>
+    <select id="invAssignSite" class="form-control">${invSiteOptions('', true)}</select>
     <div style="display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end;">
       <button type="button" class="btn btn-outline" id="invAssignCancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="invAssignSave">Attach</button>
@@ -6093,10 +6093,10 @@ async function openAssignInvoice(fileId) {
   } catch (err) { console.warn('Could not read invoice text', err); }
   const box = overlay.querySelector('#invAssignSuggest');
   if (!box) return;
-  const guesses = suggestSites(text, allSites.filter(s => !s.is_archived), 3);
+  const guesses = suggestSites(text, allSites, 3);
   if (!guesses.length) { box.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No address found on the invoice - choose the job below.</span>'; return; }
   box.innerHTML = `<div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">Could be:</div>` + guesses.map(g =>
-    `<button type="button" class="btn btn-outline inv-guess" data-id="${diaryEsc(g.site.id)}" style="display: block; width: 100%; text-align: left; margin-bottom: 6px;">${diaryEsc(g.site.address)} <small style="color: var(--text-muted);">- invoice mentions "${diaryEsc(g.hits.join(', '))}"</small></button>`).join('');
+    `<button type="button" class="btn btn-outline inv-guess" data-id="${diaryEsc(g.site.id)}" style="display: block; width: 100%; text-align: left; margin-bottom: 6px;">${diaryEsc(g.site.address)}${g.site.is_archived ? ' (archived)' : ''} <small style="color: var(--text-muted);">- invoice mentions "${diaryEsc(g.hits.join(', '))}"</small></button>`).join('');
   box.querySelectorAll('.inv-guess').forEach(b => b.addEventListener('click', () => { sel.value = b.dataset.id; }));
   if (guesses.length === 1 || guesses[0].score > guesses[1].score * 1.5) sel.value = String(guesses[0].site.id);
 }
