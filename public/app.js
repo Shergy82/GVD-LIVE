@@ -4742,8 +4742,19 @@ function populateShiftSelects(selectedSiteId, selectedOpId) {
   opSelect.innerHTML = availableOps.map(op => `<option value="${op.id}" ${String(op.id) === String(selectedOpId) ? 'selected' : ''}>${op.full_name} (${op.role})</option>`).join('');
 }
 
+let shiftSaving = false;
 async function handleSaveShift(e) {
   e.preventDefault();
+  // A double tap on a phone used to run this twice and create the shift twice
+  if (shiftSaving) return;
+  shiftSaving = true;
+  const submitBtn = document.querySelector('#shiftForm button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  try { await saveShiftFromForm(); }
+  finally { shiftSaving = false; if (submitBtn) submitBtn.disabled = false; }
+}
+
+async function saveShiftFromForm() {
   const shiftId = document.getElementById('shiftIdInput').value;
   const site_id = parseInt(document.getElementById('shiftSiteSelect').value);
   const operative_id = document.getElementById('shiftOpSelect').value;
@@ -4785,7 +4796,7 @@ async function handleSaveShift(e) {
     const numDays = isDuplicate ? Math.max(1, parseInt(document.getElementById('shiftDuplicateDaysInput')?.value) || 1) : 1;
 
     const [year, month, day] = shift_date.split('-').map(Number);
-    let createdCount = 0;
+    let createdCount = 0, skippedDuplicates = 0;
 
     const includeWeekends = !!document.getElementById('shiftDuplicateWeekends')?.checked;
     let dayOffset = -1;
@@ -4795,6 +4806,8 @@ async function handleSaveShift(e) {
       do { dayOffset++; d = new Date(year, month - 1, day + dayOffset); } while (isDuplicate && !includeWeekends && isWeekendDay(d));
       const currentDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       
+      // never create the same person / job / day / period twice
+      if (allShifts.some(s => String(s.operative_id) === String(operative_id) && parseInt(s.site_id) === site_id && s.shift_date === currentDateStr && (s.shift_period || 'all_day') === shift_period && !s.is_drying_day)) { skippedDuplicates++; continue; }
       const nextShiftId = allShifts.length > 0 ? Math.max(...allShifts.map(s => parseInt(s.id) || 0)) + 1 : 1;
       const newShift = {
         id: nextShiftId,
@@ -4823,7 +4836,9 @@ async function handleSaveShift(e) {
     closeModal('modalShift');
     renderActiveView();
 
-    if (createdCount > 1) {
+    if (skippedDuplicates && !createdCount) {
+      showGreenToast('That shift already exists - nothing added');
+    } else if (createdCount > 1) {
       showGreenToast(`⚡ ${createdCount} shifts assigned${includeWeekends ? '' : ' (Mon–Fri)'}!`);
     } else if (!isDraftPlanningMode && shift_date >= todayStr) {
       showGreenToast('⚡ Live Shift Saved & Operative Notified!');
@@ -5290,7 +5305,11 @@ function openUserModal(userId) {
   const rateGroup = document.getElementById('userModalRateGroup');
   rateGroup.style.display = isOwnerOrAdminUser(currentUser) ? '' : 'none';
   document.getElementById('userModalDayRate').value = financeRates[String(user.id)] != null ? financeRates[String(user.id)] : '';
-  document.getElementById('userModalPayType').value = financePay[String(user.id)] === 'price' ? 'price' : 'day';
+  document.getElementById('userModalPayType').value = financePay[String(user.id)] || 'day';
+  const hh0 = financeHourly[String(user.id)] || {};
+  if (financePay[String(user.id)] === 'hourly') document.getElementById('userModalDayRate').value = hh0.rate != null ? hh0.rate : '';
+  document.getElementById('userModalHours').value = hh0.hpd || 8;
+  updateUserModalPayUi();
 
   // Login sharing is only offered for people who have never used the app
   const loginBox = document.getElementById('userModalLoginBox');
@@ -5325,9 +5344,11 @@ async function handleSaveUserModal() {
   if (db && isOwnerOrAdminUser(currentUser)) {
     const rateRaw = document.getElementById('userModalDayRate').value;
     const rate = rateRaw === '' ? null : parseFloat(rateRaw);
-    await db.collection('finance_rates').doc(String(user.id)).set({
-      user_id: String(user.id), day_rate: isNaN(rate) ? null : rate, pay_type: document.getElementById('userModalPayType').value
-    }, { merge: true }).catch(console.warn);
+    const pt = document.getElementById('userModalPayType').value;
+    const rec = { user_id: String(user.id), pay_type: pt };
+    if (pt === 'hourly') { rec.hourly_rate = isNaN(rate) ? null : rate; rec.hours_per_day = parseFloat(document.getElementById('userModalHours').value) || 8; }
+    else rec.day_rate = isNaN(rate) ? null : rate;
+    await db.collection('finance_rates').doc(String(user.id)).set(rec, { merge: true }).catch(console.warn);
   }
   saveLocalStorageData();
   closeModal('modalUser');
@@ -6217,7 +6238,7 @@ function renderLabourCheck() {
   const alloc = allocateShiftCosts();
   const days = {};
   allShifts.forEach(sh => {
-    if (!sh.operative_id || sh.is_drying_day || !sh.shift_date || sh.shift_date < oldest || sh.shift_date > today) return;
+    if (!sh.operative_id || sh.is_drying_day || !sh.shift_date || sh.shift_date < oldest || sh.shift_date > today || isDirectPay(sh.operative_id)) return;
     const a = alloc.get(sh); if (!a) return;
     const k = `${sh.operative_id}|${mondayOfISO(sh.shift_date)}`;
     days[k] = (days[k] || 0) + a.frac;
@@ -6385,6 +6406,8 @@ let financeCosts = [];
 let financeVariations = [];
 let financeRates = {};
 let financePay = {};
+let financeHourly = {};   // direct employees on an hourly rate: { rate, hpd }
+function isDirectPay(opId) { const p = financePay[String(opId)]; return p === 'hourly' || p === 'direct'; }
 let financeUnsubs = [];
 
 function startFinanceSync() {
@@ -6410,10 +6433,20 @@ function startFinanceSync() {
   financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
     financePay = {};
+    financeHourly = {};
     snap.docs.forEach(d => {
-      const v = parseFloat(d.data().day_rate);
-      if (!isNaN(v)) financeRates[d.id] = v;
-      financePay[d.id] = d.data().pay_type === 'price' ? 'price' : 'day';
+      const data = d.data();
+      const pt = ['price', 'hourly', 'direct'].includes(data.pay_type) ? data.pay_type : 'day';
+      financePay[d.id] = pt;
+      if (pt === 'hourly') {
+        // an hourly rate is turned into a cost per full day (hours per day, 8 unless set); AM or PM shifts are half
+        const hr = parseFloat(data.hourly_rate), hpd = parseFloat(data.hours_per_day) || 8;
+        financeHourly[d.id] = { rate: isNaN(hr) ? null : hr, hpd };
+        if (!isNaN(hr)) financeRates[d.id] = Math.round(hr * hpd * 100) / 100;
+      } else {
+        const v = parseFloat(data.day_rate);
+        if (!isNaN(v)) financeRates[d.id] = v;
+      }
     });
     refreshFinanceViews();
   }, warn('finance_rates')));
@@ -6427,6 +6460,7 @@ function stopFinanceSync() {
   financeVariations = [];
   financeRates = {};
   financePay = {};
+  financeHourly = {};
   customerInvoices = [];
 }
 
@@ -6524,7 +6558,7 @@ function computeSiteFinance(site) {
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
     const a = alloc.get(sh) || { frac: 0, pence: 0, overlap: false };
     const frac = a.frac;
-    if ((sh.shift_date || '') >= cutoff) {
+    if ((sh.shift_date || '') >= cutoff && !isDirectPay(sh.operative_id)) {
       // from the cutoff, labour comes from invoices; the day-rate figure is only an estimate
       const r0 = financeRates[String(sh.operative_id)];
       if (financePay[String(sh.operative_id)] !== 'price' && r0 != null && (sh.shift_date || '') <= todayKey) labourEstimate += a.pence / 100;
@@ -6733,7 +6767,7 @@ function labourInvoiceCounts(f) {
 function isLabourInvoice(f) { return f.file_type === 'invoice' && (f.cost_type === 'labour' || !!f.contractor_id); }
 
 function priceWorkUsers() {
-  return allUsers.filter(u => u.status === 'Active' && (labourFromInvoices() || financePay[String(u.id)] === 'price'))
+  return allUsers.filter(u => u.status === 'Active' && !isDirectPay(u.id) && (labourFromInvoices() || financePay[String(u.id)] === 'price'))
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
 }
 
@@ -6827,14 +6861,22 @@ function renderFinanceView(force) {
   document.getElementById('finRatesCard').style.display = '';
   document.getElementById('finRatesBody').innerHTML = allUsers.filter(u => u.status === 'Active')
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map(u => {
-      const price = financePay[String(u.id)] === 'price';
+      const pt = financePay[String(u.id)] || 'day';
+      const price = pt === 'price';
+      const hourly = pt === 'hourly';
       const rate = financeRates[String(u.id)];
+      const hh = financeHourly[String(u.id)] || {};
+      const ptLabel = { day: 'Day rate', price: 'Price work', hourly: 'Hourly - direct employee', direct: 'Day rate - direct employee' };
       return `<tr>
         <td>${diaryEsc(u.full_name)}</td><td data-label="Role">${diaryEsc(u.role)}</td>
         <td data-label="Paid by">${canEditRates
-          ? `<select class="form-control fin-paytype" data-user="${diaryEsc(u.id)}" style="min-height: 32px; padding: 2px 8px; width: auto;"><option value="day"${price ? '' : ' selected'}>Day rate</option><option value="price"${price ? ' selected' : ''}>Price work</option></select>`
-          : (price ? 'Price work' : 'Day rate')}</td>
-        <td data-label="Day rate £">${price ? '<span style="color: var(--text-muted);">invoiced</span>' : canEditRates
+          ? `<select class="form-control fin-paytype" data-user="${diaryEsc(u.id)}" style="min-height: 32px; padding: 2px 8px; width: auto;">${Object.keys(ptLabel).map(k => `<option value="${k}"${pt === k ? ' selected' : ''}>${ptLabel[k]}</option>`).join('')}</select>`
+          : ptLabel[pt]}</td>
+        <td data-label="Rate">${price ? '<span style="color: var(--text-muted);">invoiced</span>' : hourly
+          ? (canEditRates
+            ? `<input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-hourly" data-user="${diaryEsc(u.id)}" value="${hh.rate != null ? hh.rate : ''}" placeholder="£ per hour" style="width: 110px; min-height: 32px; padding: 2px 8px; display: inline-block;"> × <input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-hpd" data-user="${diaryEsc(u.id)}" value="${hh.hpd || 8}" style="width: 60px; min-height: 32px; padding: 2px 8px; display: inline-block;"> h/day <span style="color: var(--text-muted); font-size: 0.75rem;">${rate != null ? '= ' + money(rate) + ' a day' : ''}</span>`
+            : (hh.rate != null ? `${money(hh.rate)}/h × ${hh.hpd || 8}h` : 'not set'))
+          : canEditRates
           ? `<input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${rate != null ? rate : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
           : (rate != null ? money(rate) : 'not set')}</td></tr>`;
     }).join('');
@@ -6842,6 +6884,13 @@ function renderFinanceView(force) {
     const v = inp.value === '' ? null : parseFloat(inp.value);
     if (v == null || !isNaN(v)) db.collection('finance_rates').doc(String(inp.dataset.user)).set({ user_id: String(inp.dataset.user), day_rate: v }, { merge: true }).catch(console.warn);
   }));
+  const saveHourly = user => {
+    const r = document.querySelector(`.fin-hourly[data-user="${user}"]`), h = document.querySelector(`.fin-hpd[data-user="${user}"]`);
+    const rate = r && r.value !== '' ? parseFloat(r.value) : null, hpd = h && h.value !== '' ? parseFloat(h.value) : 8;
+    if ((rate != null && isNaN(rate)) || isNaN(hpd)) return;
+    db.collection('finance_rates').doc(String(user)).set({ user_id: String(user), hourly_rate: rate, hours_per_day: hpd }, { merge: true }).catch(console.warn);
+  };
+  document.querySelectorAll('.fin-hourly, .fin-hpd').forEach(inp => inp.addEventListener('change', () => saveHourly(inp.dataset.user)));
   document.querySelectorAll('.fin-paytype').forEach(sel => sel.addEventListener('change', () => {
     db.collection('finance_rates').doc(String(sel.dataset.user)).set({ user_id: String(sel.dataset.user), pay_type: sel.value }, { merge: true }).catch(console.warn);
   }));
@@ -6895,7 +6944,7 @@ function updateLabourModeUi() {
   const fromEl = document.getElementById('finLabourFrom');
   if (fromEl) { fromEl.value = appSettings.labour_invoices_from || '2026-10-19'; fromEl.style.display = labourFromInvoices() ? '' : 'none'; fromEl.disabled = !isOwnerOrAdminUser(currentUser); }
   document.getElementById('finLabourModeHelp').textContent = labourFromInvoices()
-    ? "Shifts from the start date below no longer cost anything by themselves: each operative's weekly invoice is imported on the Invoices tab and its amounts are added to the jobs it covers. Earlier shifts keep their day-rate cost, so past jobs are unchanged."
+    ? "Shifts from the start date below no longer cost anything by themselves: each operative's weekly invoice is imported on the Invoices tab and its amounts are added to the jobs it covers. Earlier shifts keep their day-rate cost, so past jobs are unchanged. Direct employees (set to Hourly or Direct below) are always costed from their shifts."
     : 'Every booked shift (up to today) costs the person\'s day rate against the job, automatically. Operatives set to price work are costed from their invoices.';
   const rates = document.getElementById('finRatesCard');
   if (rates) rates.style.opacity = '';
@@ -6933,7 +6982,14 @@ function deleteVariation(id) {
   db.collection('finance_variations').doc(id).delete().catch(err => alert('Could not delete: ' + err.message));
 }
 
+function updateUserModalPayUi() {
+  const pt = document.getElementById('userModalPayType').value;
+  document.getElementById('userModalRateLabel').textContent = pt === 'hourly' ? 'Hourly rate £' : 'Day rate £';
+  document.getElementById('userModalHoursWrap').style.display = pt === 'hourly' ? '' : 'none';
+}
+
 function setupFinanceListeners() {
+  document.getElementById('userModalPayType').addEventListener('change', updateUserModalPayUi);
   document.getElementById('finLabourFrom').addEventListener('change', async ev => {
     if (!isOwnerOrAdminUser(currentUser)) return;
     const v = ev.target.value;

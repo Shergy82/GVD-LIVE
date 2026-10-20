@@ -1003,9 +1003,16 @@
         <select id="userModalPayType" class="form-control" style="margin-bottom: 8px;">
           <option value="day">Day rate</option>
           <option value="price">Price work (per m2 / job price - cost comes from invoices)</option>
+          <option value="hourly">Hourly - direct employee (costed from shifts)</option>
+          <option value="direct">Day rate - direct employee (costed from shifts)</option>
         </select>
-        <label for="userModalDayRate">Day rate £</label>
+        <label for="userModalDayRate" id="userModalRateLabel">Day rate £</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="userModalDayRate" class="form-control" placeholder="e.g. 200">
+        <div id="userModalHoursWrap" style="display: none; margin-top: 8px;">
+          <label for="userModalHours">Hours in a full day</label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="userModalHours" class="form-control" value="8">
+          <small style="color: var(--text-muted);">A full-day shift costs hourly rate × these hours; AM or PM shifts cost half.</small>
+        </div>
       </div>
       <div class="form-group">
         <label for="userModalColor">Planner colour</label>
@@ -1207,7 +1214,7 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=66.0"></script>
-  <script src="/reports.js?v=1.4"></script>
+  <script src="/app.js?v=67.0"></script>
+  <script src="/reports.js?v=1.5"></script>
 </body>
 </html>

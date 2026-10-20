@@ -179,10 +179,11 @@ function buildWeekReport() {
   const work = {};
   allShifts.forEach(sh => {
     if (!sh.operative_id || sh.is_drying_day || !inW(sh.shift_date) || !byId[String(sh.site_id)]) return;
-    const w = work[String(sh.site_id)] = work[String(sh.site_id)] || { frac: 0, cost: 0, ops: new Set() };
+    const w = work[String(sh.site_id)] = work[String(sh.site_id)] || { frac: 0, cost: 0, direct: 0, invFrac: 0, ops: new Set() };
     const a = alloc.get(sh) || { frac: 0, pence: 0 };
     w.frac += a.frac;
     if (sh.shift_date <= today) w.cost += a.pence / 100;
+    if (isDirectPay(sh.operative_id)) { if (sh.shift_date <= today) w.direct += a.pence / 100; } else w.invFrac += a.frac;
     const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
     if (u) w.ops.add(u.full_name);
   });
@@ -200,8 +201,8 @@ function buildWeekReport() {
   const wkOf = f => f.week_start || addDaysISO(mondayOfISO(f.invoice_date || String(f.created_at).slice(0, 10)), -7);
   const labInv = {};
   allPdfs.filter(f => labourInvoiceCounts(f) && byId[String(f.site_id)] && wkOf(f) === start).forEach(f => { labInv[String(f.site_id)] = (labInv[String(f.site_id)] || 0) + (parseFloat(f.invoice_net) || 0); });
-  const labourOf = j => viaInv ? (labInv[j.sid] || 0) : work[j.sid].cost;
-  const labour = viaInv ? sumN(Object.values(labInv), v => v) : sumN(Object.values(work), w => w.cost);
+  const labourOf = j => viaInv ? (labInv[j.sid] || 0) + work[j.sid].direct : work[j.sid].cost;
+  const labour = viaInv ? sumN(Object.values(labInv), v => v) + sumN(Object.values(work), w => w.direct) : sumN(Object.values(work), w => w.cost);
 
   const mk = (list, cols, rowFn, extra = {}) => ({ columns: cols, rows: list.map(rowFn), ...extra });
   const secsFor = (title, list, cols, rowFn, footFn) => {
@@ -217,7 +218,7 @@ function buildWeekReport() {
     ...secsFor('Jobs completed', completedJ, [{ h: 'Job address' }, { h: 'Manager' }, { h: 'Completed' }, { h: 'Job value', a: 'right' }, { h: 'Total cost', a: 'right' }, { h: 'Profit', a: 'right' }, { h: 'Profit %', a: 'right' }],
       j => [repAddressShort(j.site.address), j.manager, repShort(j.completion), j.f.value != null ? money(j.f.value) : 'not set', money(j.f.totalCost), j.f.profit != null ? money(j.f.profit) : '-', REP_PCT(j.f.profit, j.f.value)]),
     ...secsFor('On site this week', worked, [{ h: 'Job address' }, { h: 'Manager' }, { h: 'Who was on site' }, { h: 'Operative days', a: 'right' }, { h: viaInv ? 'Labour invoiced' : 'Labour cost', a: 'right' }, { h: 'Status' }],
-      j => [repAddressShort(j.site.address), j.manager, Array.from(work[j.sid].ops).join(', '), String(Math.round(work[j.sid].frac * 10) / 10), viaInv && !labInv[j.sid] ? 'awaiting invoice' : money(labourOf(j)), j.status],
+      j => [repAddressShort(j.site.address), j.manager, Array.from(work[j.sid].ops).join(', '), String(Math.round(work[j.sid].frac * 10) / 10), viaInv && !labInv[j.sid] && work[j.sid].invFrac > 0 ? (work[j.sid].direct ? money(labourOf(j)) + ' + awaiting invoice' : 'awaiting invoice') : money(labourOf(j)), j.status],
       list => ['TOTAL', '', '', String(Math.round(sumN(list, j => work[j.sid].frac) * 10) / 10), money(sumN(list, j => labourOf(j))), '']),
   ];
   if (supplier.length) sections.push({ heading: `Supplier invoices received (${supplier.length})`, columns: [{ h: 'Date' }, { h: 'Merchant' }, { h: 'Invoice no.' }, { h: 'Job' }, { h: 'Net', a: 'right' }],
