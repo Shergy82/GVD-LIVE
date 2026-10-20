@@ -5760,7 +5760,7 @@ function parseInvoiceText(lines) {
   const deliverIdx = lines.findIndex(l => /deliver(y)?\s*to/i.test(l));
   const deliverText = deliverIdx >= 0 ? lines.slice(deliverIdx, deliverIdx + 8).join(' ') : text;
 
-  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, hasText: text.length > 40 };
+  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, rawText: text, hasText: text.length > 40 };
 }
 
 function matchSiteByAddress(text, sites) {
@@ -5774,6 +5774,49 @@ function matchSiteByAddress(text, sites) {
     if (score >= 0.7 && (!best || score > best.score)) best = { site, score };
   });
   return best ? best.site : null;
+}
+
+// Suggest jobs from partial addresses: "Meaford" on an invoice should point at "18 Meaford Road, ...".
+// Words that most jobs share (road, town, county) count for little; a street name that only a few jobs share counts a lot.
+const ADDRESS_STOPWORDS = new Set(['road', 'rd', 'street', 'st', 'lane', 'ln', 'avenue', 'ave', 'close', 'drive', 'dr', 'way', 'court', 'crescent', 'grove', 'place', 'the', 'and', 'on', 'of', 'flat', 'unit', 'house', 'farm']);
+function addressWords(str) {
+  return String(str || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+}
+function wordsClose(a, b) {
+  if (a === b) return true;
+  if (a.length < 6 || b.length < 6 || Math.abs(a.length - b.length) > 1) return false;
+  // one letter out (typo / OCR slip)
+  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i);
+}
+function suggestSites(text, sites, limit = 3) {
+  const textWords = addressWords(text);
+  if (!textWords.length || !sites.length) return [];
+  const textSet = new Set(textWords);
+  const siteWords = sites.map(site => ({
+    site,
+    words: Array.from(new Set(addressWords(site.address).filter(w => w.length > 2 && !/^\d+$/.test(w) && !ADDRESS_STOPWORDS.has(w) && !/^[a-z]{1,2}\d{1,2}[a-z]?$|^\d[a-z]{2}$/.test(w)))),
+    numbers: addressWords(site.address).filter(w => /^\d{1,4}[a-z]?$/.test(w))
+  }));
+  const df = {};
+  siteWords.forEach(sw => sw.words.forEach(w => { df[w] = (df[w] || 0) + 1; }));
+  const out = [];
+  siteWords.forEach(sw => {
+    let score = 0; const hits = [];
+    sw.words.forEach(w => {
+      const weight = Math.log(1 + sites.length / df[w]) - Math.log(2);
+      if (weight <= 0.3) return;
+      const found = textSet.has(w) || (w.length >= 6 && textWords.some(t => wordsClose(t, w)));
+      if (found) { score += weight; hits.push(w); }
+    });
+    if (!hits.length) return;
+    // "18 meaford" beats a bare "meaford"
+    const numberNextToStreet = sw.numbers.some(n => hits.some(h => textWords.some((t, i) => t === n && (textWords[i + 1] === h || textWords[i - 1] === h))));
+    if (numberNextToStreet) score += 2;
+    out.push({ site: sw.site, score, hits, exactNumber: numberNextToStreet });
+  });
+  return out.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 // ---- Batch import ----
@@ -5799,7 +5842,11 @@ function analyseInvoice(parsed) {
     site = matchSiteByAddress(parsed.deliverText, allSites.filter(s => !s.is_archived));
     if (site) how = `📍 No PO number found - matched from the delivery address`;
   }
-  if (!site) how = parsed.po ? `⚠️ ${parsed.po} is on the invoice but not in the app - choose the job` : '⚠️ No PO number or matching address found - choose the job';
+  if (!site) {
+    const guess = suggestSites((parsed.deliverText || '') + ' ' + (parsed.rawText || ''), allSites.filter(s => !s.is_archived), 1)[0];
+    how = parsed.po ? `⚠️ ${parsed.po} is on the invoice but not in the app - choose the job` : '⚠️ No PO number or matching address found - choose the job';
+    if (guess) { site = guess.site; how = `🤔 Could be ${guess.site.address} (invoice mentions "${guess.hits.join(', ')}") - check it`; return { matchedPo, site, how, duplicate: parsed.invNo && allPdfs.some(f => f.file_type === 'invoice' && f.invoice_no === parsed.invNo), confident: false }; }
+  }
   const duplicate = parsed.invNo && allPdfs.some(f => f.file_type === 'invoice' && f.invoice_no === parsed.invNo);
   const priceOk = parsed.net != null && parsed.hasText;
   const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated && !duplicate;
@@ -6002,10 +6049,69 @@ function renderInvoiceRegister() {
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
       <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
       <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
-      <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+      <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${site ? '' : ` <button type="button" class="btn btn-primary btn-sm inv-assign" data-id="${diaryEsc(f.id)}">Attach to job</button>`}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
+  body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => openAssignInvoice(b.dataset.id)));
   body.querySelectorAll('.inv-delete').forEach(b => b.addEventListener('click', () => deleteInvoice(b.dataset.id)));
+}
+
+// ---- Attach an unassigned invoice to a job ----
+async function openAssignInvoice(fileId) {
+  const f = allPdfs.find(x => String(x.id) === String(fileId));
+  if (!f) return;
+  document.getElementById('invAssignOverlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay active';
+  overlay.id = 'invAssignOverlay';
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  overlay.innerHTML = `<div class="modal-card"><div class="modal-header"><h3>Attach invoice to a job</h3></div>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">${diaryEsc(invMerchantOf(f) || f.filename)} · ${diaryEsc(f.invoice_no || 'no invoice no.')} · ${diaryEsc(formatPounds(f.invoice_net) || '-')} net</p>
+    <div id="invAssignSuggest" style="margin-bottom: 12px;">⏳ Reading the invoice for an address...</div>
+    <select id="invAssignSite" class="form-control">${invSiteOptions('')}</select>
+    <div style="display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end;">
+      <button type="button" class="btn btn-outline" id="invAssignCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="invAssignSave">Attach</button>
+    </div></div>`;
+  document.body.appendChild(overlay);
+  const sel = overlay.querySelector('#invAssignSite');
+  overlay.querySelector('#invAssignCancel').addEventListener('click', close);
+  overlay.querySelector('#invAssignSave').addEventListener('click', async ev => {
+    if (!sel.value) { alert('Choose the job.'); return; }
+    ev.target.disabled = true;
+    try { await assignInvoiceToSite(f, sel.value); close(); showGreenToast('🧾 Invoice attached to the job'); }
+    catch (err) { alert('Could not attach: ' + err.message); ev.target.disabled = false; }
+  });
+  // suggestions: read the PDF text, plus the merchant and file name
+  let text = [invMerchantOf(f), f.filename].join(' ');
+  try {
+    const res = await fetch('/files/' + encodeURIComponent(f.id));
+    const blob = await res.blob();
+    const lines = await extractPdfLines(new File([blob], f.filename || 'invoice.pdf', { type: 'application/pdf' }));
+    text += ' ' + lines.join(' ');
+  } catch (err) { console.warn('Could not read invoice text', err); }
+  const box = overlay.querySelector('#invAssignSuggest');
+  if (!box) return;
+  const guesses = suggestSites(text, allSites.filter(s => !s.is_archived), 3);
+  if (!guesses.length) { box.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No address found on the invoice - choose the job below.</span>'; return; }
+  box.innerHTML = `<div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">Could be:</div>` + guesses.map(g =>
+    `<button type="button" class="btn btn-outline inv-guess" data-id="${diaryEsc(g.site.id)}" style="display: block; width: 100%; text-align: left; margin-bottom: 6px;">${diaryEsc(g.site.address)} <small style="color: var(--text-muted);">- invoice mentions "${diaryEsc(g.hits.join(', '))}"</small></button>`).join('');
+  box.querySelectorAll('.inv-guess').forEach(b => b.addEventListener('click', () => { sel.value = b.dataset.id; }));
+  if (guesses.length === 1 || guesses[0].score > guesses[1].score * 1.5) sel.value = String(guesses[0].site.id);
+}
+
+async function assignInvoiceToSite(f, siteId) {
+  const site = allSites.find(s => String(s.id) === String(siteId));
+  if (!site) throw new Error('Job not found');
+  await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id) });
+  f.site_id = String(site.id);
+  const po = allPOs.find(p => p.po_number === f.po_number);
+  if (po) {
+    await db.collection('purchase_orders').doc(po.po_number).update({ site_id: String(site.id), site_address: site.address });
+    po.site_id = String(site.id); po.site_address = site.address;
+  }
+  renderInvoiceRegister();
 }
 
 async function deleteInvoice(fileId) {
