@@ -1416,7 +1416,7 @@ function getSiteFinish(siteId) {
 
 // Sites finishing soonest first, then sites with no finish date yet, then completed sites last
 function getPlannerSites() {
-  const sites = allSites.filter(site => !site.is_archived);
+  const sites = allSites.filter(site => !site.is_archived && (!currentUser || !isManagementUser(currentUser) || siteInScope(site)));
   const info = new Map(sites.map(site => [site.id, getSiteFinish(site.id)]));
   const rank = site => { const f = info.get(site.id); return !f ? 1 : f.completed ? 2 : 0; };
   return sites
@@ -1963,7 +1963,25 @@ async function openShiftDetailModal(shiftId) {
 // -------------------------------------------------------------------
 // SITES LIST & PROJECT PAGE
 // -------------------------------------------------------------------
+function updateAssignUnassignedBtn() {
+  const btn = document.getElementById('btnAssignUnassignedSites');
+  if (!btn) return;
+  const n = allSites.filter(s => !s.is_archived && !s.manager_id).length;
+  btn.style.display = n && currentUser && isManagementUser(currentUser) ? '' : 'none';
+  btn.textContent = `Assign ${n} unassigned to me`;
+}
+async function assignUnassignedToMe() {
+  const todo = allSites.filter(s => !s.is_archived && !s.manager_id);
+  if (!todo.length || !confirm(`Assign ${todo.length} active job${todo.length > 1 ? 's' : ''} with no manager to ${currentUser.full_name}?`)) return;
+  try {
+    for (const s of todo) { await db.collection('sites').doc(String(s.id)).update({ manager_id: String(currentUser.id) }); s.manager_id = String(currentUser.id); }
+    showGreenToast(`${todo.length} job${todo.length > 1 ? 's' : ''} assigned to you`);
+  } catch (err) { alert('Could not assign: ' + err.message); }
+  renderSitesList();
+}
+
 function renderSitesList() {
+  updateAssignUnassignedBtn();
   const container = document.getElementById('sitesListContainer');
   const projectPage = document.getElementById('projectPageContainer');
 
@@ -3925,6 +3943,7 @@ function setupEventListeners() {
     });
   });
 
+  document.getElementById('btnAssignUnassignedSites').addEventListener('click', assignUnassignedToMe);
   refreshJobScopeSelects();
   document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
   document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
@@ -5075,7 +5094,8 @@ function renderDiaryView() {
 
   const todayKey = diaryDateKey(new Date());
   const byDate = {};
-  allDiary.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const diaryEntries = allDiary.filter(e => !e.site_id || siteInScope(allSites.find(s => String(s.id) === String(e.site_id))));
+  diaryEntries.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
   Object.values(byDate).forEach(list => list.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
 
   const first = new Date(year, month, 1);
@@ -5098,7 +5118,7 @@ function renderDiaryView() {
     });
   });
 
-  const monthEntries = allDiary.filter(e => (e.date || '') >= todayKey)
+  const monthEntries = diaryEntries.filter(e => (e.date || '') >= todayKey)
     .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
   const agenda = document.getElementById('diaryAgenda');
   if (monthEntries.length === 0) {
