@@ -70,8 +70,8 @@ function repAttention(j) {
   const today = repToday();
   if (j.status === 'PIPELINE') return out;
   if (j.f.value == null) out.push('No job value entered, so profit cannot be shown');
-  if (j.f.noRate.length && !labourFromInvoices()) out.push(`No day rate for ${j.f.noRate.join(', ')} - their labour counts as £0`);
-  if (j.f.doubleBooked.length && !labourFromInvoices()) out.push(`Someone is booked on two jobs at once (${j.f.doubleBooked.length} case${j.f.doubleBooked.length > 1 ? 's' : ''}) - check the cost split`);
+  if (j.f.noRate.length) out.push(`No day rate for ${j.f.noRate.join(', ')} - their labour counts as £0`);
+  if (j.f.doubleBooked.length) out.push(`Someone is booked on two jobs at once (${j.f.doubleBooked.length} case${j.f.doubleBooked.length > 1 ? 's' : ''}) - check the cost split`);
   if (j.status === 'COMPLETE' && !j.invs.length) out.push('Job complete but no invoice raised');
   if (j.status === 'COMPLETE' && !j.handover) out.push('Job complete but handover documents not recorded as sent');
   if (j.status === 'COMPLETE' && j.f.onOrder > 0) out.push(`${money(j.f.onOrder)} of materials still "on order" (estimate, not invoiced) on a completed job`);
@@ -198,10 +198,10 @@ function buildWeekReport() {
   const extras = financeCosts.filter(c => inW(c.date) && byId[String(c.site_id)]);
   const sumN = (arr, fn) => arr.reduce((t, x) => t + fn(x), 0);
   // Labour is costed from operatives' invoices for the week (week_start), or from day rates if that mode is on
-  const viaInv = labourFromInvoices();
+  const viaInv = labourFromInvoices() && start >= labourCutoff();
   const wkOf = f => f.week_start || addDaysISO(mondayOfISO(f.invoice_date || String(f.created_at).slice(0, 10)), -7);
   const labInv = {};
-  allPdfs.filter(f => isLabourInvoice(f) && byId[String(f.site_id)] && wkOf(f) === start).forEach(f => { labInv[String(f.site_id)] = (labInv[String(f.site_id)] || 0) + (parseFloat(f.invoice_net) || 0); });
+  allPdfs.filter(f => labourInvoiceCounts(f) && byId[String(f.site_id)] && wkOf(f) === start).forEach(f => { labInv[String(f.site_id)] = (labInv[String(f.site_id)] || 0) + (parseFloat(f.invoice_net) || 0); });
   const labourOf = j => viaInv ? (labInv[j.sid] || 0) : work[j.sid].cost;
   const labour = viaInv ? sumN(Object.values(labInv), v => v) : sumN(Object.values(work), w => w.cost);
 

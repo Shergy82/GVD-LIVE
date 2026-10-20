@@ -6201,8 +6201,8 @@ function renderLabourCheck() {
   if (!labourFromInvoices()) { host.style.display = 'none'; return; }
   const today = diaryDateKey(new Date());
   const thisMon = mondayOfISO(today);
-  const weeks = [0, 1, 2, 3, 4, 5].map(i => addDaysISO(thisMon, -7 * i));
-  const oldest = weeks[weeks.length - 1];
+  const weeks = [0, 1, 2, 3, 4, 5].map(i => addDaysISO(thisMon, -7 * i)).filter(w => w >= labourCutoff());
+  const oldest = weeks[weeks.length - 1] || thisMon;
   const alloc = allocateShiftCosts();
   const days = {};
   allShifts.forEach(sh => {
@@ -6232,7 +6232,7 @@ function renderLabourCheck() {
   host.style.display = '';
   host.innerHTML = `<h3 style="margin-bottom: 4px;">👷 Weekly labour invoices</h3>
     <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">Days booked in the planner against the invoice received for that week. ${missing ? `<strong style="color: var(--warning);">${missing} week${missing > 1 ? 's' : ''} still waiting for an invoice.</strong>` : 'Nothing outstanding.'} Labour only counts as a cost once its invoice is imported below.</p>
-    ${people.length ? `<div style="overflow-x: auto;"><table class="rep-table"><thead><tr><th>Operative</th>${weeks.map(w => `<th>w/c ${diaryEsc(formatUKDate(w).slice(0, 5))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '<p style="color: var(--text-muted);">No shifts booked in the last six weeks.</p>'}`;
+    ${people.length ? `<div style="overflow-x: auto;"><table class="rep-table"><thead><tr><th>Operative</th>${weeks.map(w => `<th>w/c ${diaryEsc(formatUKDate(w).slice(0, 5))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '<p style="color: var(--text-muted);">No shifts booked since the start date.</p>'}`;
 }
 
 function invMerchantOf(f) {
@@ -6485,8 +6485,10 @@ function computeSiteFinance(site) {
   const pos = allPOs.filter(po => String(po.site_id) === sid && po.status !== 'Cancelled');
   const invoicedAll = pos.filter(po => po.invoice_value != null).reduce((t, po) => t + (parseFloat(po.invoice_value) || 0), 0);
   // Operatives' invoices are labour, not materials
-  const labourInvoiced = Math.round(allPdfs.filter(f => isLabourInvoice(f) && String(f.site_id) === sid).reduce((t, f) => t + (parseFloat(f.invoice_net) || 0), 0) * 100) / 100;
-  const invoiced = Math.max(0, Math.round((invoicedAll - labourInvoiced) * 100) / 100);
+  const labourDocs = allPdfs.filter(f => isLabourInvoice(f) && String(f.site_id) === sid);
+  const labourAllNet = labourDocs.reduce((t, f) => t + (parseFloat(f.invoice_net) || 0), 0);
+  const labourInvoiced = Math.round(labourDocs.filter(labourInvoiceCounts).reduce((t, f) => t + (parseFloat(f.invoice_net) || 0), 0) * 100) / 100;
+  const invoiced = Math.max(0, Math.round((invoicedAll - labourAllNet) * 100) / 100);
   const onOrder = pos.filter(po => po.invoice_value == null && po.est_value != null).reduce((t, po) => t + (parseFloat(po.est_value) || 0), 0);
   const extrasList = financeCosts.filter(c => String(c.site_id) === sid);
   const extras = extrasList.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
@@ -6499,10 +6501,18 @@ function computeSiteFinance(site) {
   // One person's cost on one day can never exceed their day rate: the day is worked out once per person across ALL sites
   // and shared out between the jobs (see allocateShiftCosts).
   const alloc = allocateShiftCosts();
+  const cutoff = labourCutoff();
+  let labourEstimate = 0;
   const doubleBooked = new Set();
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
     const a = alloc.get(sh) || { frac: 0, pence: 0, overlap: false };
     const frac = a.frac;
+    if ((sh.shift_date || '') >= cutoff) {
+      // from the cutoff, labour comes from invoices; the day-rate figure is only an estimate
+      const r0 = financeRates[String(sh.operative_id)];
+      if (financePay[String(sh.operative_id)] !== 'price' && r0 != null && (sh.shift_date || '') <= todayKey) labourEstimate += a.pence / 100;
+      return;
+    }
     if (a.overlap) {
       const u0 = allUsers.find(x => String(x.id) === String(sh.operative_id));
       doubleBooked.add(`${u0 ? u0.full_name : 'Unknown'} on ${sh.shift_date}`);
@@ -6521,9 +6531,6 @@ function computeSiteFinance(site) {
     labour = Math.round((labour + cost) * 100) / 100;
   });
 
-  // Invoice-based labour: shifts no longer cost anything on their own. The day-rate figure is kept as an estimate only.
-  let labourEstimate = 0;
-  if (labourFromInvoices()) { labourEstimate = labour; labour = 0; }
   const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
   const totalCost = invoiced + labourInvoiced + onOrder + labour + extras;
   const profit = value != null ? value - totalCost : null;
@@ -6560,7 +6567,7 @@ function renderSiteFinance(site) {
   const f = computeSiteFinance(site);
 
   const row = (label, val, sub) => `<tr><td>${label}${sub ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${sub}</div>` : ''}</td><td style="text-align: right; white-space: nowrap;">${val}</td></tr>`;
-  const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork || labourFromInvoices() ? '<span style="color: var(--text-muted);">Costed from their invoice</span>' : money(o.cost)}</td></tr>`).join('');
+  const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork ? '<span style="color: var(--text-muted);">Price work - see invoices</span>' : money(o.cost)}</td></tr>`).join('');
   const contractorRows = f.contractors.map(c => `<tr><td>${diaryEsc(c.name)}</td><td style="text-align: right;">${money(c.total)}</td></tr>`).join('');
   const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || ''))).map(c => `<tr>
       <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
@@ -6612,14 +6619,13 @@ function renderSiteFinance(site) {
       <table class="planner-table" style="min-width: 0;"><tbody>
         ${row('Materials invoiced', money(f.invoiced), 'From imported invoices (ex VAT)')}
         ${row('Materials on order', money(f.onOrder), 'POs raised but not yet invoiced (estimates)')}
-        ${labourFromInvoices()
-          ? row('Labour invoiced', money(f.labourInvoiced), `From operatives' weekly invoices (ex VAT). For reference only, booked days at day rates would be about ${money(f.labourEstimate)} - not counted`)
-          : row('Labour', money(f.labour), f.labourPlanned > 0 ? `Shifts up to today only. ${money(f.labourPlanned)} of future shifts not counted yet` : 'Shifts up to and including today')}
+        ${row('Labour (day rates)', money(f.labour), labourFromInvoices() ? `Shifts before ${formatUKDate(labourCutoff())} only` : (f.labourPlanned > 0 ? `Shifts up to today only. ${money(f.labourPlanned)} of future shifts not counted yet` : 'Shifts up to and including today'))}
+        ${labourFromInvoices() ? row('Labour invoiced', money(f.labourInvoiced), `From operatives' weekly invoices (ex VAT) for weeks from ${formatUKDate(labourCutoff())}.${f.labourEstimate ? ` For reference only, days booked since then at day rates would be about ${money(f.labourEstimate)} - not counted` : ''}`) : ''}
         ${row('Extra costs', money(f.extras))}
         ${row('<strong>Total cost</strong>', '<strong>' + money(f.totalCost) + '</strong>')}
       </tbody></table>
-      ${f.doubleBooked && f.doubleBooked.length && !labourFromInvoices() ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ Booked on more than one job at the same time: ${diaryEsc(f.doubleBooked.join('; '))}. Their day rate is shared between those jobs, never charged twice.</p>` : ''}
-      ${f.noRate.length && !labourFromInvoices() ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
+      ${f.doubleBooked && f.doubleBooked.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ Booked on more than one job at the same time: ${diaryEsc(f.doubleBooked.join('; '))}. Their day rate is shared between those jobs, never charged twice.</p>` : ''}
+      ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
     ${contractorRows ? `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Price work paid (ex VAT)</h4><table class="planner-table" style="min-width: 0;"><tbody>${contractorRows}</tbody></table><p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 6px;">Already included in materials / extra costs above.</p></div>` : ''}
@@ -6669,6 +6675,15 @@ async function saveJobValue(siteId, raw) {
 
 // Labour is costed from the operatives' weekly invoices (default). 'day_rate' puts the old automatic day-rate costing back.
 function labourFromInvoices() { return appSettings.labour_costing !== 'day_rate'; }
+// Invoice-based labour starts on this date (a Monday). Earlier shifts keep costing at day rates, exactly as before.
+function labourCutoff() { return labourFromInvoices() ? (appSettings.labour_invoices_from || '2026-10-19') : '9999-12-31'; }
+// A labour invoice counts if it covers a week from the cutoff on, or is for a price-work person (always counted), or has no week recorded (older invoices).
+// An invoice for an earlier week from someone on day rates would double count shifts already costed, so it is left out.
+function labourInvoiceCounts(f) {
+  if (!isLabourInvoice(f)) return false;
+  if (!f.week_start || f.week_start >= labourCutoff()) return true;
+  return financePay[String(f.contractor_id)] === 'price';
+}
 function isLabourInvoice(f) { return f.file_type === 'invoice' && (f.cost_type === 'labour' || !!f.contractor_id); }
 
 function priceWorkUsers() {
@@ -6831,18 +6846,29 @@ function updateLabourModeUi() {
   if (!sel) return;
   sel.value = labourFromInvoices() ? 'invoices' : 'day_rate';
   sel.disabled = !isOwnerOrAdminUser(currentUser);
+  const fromEl = document.getElementById('finLabourFrom');
+  if (fromEl) { fromEl.value = appSettings.labour_invoices_from || '2026-10-19'; fromEl.style.display = labourFromInvoices() ? '' : 'none'; fromEl.disabled = !isOwnerOrAdminUser(currentUser); }
   document.getElementById('finLabourModeHelp').textContent = labourFromInvoices()
-    ? "Booking someone on a shift no longer costs anything by itself. Each operative's weekly invoice is imported on the Invoices tab and its amounts are added to the jobs it covers. Day rates below are kept for reference only."
+    ? "Shifts from the start date below no longer cost anything by themselves: each operative's weekly invoice is imported on the Invoices tab and its amounts are added to the jobs it covers. Earlier shifts keep their day-rate cost, so past jobs are unchanged."
     : 'Every booked shift (up to today) costs the person\'s day rate against the job, automatically. Operatives set to price work are costed from their invoices.';
   const rates = document.getElementById('finRatesCard');
-  if (rates) rates.style.opacity = labourFromInvoices() ? '0.6' : '';
+  if (rates) rates.style.opacity = '';
 }
 
 function setupFinanceListeners() {
+  document.getElementById('finLabourFrom').addEventListener('change', async ev => {
+    if (!isOwnerOrAdminUser(currentUser)) return;
+    const v = ev.target.value;
+    if (!v || new Date(v + 'T12:00:00').getDay() !== 1) { alert('Pick a Monday so whole weeks switch over together.'); updateLabourModeUi(); return; }
+    if (!confirm(`Invoice-based labour will apply to shifts from ${formatUKDate(v)}. Shifts before that cost day rates. Continue?`)) { updateLabourModeUi(); return; }
+    appSettings.labour_invoices_from = v;
+    try { await db.collection('settings').doc('app').set({ labour_invoices_from: v }, { merge: true }); showGreenToast('Start date updated'); } catch (err) { alert('Could not save: ' + err.message); }
+    refreshFinanceViews(); renderActiveView(); updateLabourModeUi();
+  });
   document.getElementById('finLabourMode').addEventListener('change', async ev => {
     if (!isOwnerOrAdminUser(currentUser)) return;
     const v = ev.target.value === 'day_rate' ? 'day_rate' : 'invoices';
-    if (!confirm(v === 'invoices' ? 'Cost labour from weekly invoices only? Day-rate labour will stop being counted in every job and report.' : 'Go back to automatic day-rate labour costing? Shift costs will be counted again in every job and report.')) { updateLabourModeUi(); return; }
+    if (!confirm(v === 'invoices' ? 'Cost labour from weekly invoices from the start date? Shifts from that date will stop costing day rates.' : 'Go back to automatic day-rate labour costing? Shift costs will be counted again in every job and report.')) { updateLabourModeUi(); return; }
     appSettings.labour_costing = v;
     try { await db.collection('settings').doc('app').set({ labour_costing: v }, { merge: true }); showGreenToast('Labour costing updated'); }
     catch (err) { alert('Could not save: ' + err.message); }

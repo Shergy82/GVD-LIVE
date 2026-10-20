@@ -617,10 +617,11 @@
 
       <div class="site-card" id="finLabourModeCard" style="margin-bottom: 14px;">
         <h3 style="margin-bottom: 6px;">How labour is costed</h3>
-        <select id="finLabourMode" class="form-control" style="width: auto; margin-bottom: 8px;">
+        <select id="finLabourMode" class="form-control" style="width: auto; margin-bottom: 8px; display: inline-block;">
           <option value="invoices">Operatives' weekly invoices (recommended)</option>
           <option value="day_rate">Automatic day rates from the planner</option>
         </select>
+        <label style="font-size: 0.85rem; margin-left: 8px;">from <input type="date" id="finLabourFrom" class="form-control" style="display: inline-block; width: auto;"></label>
         <p style="color: var(--text-muted); font-size: 0.85rem;" id="finLabourModeHelp"></p>
       </div>
 
@@ -1205,7 +1206,7 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=63.0"></script>
-  <script src="/reports.js?v=1.2"></script>
+  <script src="/app.js?v=64.0"></script>
+  <script src="/reports.js?v=1.3"></script>
 </body>
 </html>
