@@ -3161,8 +3161,11 @@ function openCustomerInvoiceModal(siteId) {
   const co = ciCompany();
   const today = diaryDateKey(new Date());
   const net = document.getElementById('ciNet');
-  net.value = money(f.value);
-  net.dataset.pence = String(ciPence(f.value));
+  // the project total, or what is still to invoice if an invoice has already gone out (e.g. for a later variation)
+  const alreadyInvoiced = customerInvoices.filter(i => String(i.site_id) === String(site.id)).reduce((t, i) => t + (i.net_pence || 0) / 100, 0);
+  const toInvoice = alreadyInvoiced > 0 && f.value - alreadyInvoiced > 0.004 ? Math.round((f.value - alreadyInvoiced) * 100) / 100 : f.value;
+  net.value = money(toInvoice);
+  net.dataset.pence = String(ciPence(toInvoice));
   document.getElementById('ciSiteId').value = String(site.id);
   document.getElementById('ciNumber').value = ciNextNumber();
   document.getElementById('ciDate').value = today;
@@ -3171,7 +3174,10 @@ function openCustomerInvoiceModal(siteId) {
   document.getElementById('ciCustomerAddress').value = '';
   document.getElementById('ciCustomerRef').value = '';
   document.getElementById('ciSiteAddress').value = site.address || '';
-  document.getElementById('ciDescription').value = `Works at ${site.address || 'site'}`;
+  const varText = f.variations.filter(v => v.status === 'approved').map(v => `${v.ref || 'Variation'}: ${v.description} (${money(v.amount)})`).join('\n');
+  document.getElementById('ciDescription').value = alreadyInvoiced > 0 && toInvoice !== f.value
+    ? `Balance of works at ${site.address || 'site'}${varText ? '\nIncluding variations:\n' + varText : ''}`
+    : `Works at ${site.address || 'site'}${varText ? '\nIncluding variations:\n' + varText : ''}`;
   document.getElementById('ciVatMode').value = 'standard';
   document.getElementById('ciVatRate').value = '20';
   document.getElementById('ciNotes').value = co.note || '';
@@ -6371,6 +6377,7 @@ function setupInvoiceListeners() {
 // -------------------------------------------------------------------
 let financeJobs = {};
 let financeCosts = [];
+let financeVariations = [];
 let financeRates = {};
 let financePay = {};
 let financeUnsubs = [];
@@ -6387,6 +6394,10 @@ function startFinanceSync() {
     financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
   }, warn('finance_costs')));
+  financeUnsubs.push(db.collection('finance_variations').onSnapshot(snap => {
+    financeVariations = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    refreshFinanceViews();
+  }, warn('finance_variations')));
   financeUnsubs.push(db.collection('customer_invoices').onSnapshot(snap => {
     customerInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
@@ -6408,6 +6419,7 @@ function stopFinanceSync() {
   financeUnsubs = [];
   financeJobs = {};
   financeCosts = [];
+  financeVariations = [];
   financeRates = {};
   financePay = {};
   customerInvoices = [];
@@ -6531,7 +6543,12 @@ function computeSiteFinance(site) {
     labour = Math.round((labour + cost) * 100) / 100;
   });
 
-  const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
+  // Job value = original quote + approved variations (omissions are negative). Pending ones are shown but not counted.
+  const baseValue = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
+  const variations = financeVariations.filter(v => String(v.site_id) === sid).sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  const variationsApproved = Math.round(variations.filter(v => v.status === 'approved').reduce((t, v) => t + (parseFloat(v.amount) || 0), 0) * 100) / 100;
+  const variationsPending = Math.round(variations.filter(v => v.status === 'pending').reduce((t, v) => t + (parseFloat(v.amount) || 0), 0) * 100) / 100;
+  const value = baseValue != null ? Math.round((baseValue + variationsApproved) * 100) / 100 : null;
   const totalCost = invoiced + labourInvoiced + onOrder + labour + extras;
   const profit = value != null ? value - totalCost : null;
   const margin = value ? (profit / value) * 100 : null;
@@ -6547,7 +6564,7 @@ function computeSiteFinance(site) {
     const u = allUsers.find(x => String(x.id) === String(id));
     return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
   });
-  return { contractors, value, invoiced, labourInvoiced, labourEstimate, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), doubleBooked: Array.from(doubleBooked), totalCost, profit, margin };
+  return { contractors, value, baseValue, variations, variationsApproved, variationsPending, invoiced, labourInvoiced, labourEstimate, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), doubleBooked: Array.from(doubleBooked), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -6592,11 +6609,28 @@ function renderSiteFinance(site) {
     </div>
     <div class="site-card" style="margin-bottom: 16px;">
       <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-        <label for="finJobValue" style="font-weight: 700;">Job value (quote) £ ex VAT</label>
+        <label for="finJobValue" style="font-weight: 700;">Original quote £ ex VAT</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="finJobValue" class="form-control" step="0.01" min="0" value="${f.value != null ? f.value : ''}" placeholder="e.g. 10000" style="width: 180px;">
       </div>
-      ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the job value to see profit and margin.</p>' : ''}
+      ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the original quote to see profit and margin.</p>' : ''}
+      ${f.baseValue != null && f.variations.length ? `<p style="margin-top: 8px; font-size: 0.9rem;">Quote ${money(f.baseValue)} ${f.variationsApproved < 0 ? '−' : '+'} variations ${money(Math.abs(f.variationsApproved))} = <strong>current job value ${money(f.value)}</strong>${f.variationsPending ? ` <span style="color: var(--warning);">(${money(f.variationsPending)} of pending variations not included)</span>` : ''}</p>` : ''}
       ${isOwnerOrAdminUser(currentUser) ? `<div style="margin-top: 12px;"><button type="button" class="btn btn-primary" id="finCreateInvoice" style="width: auto;">🧾 Create invoice for ${f.value != null ? money(f.value) : 'the job'}</button></div>` : ''}
+    </div>
+    <div class="site-card" style="margin-bottom: 16px;">
+      <h4 style="margin-bottom: 4px;">Variations</h4>
+      <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 8px;">Extra or omitted works agreed after the quote. Approved variations change the job value, and so profit, margin and the invoice. Use a minus for omissions.</p>
+      ${f.variations.length ? `<div style="overflow-x: auto; margin-bottom: 10px;"><table class="rep-table"><thead><tr><th>Ref</th><th>Date</th><th>Description of works</th><th style="text-align: right;">Amount</th><th>Status</th><th></th></tr></thead><tbody>${f.variations.map((v, i) => `<tr>
+        <td><strong>${diaryEsc(v.ref || 'VO' + (i + 1))}</strong></td><td>${diaryEsc(formatUKDate(v.date))}</td><td style="white-space: normal;">${diaryEsc(v.description)}</td>
+        <td style="text-align: right; white-space: nowrap; ${parseFloat(v.amount) < 0 ? 'color: #ef4444;' : ''}">${money(v.amount)}</td>
+        <td><select class="form-control fin-var-status" data-id="${diaryEsc(v.id)}" style="min-height: 30px; padding: 2px 6px; width: auto;"><option value="approved"${v.status === 'approved' ? ' selected' : ''}>Approved</option><option value="pending"${v.status === 'pending' ? ' selected' : ''}>Pending</option><option value="rejected"${v.status === 'rejected' ? ' selected' : ''}>Rejected</option></select></td>
+        <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-var-edit" data-id="${diaryEsc(v.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-var-del" data-id="${diaryEsc(v.id)}" style="padding: 2px 8px;">✕</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+      <form id="finVarForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px;">
+        <input type="text" id="finVarDesc" class="form-control" placeholder="Description of the works" required style="grid-column: span 2;">
+        <input type="text" inputmode="decimal" autocomplete="off" id="finVarAmount" class="form-control" placeholder="£ ex VAT (minus to omit)" required>
+        <input type="date" id="finVarDate" class="form-control" value="${diaryDateKey(new Date())}" required>
+        <select id="finVarStatus" class="form-control"><option value="approved">Approved</option><option value="pending">Pending</option></select>
+        <button type="submit" class="btn btn-primary">+ Add variation</button>
+      </form>
     </div>
     ${(() => {
       const invs = customerInvoices.filter(i => String(i.site_id) === String(site.id)).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
@@ -6651,6 +6685,13 @@ function renderSiteFinance(site) {
   const saveTrack = (patch) => db.collection('finance_jobs').doc(String(site.id)).set({ site_id: String(site.id), ...patch, updated_at: new Date().toISOString() }, { merge: true }).catch(err => alert('Could not save: ' + err.message));
   host.querySelectorAll('.fin-track').forEach(inp => inp.addEventListener('change', () => saveTrack({ [inp.dataset.key]: inp.value.trim() || null })));
   host.querySelector('#finTrackIssues').addEventListener('change', ev => saveTrack({ flag_issues: ev.target.checked }));
+  host.querySelector('#finVarForm').addEventListener('submit', ev => {
+    ev.preventDefault();
+    addVariation(site.id, host.querySelector('#finVarDesc').value, host.querySelector('#finVarAmount').value, host.querySelector('#finVarDate').value, host.querySelector('#finVarStatus').value);
+  });
+  host.querySelectorAll('.fin-var-status').forEach(sel => sel.addEventListener('change', () => db.collection('finance_variations').doc(sel.dataset.id).update({ status: sel.value, updated_by: currentUser.full_name, updated_at: new Date().toISOString() }).catch(err => alert('Could not save: ' + err.message))));
+  host.querySelectorAll('.fin-var-edit').forEach(b => b.addEventListener('click', () => editVariation(b.dataset.id)));
+  host.querySelectorAll('.fin-var-del').forEach(b => b.addEventListener('click', () => deleteVariation(b.dataset.id)));
   const ciBtn = host.querySelector('#finCreateInvoice');
   if (ciBtn) ciBtn.addEventListener('click', () => openCustomerInvoiceModal(site.id));
   host.querySelectorAll('.ci-download').forEach(b => b.addEventListener('click', () => {
@@ -6741,7 +6782,7 @@ function renderFinanceView(force) {
 
   document.getElementById('finJobsBody').innerHTML = data.length ? data.map(({ site, f }) => `<tr class="fin-job-row" data-site="${diaryEsc(site.id)}" style="cursor: pointer;">
       <td><strong>${diaryEsc(site.address)}</strong>${site.is_archived ? ' <small>(archived)</small>' : ''}</td>
-      <td data-label="Job value">${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}</td>
+      <td data-label="Job value">${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}${f.variations.some(v => v.status === 'approved') ? `<div style="font-size: 0.7rem; color: var(--text-muted);">incl. ${money(f.variationsApproved)} variations</div>` : ''}</td>
       <td data-label="Materials invoiced">${money(f.invoiced)}</td><td data-label="On order">${money(f.onOrder)}</td><td data-label="Labour">${money(f.labour + f.labourInvoiced)}</td><td data-label="Extra costs">${money(f.extras)}</td>
       <td data-label="Total cost"><strong>${money(f.totalCost)}</strong></td>
       <td data-label="Profit / loss" style="color: ${profitColor(f.profit)}; font-weight: 700;">${f.profit != null ? money(f.profit) : '-'}</td>
@@ -6853,6 +6894,38 @@ function updateLabourModeUi() {
     : 'Every booked shift (up to today) costs the person\'s day rate against the job, automatically. Operatives set to price work are costed from their invoices.';
   const rates = document.getElementById('finRatesCard');
   if (rates) rates.style.opacity = '';
+}
+
+async function addVariation(siteId, description, amountRaw, date, status) {
+  if (!db || !isManagementUser(currentUser)) return;
+  const amt = parseFloat(String(amountRaw).replace(/[£,\s]/g, ''));
+  if (isNaN(amt) || amt === 0) { alert('Enter the variation amount (use a minus for an omission).'); return; }
+  if (!String(description).trim()) { alert('Describe the works.'); return; }
+  const sid = String(siteId);
+  const n = financeVariations.filter(v => String(v.site_id) === sid).reduce((m, v) => Math.max(m, parseInt(String(v.ref || '').replace(/\D/g, '')) || 0), 0) + 1;
+  const id = 'var_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  await db.collection('finance_variations').doc(id).set({
+    id, site_id: sid, ref: 'VO' + n, description: String(description).trim(), amount: Math.round(amt * 100) / 100,
+    date: date || diaryDateKey(new Date()), status: status === 'pending' ? 'pending' : 'approved',
+    created_by: currentUser.full_name, created_at: new Date().toISOString()
+  }).catch(err => alert('Could not save: ' + err.message));
+  showGreenToast(`Variation VO${n} added`);
+}
+function editVariation(id) {
+  const v = financeVariations.find(x => x.id === id);
+  if (!v) return;
+  const desc = prompt('Description of the works:', v.description || '');
+  if (desc === null) return;
+  const amtRaw = prompt('Amount £ ex VAT (minus for an omission):', v.amount);
+  if (amtRaw === null) return;
+  const amt = parseFloat(String(amtRaw).replace(/[£,\s]/g, ''));
+  if (isNaN(amt) || !desc.trim()) { alert('Description and a valid amount are needed.'); return; }
+  db.collection('finance_variations').doc(id).update({ description: desc.trim(), amount: Math.round(amt * 100) / 100, updated_by: currentUser.full_name, updated_at: new Date().toISOString() }).catch(err => alert('Could not save: ' + err.message));
+}
+function deleteVariation(id) {
+  const v = financeVariations.find(x => x.id === id);
+  if (!v || !confirm(`Delete variation ${v.ref || ''} (${money(v.amount)})? The job value will change.`)) return;
+  db.collection('finance_variations').doc(id).delete().catch(err => alert('Could not delete: ' + err.message));
 }
 
 function setupFinanceListeners() {
