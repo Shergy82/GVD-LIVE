@@ -639,7 +639,7 @@
 
       <div class="site-card" id="finRatesCard">
         <h3 style="margin-bottom: 6px;">Day rates</h3>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. People set to Price work cost nothing per shift - their cost comes from their invoices or extra costs. Only Owners and Admins can change rates.</p>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. People set to Price work cost nothing per shift - their cost comes from their invoices or extra costs. Only Owners, Admins and Managers can change rates.</p>
         <div style="overflow-x: auto;">
           <table class="planner-table responsive-table" style="min-width: 420px;">
             <thead><tr><th>Person</th><th>Role</th><th>Paid by</th><th>Day rate £</th></tr></thead>
@@ -1011,7 +1011,7 @@
         </select>
       </div>
       <div class="form-group" id="userModalRateGroup">
-        <label for="userModalPayType">Paid by (finance - Owners and Admins only)</label>
+        <label for="userModalPayType">Paid by (finance - Owners, Admins and Managers only)</label>
         <select id="userModalPayType" class="form-control" style="margin-bottom: 8px;">
           <option value="day">Day rate</option>
           <option value="price">Price work (per m2 / job price - cost comes from invoices)</option>

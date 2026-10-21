@@ -68,9 +68,10 @@ function setJobScope(v) {
   renderActiveView();
 }
 
+// Managers have the same permissions as Owners and Admins
 function isOwnerOrAdminUser(user) {
   if (!user) return false;
-  return user.role === 'Owner' || user.role === 'Admin' || user.email === 'phil@gvdcontracts.com';
+  return user.role === 'Owner' || user.role === 'Admin' || user.role === 'Manager' || user.email === 'phil@gvdcontracts.com';
 }
 
 function formatSiteId(siteId) {
