@@ -256,7 +256,7 @@ function renderInvoiceInbox() {
   if (!pending.length && !recent.length) { host.style.display = 'none'; return; }
   host.style.display = '';
   const canReview = isOwnerOrAdminUser(currentUser), esc = diaryEsc;
-  host.innerHTML = `<h3 style="margin-bottom: 6px;">📨 Invoices submitted by operatives ${pending.length ? `<span style="background: var(--warning); color: #000; border-radius: 999px; padding: 1px 9px; font-size: 0.8rem;">${pending.length}</span>` : ''}</h3>
+  const html = `<h3 style="margin-bottom: 6px;">📨 Invoices submitted by operatives ${pending.length ? `<span style="background: var(--warning); color: #000; border-radius: 999px; padding: 1px 9px; font-size: 0.8rem;">${pending.length}</span>` : ''}</h3>
     ${pending.length ? pending.map(i => {
       const over = i.lines.filter(l => l.planner_days != null ? l.days > l.planner_days : true);
       return `<div style="border: 1px solid var(--border-color); border-left: 4px solid var(--warning); border-radius: 8px; padding: 10px; margin-bottom: 10px;">
@@ -266,9 +266,19 @@ function renderInvoiceInbox() {
         ${canReview ? `<div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-primary btn-sm oi-approve" data-id="${esc(i.id)}">✅ Approve &amp; add to job costs</button><button type="button" class="btn btn-danger btn-sm oi-reject" data-id="${esc(i.id)}">Send back</button><button type="button" class="btn btn-outline btn-sm oi-pdf" data-id="${esc(i.id)}">PDF</button></div>` : ''}</div>`;
     }).join('') : '<p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">Nothing waiting for approval.</p>'}
     ${recent.length ? `<details><summary style="cursor: pointer; font-size: 0.85rem; color: var(--text-muted);">Recently reviewed (${recent.length})</summary><table class="rep-table" style="margin-top: 6px;"><tbody>${recent.map(i => `<tr><td>${esc(i.user_name)}</td><td>w/e ${miDate(i.week_end)}</td><td>${esc(i.invoice_no)}</td><td style="text-align: right;">${money(i.gross)}</td><td>${miChipHtml(i.status)}</td></tr>`).join('')}</tbody></table></details>` : ''}`;
-  host.querySelectorAll('.oi-approve').forEach(b => b.addEventListener('click', () => approveOperativeInvoice(b)));
-  host.querySelectorAll('.oi-reject').forEach(b => b.addEventListener('click', () => rejectOperativeInvoice(b.dataset.id)));
-  host.querySelectorAll('.oi-pdf').forEach(b => b.addEventListener('click', () => { const r = operativeInvoices.find(x => x.id === b.dataset.id); if (r) miDownloadPdf(r).catch(e => alert(e.message)); }));
+  // Only redraw when something changed (a redraw between mouse-down and mouse-up swallows the click),
+  // and handle clicks on the container itself so the buttons always work
+  if (host.dataset.html !== html) { host.innerHTML = html; host.dataset.html = html; }
+  if (!host.dataset.bound) {
+    host.dataset.bound = '1';
+    host.addEventListener('click', e => {
+      const b = e.target.closest('button');
+      if (!b || b.disabled) return;
+      if (b.classList.contains('oi-approve')) approveOperativeInvoice(b);
+      else if (b.classList.contains('oi-reject')) rejectOperativeInvoice(b.dataset.id);
+      else if (b.classList.contains('oi-pdf')) { const r = operativeInvoices.find(x => x.id === b.dataset.id); if (r) miDownloadPdf(r).catch(err => alert(err.message)); }
+    });
+  }
 }
 
 async function approveOperativeInvoice(btn) {
