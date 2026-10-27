@@ -3128,9 +3128,18 @@ async function handleSaveCompany(e) {
 }
 
 /** Working in whole pence so the figures always add up exactly */
-function ciCalc(netPence, mode, rate) {
+function ciCalc(netPence, mode, rate, cis) {
   const vat = mode === 'standard' ? Math.round(netPence * (parseFloat(rate) || 0) / 100) : 0;
-  return { net: netPence, vat, total: netPence + vat };
+  const total = netPence + vat;
+  // CIS is deducted from the labour part of the net only (never materials, never VAT)
+  const materials = cis && cis.on ? Math.min(Math.max(cis.materialsPence || 0, 0), netPence) : 0;
+  const cisPence = cis && cis.on ? Math.round((netPence - materials) * (parseFloat(cis.rate) || 0) / 100) : 0;
+  return { net: netPence, vat, total, materials, cisPence, payable: total - cisPence };
+}
+
+function ciCisInput() {
+  const on = document.getElementById('ciCis').checked;
+  return { on, rate: parseFloat(document.getElementById('ciCisRate').value) || 0, materialsPence: ciPence(document.getElementById('ciMaterials').value) };
 }
 
 function ciNextNumber() {
@@ -3151,12 +3160,15 @@ function ciUpdateTotals() {
   const mode = document.getElementById('ciVatMode').value;
   const rate = document.getElementById('ciVatRate').value;
   document.getElementById('ciVatRateGroup').style.display = mode === 'standard' ? '' : 'none';
-  const c = ciCalc(net, mode, rate);
+  const cis = ciCisInput();
+  document.getElementById('ciCisGroup').style.display = cis.on ? 'grid' : 'none';
+  const c = ciCalc(net, mode, rate, cis);
   const row = (l, v, strong) => `<div style="display: flex; justify-content: space-between; ${strong ? 'font-weight: 800; font-size: 1.1rem; border-top: 1px solid var(--border-color); margin-top: 6px; padding-top: 6px;' : ''}"><span>${l}</span><span>${v}</span></div>`;
   document.getElementById('ciTotals').innerHTML =
     row('Subtotal', ciMoney(c.net)) +
     row(mode === 'standard' ? `VAT (${parseFloat(rate) || 0}%)` : mode === 'reverse' ? 'VAT (domestic reverse charge)' : 'VAT', ciMoney(c.vat)) +
-    row('Total due', ciMoney(c.total), true);
+    (cis.on ? row('Total', ciMoney(c.total)) + row(`Less CIS deduction (${cis.rate}% of ${ciMoney(c.net - c.materials)} labour)`, '-' + ciMoney(c.cisPence)) + row('Amount payable', ciMoney(c.payable), true)
+            : row('Total due', ciMoney(c.total), true));
 }
 
 function openCustomerInvoiceModal(siteId) {
@@ -3187,6 +3199,9 @@ function openCustomerInvoiceModal(siteId) {
     : `Works at ${site.address || 'site'}${varText ? '\nIncluding variations:\n' + varText : ''}`;
   document.getElementById('ciVatMode').value = 'standard';
   document.getElementById('ciVatRate').value = '20';
+  document.getElementById('ciCis').checked = false;
+  document.getElementById('ciCisRate').value = '20';
+  document.getElementById('ciMaterials').value = '0';
   document.getElementById('ciNotes').value = co.note || '';
   const warn = [];
   if (!co.address || !co.account_no) warn.push('Add your company address and bank details in Admin Settings (Company & Invoice Details) so they print on the invoice.');
@@ -3209,12 +3224,14 @@ async function handleCreateCustomerInvoice(e) {
   if (customerInvoices.some(i => String(i.number).toLowerCase() === number.toLowerCase())) { alert(`Invoice number ${number} has already been used. Please choose another.`); return; }
   const mode = val('ciVatMode');
   const rate = mode === 'standard' ? (parseFloat(val('ciVatRate')) || 0) : 0;
-  const calc = ciCalc(parseInt(document.getElementById('ciNet').dataset.pence || '0'), mode, rate);
+  const cisIn = ciCisInput();
+  const calc = ciCalc(parseInt(document.getElementById('ciNet').dataset.pence || '0'), mode, rate, cisIn);
   const rec = {
     id: 'ci_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
     number, site_id: String(site.id), site_ref: formatSiteId(site.id), site_address: site.address || '',
     customer_name: val('ciCustomerName'), customer_address: val('ciCustomerAddress'), customer_ref: val('ciCustomerRef'),
     description: val('ciDescription'), net_pence: calc.net, vat_mode: mode, vat_rate: rate, vat_pence: calc.vat, total_pence: calc.total,
+    cis_applied: cisIn.on, cis_rate: cisIn.on ? cisIn.rate : 0, cis_materials_pence: calc.materials, cis_pence: calc.cisPence, payable_pence: calc.payable,
     invoice_date: val('ciDate'), due_date: val('ciDue'), notes: val('ciNotes'),
     company: ciCompany(),
     created_by: currentUser.full_name, created_by_id: String(currentUser.id), created_at: new Date().toISOString()
@@ -3333,12 +3350,26 @@ async function ciBuildPdf(inv) {
   const trow = (l, v) => { doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60, 72, 90); doc.text(l, 120, ty); doc.text(v, R, ty, { align: 'right' }); ty += 7; };
   trow('Subtotal', ciMoney(inv.net_pence));
   trow(vatLabel, ciMoney(inv.vat_pence));
-  doc.setFillColor(241, 245, 249);
-  doc.roundedRect(116, ty - 5, R - 116, 11, 1.5, 1.5, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
-  doc.text('Total due', 120, ty + 2);
-  doc.text(ciMoney(inv.total_pence), R - 3, ty + 2, { align: 'right' });
-  ty += 16;
+  const totalBox = (label, amount) => {
+    doc.setFillColor(241, 245, 249);
+    doc.roundedRect(116, ty - 5, R - 116, 11, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+    doc.text(label, 120, ty + 2);
+    doc.text(amount, R - 3, ty + 2, { align: 'right' });
+    ty += 16;
+  };
+  if (inv.cis_applied) {
+    trow('Total', ciMoney(inv.total_pence));
+    const labour = (inv.net_pence || 0) - (inv.cis_materials_pence || 0);
+    trow(`Less CIS @ ${inv.cis_rate}% of labour`, '-' + ciMoney(inv.cis_pence));
+    ty += 1;
+    totalBox('Amount payable', ciMoney(inv.payable_pence != null ? inv.payable_pence : inv.total_pence - (inv.cis_pence || 0)));
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...grey);
+    const cn = doc.splitTextToSize(`CIS: this invoice is subject to the Construction Industry Scheme. Tax of ${inv.cis_rate}% is deducted from the labour element (${ciMoney(labour)}); materials${inv.cis_materials_pence ? ' (' + ciMoney(inv.cis_materials_pence) + ')' : ''} and VAT are not subject to the deduction. The deduction is paid to HMRC on our behalf and a CIS payment and deduction statement should be provided.`, R - M);
+    doc.text(cn, M, ty); ty += cn.length * 4.5 + 4;
+  } else {
+    totalBox('Total due', ciMoney(inv.total_pence));
+  }
   if (inv.vat_mode === 'reverse') {
     doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...grey);
     const t = doc.splitTextToSize('Domestic reverse charge: the customer is required to account to HMRC for the VAT due on this supply.', R - M);
@@ -3402,6 +3433,8 @@ function setupCustomerInvoiceListeners() {
   form.addEventListener('submit', handleCreateCustomerInvoice);
   document.getElementById('ciVatMode').addEventListener('change', ciUpdateTotals);
   document.getElementById('ciVatRate').addEventListener('input', ciUpdateTotals);
+  ['ciCis', 'ciCisRate'].forEach(id => document.getElementById(id).addEventListener('change', ciUpdateTotals));
+  document.getElementById('ciMaterials').addEventListener('input', ciUpdateTotals);
   document.getElementById('ciDate').addEventListener('change', e => {
     if (e.target.value) document.getElementById('ciDue').value = ciAddDays(e.target.value, ciCompany().terms_days);
   });
@@ -6729,7 +6762,7 @@ function renderSiteFinance(site) {
       if (!invs.length) return '';
       return `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Invoices raised</h4><table class="planner-table" style="min-width: 0;"><tbody>${invs.map(i => `<tr>
         <td><strong>${diaryEsc(i.number)}</strong><div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(formatUKDate(i.invoice_date))} · ${diaryEsc(i.customer_name)}</div></td>
-        <td style="text-align: right; white-space: nowrap;">${money((i.total_pence || 0) / 100)}</td>
+        <td style="text-align: right; white-space: nowrap;">${money((i.total_pence || 0) / 100)}${i.cis_applied ? `<div style="font-size: 0.7rem; color: var(--text-muted);">CIS ${i.cis_rate}% · payable ${money((i.payable_pence || 0) / 100)}</div>` : ''}</td>
         <td style="text-align: right;"><button type="button" class="btn btn-outline btn-sm ci-download" data-id="${diaryEsc(i.id)}" style="padding: 2px 10px;">PDF</button></td></tr>`).join('')}</tbody></table></div>`;
     })()}
 

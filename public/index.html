@@ -892,6 +892,19 @@
           </div>
           <div class="form-group" id="ciVatRateGroup"><label for="ciVatRate">VAT rate %</label><input type="number" id="ciVatRate" class="form-control" value="20" min="0" max="100" step="0.1"></div>
         </div>
+        <div class="form-group" style="margin-bottom: 6px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="ciCis"> CIS applies (customer deducts Construction Industry Scheme tax)</label>
+        </div>
+        <div id="ciCisGroup" style="display: none; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciCisRate">CIS deduction rate</label>
+            <select id="ciCisRate" class="form-control">
+              <option value="20">20% (registered)</option>
+              <option value="30">30% (not registered)</option>
+              <option value="0">0% (gross payment status)</option>
+            </select>
+          </div>
+          <div class="form-group"><label for="ciMaterials">Materials included (ex VAT, not deducted)</label><input type="number" id="ciMaterials" class="form-control" value="0" min="0" step="0.01"><small style="color: var(--text-muted);">CIS is taken off labour only, never materials or VAT.</small></div>
+        </div>
         <div id="ciTotals" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; margin: 6px 0 14px;"></div>
         <div class="form-group"><label for="ciNotes">Notes (optional)</label><textarea id="ciNotes" class="form-control" rows="2"></textarea></div>
         <button type="submit" class="btn btn-primary" id="ciSubmit">🧾 Create invoice &amp; download PDF</button>
