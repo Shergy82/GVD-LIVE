@@ -217,7 +217,7 @@ function miRecordFromDraft(forSubmit) {
   if (lines.some(l => !l.siteId)) { alert('Choose the job on every line.'); return null; }
   if (lines.some(l => !(parseFloat(l.amount) > 0))) { alert('Every line needs an amount (days × rate).'); return null; }
   if (new Set(lines.map(l => String(l.siteId))).size !== lines.length) { alert('The same job is on two lines - put them on one line.'); return null; }
-  const t = miTotals({ lines });
+  const t = miTotals({ lines, cisOn: d.cisOn, cisRate: d.cisRate });
   const p = myInvProfile;
   return {
     id: 'oi_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), user_id: String(currentUser.id), user_name: currentUser.full_name, status: 'submitted',
