@@ -93,11 +93,18 @@ async function buildOperativeInvoicePdf(opts) {
   label('Net total (ex VAT)', 330, y, true); field('net_total', 445, y, R - 445, vals.net_total || '', 'right'); y += 22;
   label('Total VAT', 330, y); field('total_vat', 445, y, R - 445, vals.total_vat || '', 'right'); y += 22;
   label('Invoice total', 330, y, true); field('invoice_total', 445, y, R - 445, vals.invoice_total || '', 'right');
+  const payY = y - 44;   // payment details sit level with the totals block
+  if (flat && vals.cis_applied) {
+    y += 22; label(`Less CIS (${vals.cis_rate}%)`, 330, y); field('cis_deduction', 445, y, R - 445, '-' + (vals.cis || ''), 'right');
+    y += 22; label('AMOUNT PAYABLE', 330, y, true); field('amount_payable', 445, y, R - 445, vals.payable || '', 'right');
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(...grey);
+    doc.text(doc.splitTextToSize(`CIS: Construction Industry Scheme deduction of ${vals.cis_rate}% applied to labour (net total, excluding VAT).${vals.utr ? ' UTR ' + vals.utr + '.' : ''}`, R - 330), 330, y + 14);
+  }
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...grey);
   if (!flat) doc.text(doc.splitTextToSize('Type amounts like 450.00. Leave VAT blank if you are not VAT registered.', R - 330), 330, y + 18);
 
   // payment details
-  const py = y - 44;
+  const py = payY;
   label('PAY TO', M, py - 8, true);
   label('Account Name:', M, py + 14); field('account_name', M + 70, py + 14, 200, vals.account_name || '');
   label('Sort code:', M, py + 38); field('sort_code', M + 70, py + 38, 90, vals.sort_code || '');

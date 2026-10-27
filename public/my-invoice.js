@@ -61,13 +61,17 @@ function miNewDraft(weekEnd) {
   const rate = myInvProfile && myInvProfile.default_rate != null ? parseFloat(myInvProfile.default_rate) : null;
   return {
     weekEnd, invNo: miInvoiceNo(weekEnd), invDate: diaryDateKey(new Date()),
+    cisOn: !!(myInvProfile && myInvProfile.cis_on), cisRate: myInvProfile && myInvProfile.cis_rate != null ? parseFloat(myInvProfile.cis_rate) : 20,
     lines: miPlannerLines(currentUser.id, weekEnd).map(l => ({ siteId: l.site_id, days: l.days, plannerDays: l.days, rate, amount: rate != null ? miR2(l.days * rate) : null, manual: false }))
   };
 }
 function miTotals(d) {
   const net = miR2(d.lines.reduce((t, l) => t + (parseFloat(l.amount) || 0), 0));
   const vat = myInvProfile && myInvProfile.vat_registered ? miR2(net * 0.2) : 0;
-  return { net, vat, gross: miR2(net + vat) };
+  const gross = miR2(net + vat);
+  // CIS comes off the labour (net, never the VAT)
+  const cis = d.cisOn ? miR2(net * (parseFloat(d.cisRate) || 0) / 100) : 0;
+  return { net, vat, gross, cis, payable: miR2(gross - cis) };
 }
 function miSiteName(id) { const s = allSites.find(x => String(x.id) === String(id)); return s ? s.address : 'Job ' + id; }
 const miStatusChip = st => ({ submitted: ['#fef3c7', '#92400e', 'Waiting for approval'], approved: ['#dcfce7', '#166534', 'Approved'], rejected: ['#fee2e2', '#991b1b', 'Sent back'], withdrawn: ['#e2e8f0', '#334155', 'Withdrawn'] }[st] || ['#e2e8f0', '#334155', st]);
@@ -113,7 +117,7 @@ function renderMyInvoiceView() {
       <button type="button" class="btn btn-outline btn-sm" id="miThisWeek">Last week</button>
     </div>`;
   if (existing) {
-    html += `<div>${miChipHtml(existing.status)} <strong>${esc(existing.invoice_no)}</strong> · ${money(existing.gross)} (net ${money(existing.net)})</div>
+    html += `<div>${miChipHtml(existing.status)} <strong>${esc(existing.invoice_no)}</strong> · ${money(existing.gross)} (net ${money(existing.net)})${existing.cis_applied ? ` · CIS ${existing.cis_rate}% -${money(existing.cis)} · <strong>payable ${money(existing.payable)}</strong>` : ''}</div>
       <table class="rep-table" style="margin-top: 8px;"><thead><tr><th>Job</th><th>Days</th><th style="text-align:right;">Amount</th></tr></thead><tbody>${existing.lines.map(l => `<tr><td style="white-space: normal;">${esc(l.address)}</td><td>${l.days}</td><td style="text-align: right;">${money(l.net)}</td></tr>`).join('')}</tbody></table>
       <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-outline btn-sm mi-pdf" data-id="${esc(existing.id)}">📄 Download PDF</button>${existing.status === 'submitted' ? `<button type="button" class="btn btn-danger btn-sm mi-withdraw" data-id="${esc(existing.id)}">Withdraw to change it</button>` : ''}</div>`;
   } else {
@@ -134,8 +138,18 @@ function renderMyInvoiceView() {
         <td><button type="button" class="btn btn-danger btn-sm mi-del" data-i="${i}">✕</button></td></tr>`).join('') || '<tr><td colspan="5" style="color: var(--text-muted);">No shifts in the planner for this week. Add the job(s) you worked.</td></tr>'}
       </tbody></table></div>
       <div style="margin: 8px 0;"><button type="button" class="btn btn-outline btn-sm" id="miAddLine">+ Add a job</button></div>
-      <div style="text-align: right; line-height: 1.7;">Net ${money(t.net)}<br>${myInvProfile && myInvProfile.vat_registered ? `VAT ${money(t.vat)}<br>` : ''}<strong style="font-size: 1.1rem;">Total ${money(t.gross)}</strong></div>
-      <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-outline" id="miDraftPdf" ${complete ? '' : 'disabled'}>📄 Download PDF</button><button type="button" class="btn btn-primary" id="miSubmit" style="flex: 1;" ${complete ? '' : 'disabled title="Save your details first"'}>📨 Send to the office · ${money(t.gross)}</button></div><div>${complete ? '' : '<p style="color: var(--warning); font-size: 0.8rem; margin-top: 6px;">Save your bank details above first.</p>'}</div>`;
+      <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; margin: 10px 0;">
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 700;"><input type="checkbox" class="mi-cis" data-k="cisOn"${d.cisOn ? ' checked' : ''}> CIS applies to this invoice</label>
+        ${d.cisOn ? `<label style="display: block; margin-top: 8px; font-size: 0.85rem;">CIS deduction rate
+          <select class="form-control mi-cis" data-k="cisRate" style="min-height: 36px; max-width: 260px;">
+            <option value="20"${d.cisRate == 20 ? ' selected' : ''}>20% (registered for CIS)</option>
+            <option value="30"${d.cisRate == 30 ? ' selected' : ''}>30% (not registered)</option>
+            <option value="0"${d.cisRate == 0 ? ' selected' : ''}>0% (gross payment status)</option>
+          </select></label>
+          <small style="color: var(--text-muted);">CIS tax is taken off your labour (the net amount) before you are paid. It is not taken off VAT. Put your UTR in My invoice details.</small>` : ''}
+      </div>
+      <div style="text-align: right; line-height: 1.7;">Net ${money(t.net)}<br>${myInvProfile && myInvProfile.vat_registered ? `VAT ${money(t.vat)}<br>` : ''}${d.cisOn ? `Total ${money(t.gross)}<br>Less CIS deduction (${d.cisRate}%) -${money(t.cis)}<br><strong style="font-size: 1.1rem;">Amount payable ${money(t.payable)}</strong>` : `<strong style="font-size: 1.1rem;">Total ${money(t.gross)}</strong>`}</div>
+      <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-outline" id="miDraftPdf" ${complete ? '' : 'disabled'}>📄 Download PDF</button><button type="button" class="btn btn-primary" id="miSubmit" style="flex: 1;" ${complete ? '' : 'disabled title="Save your details first"'}>📨 Send to the office · ${money(d.cisOn ? t.payable : t.gross)}</button></div><div>${complete ? '' : '<p style="color: var(--warning); font-size: 0.8rem; margin-top: 6px;">Save your bank details above first.</p>'}</div>`;
   }
   html += '</div>';
 
@@ -179,6 +193,7 @@ function miBind(host) {
     else if (k === 'amount') { l.amount = num(el.value); l.manual = true; }
     renderMyInvoiceView();
   });
+  on('.mi-cis', 'change', el => { myInvDraft[el.dataset.k] = el.type === 'checkbox' ? el.checked : parseFloat(el.value); renderMyInvoiceView(); });
   on('.mi-del', 'click', el => { myInvDraft.lines.splice(+el.dataset.i, 1); renderMyInvoiceView(); });
   on('#miAddLine', 'click', () => { myInvDraft.lines.push({ siteId: '', days: 1, plannerDays: null, rate: myInvProfile && myInvProfile.default_rate != null ? parseFloat(myInvProfile.default_rate) : null, amount: null, manual: false }); renderMyInvoiceView(); });
   on('#miSubmit', 'click', (el) => submitMyInvoice(el));
@@ -209,6 +224,7 @@ function miRecordFromDraft(forSubmit) {
     week_start: miMonday(d.weekEnd), week_end: d.weekEnd, invoice_no: d.invNo, invoice_date: d.invDate,
     lines: lines.map(l => ({ site_id: String(l.siteId), address: miSiteName(l.siteId), days: parseFloat(l.days) || 0, planner_days: l.plannerDays != null ? l.plannerDays : null, rate: l.rate, net: miR2(l.amount) })),
     net: t.net, vat: t.vat, gross: t.gross,
+    cis_applied: !!d.cisOn, cis_rate: d.cisOn ? (parseFloat(d.cisRate) || 0) : 0, cis: t.cis, payable: t.payable,
     trading_name: p.trading_name || '', utr: p.utr || '', vat_registered: !!p.vat_registered, vat_no: p.vat_no || '',
     account_name: p.account_name, sort_code: p.sort_code, account_no: p.account_no,
     submitted_at: new Date().toISOString()
@@ -219,7 +235,7 @@ async function submitMyInvoice(btn) {
   const d = myInvDraft;
   const rec = miRecordFromDraft(true);
   if (!rec) return;
-  if (!confirm(`Send invoice ${rec.invoice_no} for ${money(rec.gross)} to the office? You can withdraw it until it is approved.`)) return;
+  if (!confirm(`Send invoice ${rec.invoice_no} for ${money(rec.gross)}${rec.cis_applied ? ` (CIS ${rec.cis_rate}% -${money(rec.cis)}, payable ${money(rec.payable)})` : ''} to the office? You can withdraw it until it is approved.`)) return;
   btn.disabled = true;
   const p = myInvProfile;
   try {
@@ -228,6 +244,7 @@ async function submitMyInvoice(btn) {
     await Promise.all(allUsers.filter(u => u.status === 'Active' && isOwnerOrAdminUser(u)).map(u => db.collection('notifications').add({
       target_user_id: String(u.id), title: '🧾 Invoice submitted', body: `${currentUser.full_name}: week ending ${miDate(d.weekEnd)} - ${money(rec.gross)}`, created_at: new Date().toISOString()
     }).catch(() => {})));
+    await db.collection('invoice_profiles').doc(String(currentUser.id)).set({ cis_on: !!d.cisOn, cis_rate: parseFloat(d.cisRate) || 0 }, { merge: true }).catch(() => {});
     myInvDraft = null;
     showGreenToast('Invoice sent to the office');
   } catch (err) { alert('Could not submit: ' + err.message); btn.disabled = false; }
@@ -240,7 +257,8 @@ async function miBuildPdf(rec, flat = true) {
     values: {
       invoice_no: rec.invoice_no, invoice_date: miDate(rec.invoice_date), trading_name: rec.trading_name, utr: rec.utr, vat_no: rec.vat_no,
       net_total: Number(rec.net).toFixed(2), total_vat: rec.vat ? Number(rec.vat).toFixed(2) : '', invoice_total: Number(rec.gross).toFixed(2),
-      account_name: rec.account_name, sort_code: rec.sort_code, account_no: rec.account_no
+      account_name: rec.account_name, sort_code: rec.sort_code, account_no: rec.account_no,
+      cis_applied: !!rec.cis_applied, cis_rate: rec.cis_rate, cis: rec.cis != null ? Number(rec.cis).toFixed(2) : '', payable: rec.payable != null ? Number(rec.payable).toFixed(2) : ''
     }
   });
 }
@@ -260,7 +278,7 @@ function renderInvoiceInbox() {
     ${pending.length ? pending.map(i => {
       const over = i.lines.filter(l => l.planner_days != null ? l.days > l.planner_days : true);
       return `<div style="border: 1px solid var(--border-color); border-left: 4px solid var(--warning); border-radius: 8px; padding: 10px; margin-bottom: 10px;">
-        <div style="display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;"><strong>${esc(i.user_name)}</strong><span>w/e ${miDate(i.week_end)} · ${esc(i.invoice_no)} · <strong>${money(i.gross)}</strong>${i.vat ? ` (net ${money(i.net)} + VAT ${money(i.vat)})` : ''}</span></div>
+        <div style="display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;"><strong>${esc(i.user_name)}</strong><span>w/e ${miDate(i.week_end)} · ${esc(i.invoice_no)} · <strong>${money(i.gross)}</strong>${i.vat ? ` (net ${money(i.net)} + VAT ${money(i.vat)})` : ''}${i.cis_applied ? ` · <span style="color: var(--warning); font-weight: 700;">CIS ${i.cis_rate}% -${money(i.cis)} → pay ${money(i.payable)}</span>` : ''}</span></div>
         <table class="rep-table" style="margin-top: 6px;"><thead><tr><th>Job</th><th>Days claimed</th><th>Planner</th><th style="text-align: right;">Amount</th></tr></thead><tbody>${i.lines.map(l => `<tr><td style="white-space: normal;">${esc(l.address)}</td><td>${l.days}</td><td style="${l.planner_days == null || l.days > l.planner_days ? 'color: var(--warning); font-weight: 700;' : ''}">${l.planner_days != null ? l.planner_days : 'not booked'}</td><td style="text-align: right;">${money(l.net)}</td></tr>`).join('')}</tbody></table>
         <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">Pay to: ${esc(i.account_name)} · ${esc(i.sort_code)} · ${esc(i.account_no)}${i.trading_name ? ' · ' + esc(i.trading_name) : ''}${i.utr ? ' · UTR ' + esc(i.utr) : ''}</div>
         ${canReview ? `<div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-primary btn-sm oi-approve" data-id="${esc(i.id)}">✅ Approve &amp; add to job costs</button><button type="button" class="btn btn-danger btn-sm oi-reject" data-id="${esc(i.id)}">Send back</button><button type="button" class="btn btn-outline btn-sm oi-pdf" data-id="${esc(i.id)}">PDF</button></div>` : ''}</div>`;
@@ -286,7 +304,7 @@ async function approveOperativeInvoice(btn) {
   if (!rec || rec.status !== 'submitted' || !isOwnerOrAdminUser(currentUser)) return;
   const unbooked = rec.lines.filter(l => l.planner_days == null || l.days > l.planner_days);
   const warn = unbooked.length ? `\n\n⚠️ ${unbooked.length} line(s) claim more days than the planner shows.` : '';
-  if (!confirm(`Approve ${rec.user_name}'s invoice ${rec.invoice_no} for ${money(rec.gross)}?\n\nIts ${money(rec.net)} (ex VAT) will be added to the job costs.${warn}`)) return;
+  if (!confirm(`Approve ${rec.user_name}'s invoice ${rec.invoice_no} for ${money(rec.gross)}?\n\nIts ${money(rec.net)} (ex VAT) will be added to the job costs.${rec.cis_applied ? `\n\nCIS ${rec.cis_rate}%: deduct ${money(rec.cis)} and pay ${money(rec.payable)}.` : ''}${warn}`)) return;
   btn.disabled = true;
   try {
     const doc = await miBuildPdf(rec);
