@@ -481,8 +481,25 @@ async function fetchRestFallback() {
 // GVD Live ID token. We swap it for a normal session on the server. Only messages from the Hub itself are accepted.
 const HUB_ORIGIN = USE_EMULATOR ? 'http://localhost:5056' : 'https://gvd-hub.web.app';
 let ssoBusy = false;
+// While the Hub is handing over the sign-in, show a plain splash instead of flashing the login page
+let ssoSplashTimer = null;
+function showSsoSplash() {
+  if (document.getElementById('ssoSplash')) return;
+  const d = document.createElement('div');
+  d.id = 'ssoSplash';
+  d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#0b1020;color:#8a93b5;display:grid;place-items:center;font:15px -apple-system,BlinkMacSystemFont,sans-serif';
+  d.textContent = 'Signing you in…';
+  document.body.appendChild(d);
+  ssoSplashTimer = setTimeout(hideSsoSplash, 6000);   // never hide the login page for long if the Hub does not answer
+}
+function hideSsoSplash() {
+  clearTimeout(ssoSplashTimer);
+  const d = document.getElementById('ssoSplash');
+  if (d) d.remove();
+}
 function setupHubSso() {
   if (window.parent === window || !auth) return;
+  showSsoSplash();
   window.addEventListener('message', async e => {
     if (e.origin !== HUB_ORIGIN || !e.data) return;
     if (e.data.type === 'gvd-sso-logout') {
@@ -495,11 +512,11 @@ function setupHubSso() {
     ssoBusy = true;
     try {
       const res = await callFn('ssoSession', { idToken: e.data.idToken });
-      if (currentUser && String(currentUser.id) === String(res.user.id) && auth.currentUser) return; // already this person
+      if (currentUser && String(currentUser.id) === String(res.user.id) && auth.currentUser) { hideSsoSplash(); return; } // already this person
       await signInWithServerSession(res);
       startSyncOnce();
       onUserAuthenticated();
-    } catch (err) { console.warn('Hub sign-in failed:', err.message); }
+    } catch (err) { console.warn('Hub sign-in failed:', err.message); hideSsoSplash(); }
     finally { ssoBusy = false; }
   });
   window.parent.postMessage({ type: 'gvd-sso-ready' }, HUB_ORIGIN);
@@ -567,6 +584,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function onUserAuthenticated() {
   if (!currentUser) return;
+  hideSsoSplash();
 
   if (currentUser.must_change_password) {
     document.getElementById('appHeader').style.display = 'none';
