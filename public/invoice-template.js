@@ -76,7 +76,7 @@ async function buildOperativeInvoicePdf(opts) {
   doc.text('RATE £', 395, y + 1, { align: 'center' });
   doc.text('AMOUNT £ (ex VAT)', R - 4, y + 1, { align: 'right' });
   y += 28;
-  const ROWS = 12;
+  const ROWS = flat ? 12 : 10;
   for (let i = 0; i < ROWS; i++) {
     const l = (opts.lines || [])[i];
     if (flat && !l) { y += 0; continue; }
@@ -88,8 +88,31 @@ async function buildOperativeInvoicePdf(opts) {
   }
   if ((opts.lines || []).length > ROWS) { doc.setFontSize(7.5); doc.setTextColor(185, 28, 28); doc.text(`${opts.lines.length - ROWS} more job(s) were booked this week - add them on a second invoice.`, M, y - 4); }
 
+  // fuel & expenses (claimed back at cost, ex VAT) - kept off the job lines so the importer does not read them as a job
+  const exps = opts.expenses || [];
+  const EXP_ROWS = flat ? Math.min(exps.length, 8) : 3;
+  if (EXP_ROWS) {
+    y += 4;
+    doc.setFillColor(241, 245, 249); doc.rect(M, y - 12, R - M, 20, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(51, 65, 85);
+    doc.text('FUEL & EXPENSES (optional)', M + 4, y + 1);
+    doc.text('AMOUNT £ (ex VAT)', R - 4, y + 1, { align: 'right' });
+    y += 28;
+    for (let i = 0; i < EXP_ROWS; i++) {
+      const x = exps[i];
+      field(`expense_${i + 1}`, M, y, 390, x ? x.text : '');
+      field(`expense_amount_${i + 1}`, 445, y, R - 445, x && x.amount != null ? Number(x.amount).toFixed(2) : '', 'right');
+      y += 24;
+    }
+  }
+
   // totals
   y += 12;
+  if (flat && y > 650) { doc.addPage(); y = 70; }   // a long invoice carries on to a second page
+  if (flat && exps.length) {
+    label('Labour', 330, y); field('labour_subtotal', 445, y, R - 445, Number(opts.labourNet || 0).toFixed(2), 'right'); y += 22;
+    label('Fuel & expenses', 330, y); field('expenses_subtotal', 445, y, R - 445, Number(opts.expensesNet || 0).toFixed(2), 'right'); y += 22;
+  }
   label('Net total (ex VAT)', 330, y, true); field('net_total', 445, y, R - 445, vals.net_total || '', 'right'); y += 22;
   label('Total VAT', 330, y); field('total_vat', 445, y, R - 445, vals.total_vat || '', 'right'); y += 22;
   label('Invoice total', 330, y, true); field('invoice_total', 445, y, R - 445, vals.invoice_total || '', 'right');
@@ -98,7 +121,7 @@ async function buildOperativeInvoicePdf(opts) {
     y += 22; label(`Less CIS (${vals.cis_rate}%)`, 330, y); field('cis_deduction', 445, y, R - 445, '-' + (vals.cis || ''), 'right');
     y += 22; label('AMOUNT PAYABLE', 330, y, true); field('amount_payable', 445, y, R - 445, vals.payable || '', 'right');
     doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(...grey);
-    doc.text(doc.splitTextToSize(`CIS: Construction Industry Scheme deduction of ${vals.cis_rate}% applied to labour (net total, excluding VAT).${vals.utr ? ' UTR ' + vals.utr + '.' : ''}`, R - 330), 330, y + 14);
+    doc.text(doc.splitTextToSize(`CIS: Construction Industry Scheme deduction of ${vals.cis_rate}% applied to labour only (not VAT, fuel or expenses).${vals.utr ? ' UTR ' + vals.utr + '.' : ''}`, R - 330), 330, y + 14);
   }
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...grey);
   if (!flat) doc.text(doc.splitTextToSize('Type amounts like 450.00. Leave VAT blank if you are not VAT registered.', R - 330), 330, y + 18);

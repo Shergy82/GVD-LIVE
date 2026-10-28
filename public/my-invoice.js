@@ -17,6 +17,10 @@ let myInvProfileOpen = false;
 const miR2 = n => Math.round((parseFloat(n) || 0) * 100) / 100;
 const miDate = iso => { const p = String(iso || '').split('-'); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : ''; };
 const miMonday = weekEnd => addDaysISO(weekEnd, -6);
+// Fuel and expenses an operative adds to the invoice. They are costed to the job as extra costs (not labour) when approved.
+const MI_EXPENSE_TYPES = ['Fuel', 'Parking / tolls', 'Tools / materials', 'Other expense'];
+const MI_EXPENSE_CATEGORY = { 'Fuel': 'Travel / fuel', 'Parking / tolls': 'Travel / fuel', 'Tools / materials': 'Materials', 'Other expense': 'Other' };
+const MI_MAX_EXPENSES = 8;
 
 function startMyInvoiceSync() {
   stopMyInvoiceSync();
@@ -61,17 +65,20 @@ function miNewDraft(weekEnd) {
   const rate = myInvProfile && myInvProfile.default_rate != null ? parseFloat(myInvProfile.default_rate) : null;
   return {
     weekEnd, invNo: miInvoiceNo(weekEnd), invDate: diaryDateKey(new Date()),
+    expenses: [],
     cisOn: !!(myInvProfile && myInvProfile.cis_on), cisRate: myInvProfile && myInvProfile.cis_rate != null ? parseFloat(myInvProfile.cis_rate) : 20,
     lines: miPlannerLines(currentUser.id, weekEnd).map(l => ({ siteId: l.site_id, days: l.days, plannerDays: l.days, rate, amount: rate != null ? miR2(l.days * rate) : null, manual: false }))
   };
 }
 function miTotals(d) {
-  const net = miR2(d.lines.reduce((t, l) => t + (parseFloat(l.amount) || 0), 0));
+  const labour = miR2(d.lines.reduce((t, l) => t + (parseFloat(l.amount) || 0), 0));
+  const expenses = miR2((d.expenses || []).reduce((t, x) => t + (parseFloat(x.amount) || 0), 0));
+  const net = miR2(labour + expenses);
   const vat = myInvProfile && myInvProfile.vat_registered ? miR2(net * 0.2) : 0;
   const gross = miR2(net + vat);
-  // CIS comes off the labour (net, never the VAT)
-  const cis = d.cisOn ? miR2(net * (parseFloat(d.cisRate) || 0) / 100) : 0;
-  return { net, vat, gross, cis, payable: miR2(gross - cis) };
+  // CIS comes off the labour only (never the VAT, and not the fuel / expenses claimed back)
+  const cis = d.cisOn ? miR2(labour * (parseFloat(d.cisRate) || 0) / 100) : 0;
+  return { labour, expenses, net, vat, gross, cis, payable: miR2(gross - cis) };
 }
 function miSiteName(id) { const s = allSites.find(x => String(x.id) === String(id)); return s ? s.address : 'Job ' + id; }
 const miStatusChip = st => ({ submitted: ['#fef3c7', '#92400e', 'Waiting for approval'], approved: ['#dcfce7', '#166534', 'Approved'], rejected: ['#fee2e2', '#991b1b', 'Sent back'], withdrawn: ['#e2e8f0', '#334155', 'Withdrawn'] }[st] || ['#e2e8f0', '#334155', st]);
@@ -118,7 +125,7 @@ function renderMyInvoiceView() {
     </div>`;
   if (existing) {
     html += `<div>${miChipHtml(existing.status)} <strong>${esc(existing.invoice_no)}</strong> · ${money(existing.gross)} (net ${money(existing.net)})${existing.cis_applied ? ` · CIS ${existing.cis_rate}% -${money(existing.cis)} · <strong>payable ${money(existing.payable)}</strong>` : ''}</div>
-      <table class="rep-table" style="margin-top: 8px;"><thead><tr><th>Job</th><th>Days</th><th style="text-align:right;">Amount</th></tr></thead><tbody>${existing.lines.map(l => `<tr><td style="white-space: normal;">${esc(l.address)}</td><td>${l.days}</td><td style="text-align: right;">${money(l.net)}</td></tr>`).join('')}</tbody></table>
+      <table class="rep-table" style="margin-top: 8px;"><thead><tr><th>Job</th><th>Days</th><th style="text-align:right;">Amount</th></tr></thead><tbody>${existing.lines.map(l => `<tr><td style="white-space: normal;">${esc(l.address)}</td><td>${l.days}</td><td style="text-align: right;">${money(l.net)}</td></tr>`).join('')}${(existing.expenses || []).map(x => `<tr><td style="white-space: normal;">⛽ ${esc(x.type)}${x.description ? ' - ' + esc(x.description) : ''}<div style="font-size: 0.72rem; color: var(--text-muted);">${esc(x.address || '')}</div></td><td></td><td style="text-align: right;">${money(x.net)}</td></tr>`).join('')}</tbody></table>
       <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-outline btn-sm mi-pdf" data-id="${esc(existing.id)}">📄 Download PDF</button>${existing.status === 'submitted' ? `<button type="button" class="btn btn-danger btn-sm mi-withdraw" data-id="${esc(existing.id)}">Withdraw to change it</button>` : ''}</div>`;
   } else {
     const t = miTotals(d);
@@ -139,6 +146,18 @@ function renderMyInvoiceView() {
       </tbody></table></div>
       <div style="margin: 8px 0;"><button type="button" class="btn btn-outline btn-sm" id="miAddLine">+ Add a job</button></div>
       <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; margin: 10px 0;">
+        <div style="font-weight: 700; margin-bottom: 4px;">⛽ Fuel &amp; expenses <span style="font-weight: 400; color: var(--text-muted); font-size: 0.8rem;">- optional, enter amounts excluding VAT</span></div>
+        ${(d.expenses || []).length ? `<div style="overflow-x: auto;"><table class="rep-table" style="min-width: 560px;"><thead><tr><th>Type</th><th>Description</th><th>Job</th><th>Amount £</th><th></th></tr></thead><tbody>
+        ${d.expenses.map((x, i) => `<tr>
+          <td><select class="form-control mi-x" data-i="${i}" data-k="type" style="min-height: 34px; padding: 4px 6px;">${MI_EXPENSE_TYPES.map(t => `<option${t === x.type ? ' selected' : ''}>${t}</option>`).join('')}</select></td>
+          <td><input class="form-control mi-x" data-i="${i}" data-k="desc" value="${esc(x.desc || '')}" placeholder="e.g. diesel, 120 miles" style="min-height: 34px; padding: 4px 6px;"></td>
+          <td><select class="form-control mi-x" data-i="${i}" data-k="siteId" style="min-height: 34px; padding: 4px 6px;">${miSiteOptions(x.siteId)}</select></td>
+          <td><input class="form-control mi-x" data-i="${i}" data-k="amount" inputmode="decimal" value="${x.amount != null ? Number(x.amount).toFixed(2) : ''}" style="width: 100px; min-height: 34px; padding: 4px 6px;"></td>
+          <td><button type="button" class="btn btn-danger btn-sm mi-xdel" data-i="${i}">✕</button></td></tr>`).join('')}
+        </tbody></table></div>` : ''}
+        <div style="margin-top: 6px;"><button type="button" class="btn btn-outline btn-sm" id="miAddExpense"${(d.expenses || []).length >= MI_MAX_EXPENSES ? ' disabled' : ''}>+ Add fuel / expense</button></div>
+      </div>
+      <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; margin: 10px 0;">
         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 700;"><input type="checkbox" class="mi-cis" data-k="cisOn"${d.cisOn ? ' checked' : ''}> CIS applies to this invoice</label>
         ${d.cisOn ? `<label style="display: block; margin-top: 8px; font-size: 0.85rem;">CIS deduction rate
           <select class="form-control mi-cis" data-k="cisRate" style="min-height: 36px; max-width: 260px;">
@@ -146,9 +165,9 @@ function renderMyInvoiceView() {
             <option value="30"${d.cisRate == 30 ? ' selected' : ''}>30% (not registered)</option>
             <option value="0"${d.cisRate == 0 ? ' selected' : ''}>0% (gross payment status)</option>
           </select></label>
-          <small style="color: var(--text-muted);">CIS tax is taken off your labour (the net amount) before you are paid. It is not taken off VAT. Put your UTR in My invoice details.</small>` : ''}
+          <small style="color: var(--text-muted);">CIS tax is taken off your labour before you are paid. It is not taken off VAT, or off fuel and expenses you claim back. Put your UTR in My invoice details.</small>` : ''}
       </div>
-      <div style="text-align: right; line-height: 1.7;">Net ${money(t.net)}<br>${myInvProfile && myInvProfile.vat_registered ? `VAT ${money(t.vat)}<br>` : ''}${d.cisOn ? `Total ${money(t.gross)}<br>Less CIS deduction (${d.cisRate}%) -${money(t.cis)}<br><strong style="font-size: 1.1rem;">Amount payable ${money(t.payable)}</strong>` : `<strong style="font-size: 1.1rem;">Total ${money(t.gross)}</strong>`}</div>
+      <div style="text-align: right; line-height: 1.7;">${t.expenses ? `Labour ${money(t.labour)}<br>Fuel &amp; expenses ${money(t.expenses)}<br>` : ''}Net ${money(t.net)}<br>${myInvProfile && myInvProfile.vat_registered ? `VAT ${money(t.vat)}<br>` : ''}${d.cisOn ? `Total ${money(t.gross)}<br>Less CIS deduction (${d.cisRate}%) -${money(t.cis)}<br><strong style="font-size: 1.1rem;">Amount payable ${money(t.payable)}</strong>` : `<strong style="font-size: 1.1rem;">Total ${money(t.gross)}</strong>`}</div>
       <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-outline" id="miDraftPdf" ${complete ? '' : 'disabled'}>📄 Download PDF</button><button type="button" class="btn btn-primary" id="miSubmit" style="flex: 1;" ${complete ? '' : 'disabled title="Save your details first"'}>📨 Send to the office · ${money(d.cisOn ? t.payable : t.gross)}</button></div><div>${complete ? '' : '<p style="color: var(--warning); font-size: 0.8rem; margin-top: 6px;">Save your bank details above first.</p>'}</div>`;
   }
   html += '</div>';
@@ -194,6 +213,18 @@ function miBind(host) {
     renderMyInvoiceView();
   });
   on('.mi-cis', 'change', el => { myInvDraft[el.dataset.k] = el.type === 'checkbox' ? el.checked : parseFloat(el.value); renderMyInvoiceView(); });
+  on('.mi-x', 'change', el => {
+    const x = myInvDraft.expenses[+el.dataset.i], k = el.dataset.k;
+    if (k === 'amount') { const n = parseFloat(String(el.value).replace(/[£,\s]/g, '')); x.amount = isNaN(n) ? null : n; }
+    else x[k === 'desc' ? 'desc' : k] = el.value;
+    renderMyInvoiceView();
+  });
+  on('.mi-xdel', 'click', el => { myInvDraft.expenses.splice(+el.dataset.i, 1); renderMyInvoiceView(); });
+  on('#miAddExpense', 'click', () => {
+    const first = myInvDraft.lines.find(l => l.siteId);
+    myInvDraft.expenses.push({ type: 'Fuel', desc: '', siteId: first ? first.siteId : '', amount: null });
+    renderMyInvoiceView();
+  });
   on('.mi-del', 'click', el => { myInvDraft.lines.splice(+el.dataset.i, 1); renderMyInvoiceView(); });
   on('#miAddLine', 'click', () => { myInvDraft.lines.push({ siteId: '', days: 1, plannerDays: null, rate: myInvProfile && myInvProfile.default_rate != null ? parseFloat(myInvProfile.default_rate) : null, amount: null, manual: false }); renderMyInvoiceView(); });
   on('#miSubmit', 'click', (el) => submitMyInvoice(el));
@@ -217,12 +248,17 @@ function miRecordFromDraft(forSubmit) {
   if (lines.some(l => !l.siteId)) { alert('Choose the job on every line.'); return null; }
   if (lines.some(l => !(parseFloat(l.amount) > 0))) { alert('Every line needs an amount (days × rate).'); return null; }
   if (new Set(lines.map(l => String(l.siteId))).size !== lines.length) { alert('The same job is on two lines - put them on one line.'); return null; }
-  const t = miTotals({ lines, cisOn: d.cisOn, cisRate: d.cisRate });
+  const exps = (d.expenses || []).filter(x => x.amount || x.desc);
+  if (exps.some(x => !(parseFloat(x.amount) > 0))) { alert('Every fuel / expense line needs an amount (or remove the line).'); return null; }
+  if (exps.some(x => !x.siteId)) { alert('Choose the job for every fuel / expense line.'); return null; }
+  const t = miTotals({ lines, expenses: exps, cisOn: d.cisOn, cisRate: d.cisRate });
   const p = myInvProfile;
   return {
     id: 'oi_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6), user_id: String(currentUser.id), user_name: currentUser.full_name, status: 'submitted',
     week_start: miMonday(d.weekEnd), week_end: d.weekEnd, invoice_no: d.invNo, invoice_date: d.invDate,
     lines: lines.map(l => ({ site_id: String(l.siteId), address: miSiteName(l.siteId), days: parseFloat(l.days) || 0, planner_days: l.plannerDays != null ? l.plannerDays : null, rate: l.rate, net: miR2(l.amount) })),
+    expenses: exps.map(x => ({ type: x.type, description: String(x.desc || '').trim(), site_id: String(x.siteId), address: miSiteName(x.siteId), net: miR2(x.amount) })),
+    labour_net: t.labour, expenses_net: t.expenses,
     net: t.net, vat: t.vat, gross: t.gross,
     cis_applied: !!d.cisOn, cis_rate: d.cisOn ? (parseFloat(d.cisRate) || 0) : 0, cis: t.cis, payable: t.payable,
     trading_name: p.trading_name || '', utr: p.utr || '', vat_registered: !!p.vat_registered, vat_no: p.vat_no || '',
@@ -254,6 +290,8 @@ async function miBuildPdf(rec, flat = true) {
   const lines = rec.lines.map(l => ({ address: l.address, days: l.days, rate: l.rate, amount: l.net }));
   return buildOperativeInvoicePdf({
     flat, operative: rec.user_name, weekEnding: rec.week_end, lines,
+    expenses: (rec.expenses || []).map(x => ({ text: x.type + (x.description ? ' - ' + x.description : ''), amount: x.net })),
+    labourNet: rec.labour_net != null ? rec.labour_net : rec.net, expensesNet: rec.expenses_net || 0,
     values: {
       invoice_no: rec.invoice_no, invoice_date: miDate(rec.invoice_date), trading_name: rec.trading_name, utr: rec.utr, vat_no: rec.vat_no,
       net_total: Number(rec.net).toFixed(2), total_vat: rec.vat ? Number(rec.vat).toFixed(2) : '', invoice_total: Number(rec.gross).toFixed(2),
@@ -279,7 +317,7 @@ function renderInvoiceInbox() {
       const over = i.lines.filter(l => l.planner_days != null ? l.days > l.planner_days : true);
       return `<div style="border: 1px solid var(--border-color); border-left: 4px solid var(--warning); border-radius: 8px; padding: 10px; margin-bottom: 10px;">
         <div style="display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;"><strong>${esc(i.user_name)}</strong><span>w/e ${miDate(i.week_end)} · ${esc(i.invoice_no)} · <strong>${money(i.gross)}</strong>${i.vat ? ` (net ${money(i.net)} + VAT ${money(i.vat)})` : ''}${i.cis_applied ? ` · <span style="color: var(--warning); font-weight: 700;">CIS ${i.cis_rate}% -${money(i.cis)} → pay ${money(i.payable)}</span>` : ''}</span></div>
-        <table class="rep-table" style="margin-top: 6px;"><thead><tr><th>Job</th><th>Days claimed</th><th>Planner</th><th style="text-align: right;">Amount</th></tr></thead><tbody>${i.lines.map(l => `<tr><td style="white-space: normal;">${esc(l.address)}</td><td>${l.days}</td><td style="${l.planner_days == null || l.days > l.planner_days ? 'color: var(--warning); font-weight: 700;' : ''}">${l.planner_days != null ? l.planner_days : 'not booked'}</td><td style="text-align: right;">${money(l.net)}</td></tr>`).join('')}</tbody></table>
+        <table class="rep-table" style="margin-top: 6px;"><thead><tr><th>Job</th><th>Days claimed</th><th>Planner</th><th style="text-align: right;">Amount</th></tr></thead><tbody>${i.lines.map(l => `<tr><td style="white-space: normal;">${esc(l.address)}</td><td>${l.days}</td><td style="${l.planner_days == null || l.days > l.planner_days ? 'color: var(--warning); font-weight: 700;' : ''}">${l.planner_days != null ? l.planner_days : 'not booked'}</td><td style="text-align: right;">${money(l.net)}</td></tr>`).join('')}${(i.expenses || []).map(x => `<tr><td style="white-space: normal;">⛽ ${esc(x.type)}${x.description ? ' - ' + esc(x.description) : ''} <span style="color: var(--text-muted);">(${esc(x.address || '')})</span></td><td colspan="2" style="color: var(--text-muted);">costed as an extra cost</td><td style="text-align: right;">${money(x.net)}</td></tr>`).join('')}</tbody></table>
         <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">Pay to: ${esc(i.account_name)} · ${esc(i.sort_code)} · ${esc(i.account_no)}${i.trading_name ? ' · ' + esc(i.trading_name) : ''}${i.utr ? ' · UTR ' + esc(i.utr) : ''}</div>
         ${canReview ? `<div style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;"><button type="button" class="btn btn-primary btn-sm oi-approve" data-id="${esc(i.id)}">✅ Approve &amp; add to job costs</button><button type="button" class="btn btn-danger btn-sm oi-reject" data-id="${esc(i.id)}">Send back</button><button type="button" class="btn btn-outline btn-sm oi-pdf" data-id="${esc(i.id)}">PDF</button></div>` : ''}</div>`;
     }).join('') : '<p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">Nothing waiting for approval.</p>'}
@@ -304,14 +342,26 @@ async function approveOperativeInvoice(btn) {
   if (!rec || rec.status !== 'submitted' || !isOwnerOrAdminUser(currentUser)) return;
   const unbooked = rec.lines.filter(l => l.planner_days == null || l.days > l.planner_days);
   const warn = unbooked.length ? `\n\n⚠️ ${unbooked.length} line(s) claim more days than the planner shows.` : '';
-  if (!confirm(`Approve ${rec.user_name}'s invoice ${rec.invoice_no} for ${money(rec.gross)}?\n\nIts ${money(rec.net)} (ex VAT) will be added to the job costs.${rec.cis_applied ? `\n\nCIS ${rec.cis_rate}%: deduct ${money(rec.cis)} and pay ${money(rec.payable)}.` : ''}${warn}`)) return;
+  if (!confirm(`Approve ${rec.user_name}'s invoice ${rec.invoice_no} for ${money(rec.gross)}?\n\nIts ${money(rec.labour_net != null ? rec.labour_net : rec.net)} labour${rec.expenses_net ? ` and ${money(rec.expenses_net)} fuel / expenses` : ''} (ex VAT) will be added to the job costs.${rec.cis_applied ? `\n\nCIS ${rec.cis_rate}%: deduct ${money(rec.cis)} and pay ${money(rec.payable)}.` : ''}${warn}`)) return;
   btn.disabled = true;
   try {
     const doc = await miBuildPdf(rec);
     const file = new File([doc.output('blob')], `Invoice_${String(rec.invoice_no).replace(/[^A-Za-z0-9-]/g, '_')}.pdf`, { type: 'application/pdf' });
+    // Fuel / expenses become extra costs on their jobs (fixed ids, so approving again after a failure just overwrites them)
+    for (let n = 0; n < (rec.expenses || []).length; n++) {
+      const x = rec.expenses[n];
+      await db.collection('finance_costs').doc(`cost_oi_${rec.id}_${n + 1}`).set({
+        site_id: String(x.site_id), description: `${x.type}${x.description ? ': ' + x.description : ''} (${rec.user_name}, inv ${rec.invoice_no})`,
+        category: MI_EXPENSE_CATEGORY[x.type] || 'Other', amount: miR2(x.net), date: rec.invoice_date || diaryDateKey(new Date()),
+        added_by: currentUser.full_name, source: 'operative_invoice', operative_invoice_id: rec.id, user_id: String(rec.user_id), created_at: new Date().toISOString()
+      });
+    }
+    // the labour part is imported exactly as before; fuel / expenses are not labour
+    const labourNet = rec.labour_net != null ? rec.labour_net : rec.net;
+    const labourVat = rec.vat ? miR2(labourNet * 0.2) : null;
     const splits = rec.lines.map(l => ({ siteId: l.site_id, net: l.net }));
     await importInvoiceItem({
-      file, splits: splits.length > 1 ? splits : null, siteId: splits[0].siteId, net: rec.net, vat: rec.vat || null, gross: rec.gross,
+      file, splits: splits.length > 1 ? splits : null, siteId: splits[0].siteId, net: labourNet, vat: labourVat, gross: miR2(labourNet + (labourVat || 0)),
       invNo: rec.invoice_no, merchant: rec.trading_name || rec.user_name, date: rec.invoice_date, contractorId: rec.user_id, week: rec.week_start, poNumber: ''
     });
     await db.collection('operative_invoices').doc(rec.id).update({ status: 'approved', reviewed_by: currentUser.full_name, reviewed_at: new Date().toISOString() });
