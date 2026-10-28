@@ -118,13 +118,29 @@ exports.login = onCall(opts, async (req) => {
 // ---------------------------------------------------------------------------
 // refreshSession() -> same shape as login. Fresh claims from the current user record (after approval, role change, or app restart).
 // ---------------------------------------------------------------------------
-exports.refreshSession = onCall(opts, async (req) => {
-  const a = requireAuth(req);
-  const snap = await db().collection('users').doc(a.uid).get();
+async function sessionFor(uid) {
+  const snap = await db().collection('users').doc(uid).get();
   if (!snap.exists) throw new HttpsError('unauthenticated', 'Please log in again.');
   const user = snap.data();
   if (user.status === 'Restricted') throw new HttpsError('permission-denied', 'Your account access has been restricted by an administrator.');
   return { token: await issueToken(snap.id, user), user: publicUser(snap.id, user), must_change_password: !!user.must_change_password };
+}
+
+exports.refreshSession = onCall(opts, async (req) => sessionFor(requireAuth(req).uid));
+
+// ---------------------------------------------------------------------------
+// ssoSession(idToken): used when GVD Live is opened inside the GVD Hub. The Hub signs management in once and hands each app a
+// GVD Live ID token; this verifies it and returns a normal session for this app. Management accounts only.
+// ---------------------------------------------------------------------------
+exports.ssoSession = onCall(opts, async (req) => {
+  let decoded;
+  try { decoded = await getAuth().verifyIdToken(String((req.data && req.data.idToken) || '')); }
+  catch (e) { throw new HttpsError('unauthenticated', 'Please sign in again.'); }
+  const res = await sessionFor(decoded.uid);
+  if (!isMgmtRole(res.user.role, res.user.email) || res.user.status !== 'Active') {
+    throw new HttpsError('permission-denied', 'Management access is required.');
+  }
+  return res;
 });
 
 // ---------------------------------------------------------------------------

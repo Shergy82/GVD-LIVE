@@ -477,12 +477,41 @@ async function fetchRestFallback() {
   }
 }
 
+// ---- GVD Hub single sign-on: when this app is opened inside the Hub, the Hub signs management in once and hands us a
+// GVD Live ID token. We swap it for a normal session on the server. Only messages from the Hub itself are accepted.
+const HUB_ORIGIN = USE_EMULATOR ? 'http://localhost:5056' : 'https://gvd-hub.web.app';
+let ssoBusy = false;
+function setupHubSso() {
+  if (window.parent === window || !auth) return;
+  window.addEventListener('message', async e => {
+    if (e.origin !== HUB_ORIGIN || !e.data) return;
+    if (e.data.type === 'gvd-sso-logout') {
+      localStorage.removeItem('gvd_current_user_id');
+      await auth.signOut().catch(() => {});
+      window.location.reload();
+      return;
+    }
+    if (e.data.type !== 'gvd-sso' || !e.data.idToken || ssoBusy) return;
+    ssoBusy = true;
+    try {
+      const res = await callFn('ssoSession', { idToken: e.data.idToken });
+      if (currentUser && String(currentUser.id) === String(res.user.id) && auth.currentUser) return; // already this person
+      await signInWithServerSession(res);
+      startSyncOnce();
+      onUserAuthenticated();
+    } catch (err) { console.warn('Hub sign-in failed:', err.message); }
+    finally { ssoBusy = false; }
+  });
+  window.parent.postMessage({ type: 'gvd-sso-ready' }, HUB_ORIGIN);
+}
+
 // -------------------------------------------------------------------
 // INITIALIZATION & ROUTING
 // -------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
+  setupHubSso();
   setupFeedbackListeners();
   setupChatListeners();
   setupCustomerInvoiceListeners();

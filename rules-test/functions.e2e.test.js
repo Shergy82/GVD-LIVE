@@ -135,3 +135,16 @@ test('refreshSession gives fresh claims, e.g. after a Pending user is approved',
   await db.doc('users/' + r.user.id).update({ status: 'Restricted' });
   assert.strictEqual((await call('refreshSession', {}, idt)).error.status, 'PERMISSION_DENIED');
 });
+
+test('ssoSession: management ID token gives a session; operatives and bad tokens refused', async () => {
+  const admin = await call('login', { email: 'ann@x.com', password: 'brandnew1' });
+  const adminIdt = await idTokenFrom(admin.token);
+  const r = await call('ssoSession', { idToken: adminIdt });
+  assert.strictEqual(r.user.id, 'admin1');
+  assert.strictEqual(claims(await idTokenFrom(r.token)).mgmt, true);
+  await db.doc('credentials/op1').set({ failed_count: 0, locked_until: null }, { merge: true });
+  const op = await call('login', { email: 'ollie@x.com', password: 'oppass1' });
+  assert.strictEqual((await call('ssoSession', { idToken: await idTokenFrom(op.token) })).error.status, 'PERMISSION_DENIED');
+  assert.strictEqual((await call('ssoSession', { idToken: 'garbage' })).error.status, 'UNAUTHENTICATED');
+  assert.strictEqual((await call('ssoSession', {})).error.status, 'UNAUTHENTICATED');
+});
