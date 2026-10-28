@@ -584,7 +584,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function onUserAuthenticated() {
   if (!currentUser) return;
-  hideSsoSplash();
+  requestAnimationFrame(() => requestAnimationFrame(hideSsoSplash));   // lift the splash only once the signed-in screen has painted
 
   if (currentUser.must_change_password) {
     document.getElementById('appHeader').style.display = 'none';
