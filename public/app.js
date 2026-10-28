@@ -1,10 +1,17 @@
 // GVD LIVE Works Planner - Pure Firebase Firestore Real-Time Engine
 
 const firebaseConfig = {
+  // Public web identifiers (they ship in every web app); access is controlled by security rules, not by hiding this
+  apiKey: "AIzaSyC2nnP8nXrFKw-4JWswddXLfroDD2lBcg0",
+  appId: "1:440817107816:web:a000c5685aaf7604a84cdd",
   projectId: "gvd-live",
   authDomain: "gvd-live.firebaseapp.com",
   storageBucket: "gvd-live.appspot.com"
 };
+
+// Local testing only: ?emulator=1 on localhost uses the demo-gvd emulator project, so it can never touch production data.
+const USE_EMULATOR = location.hostname === 'localhost' && new URLSearchParams(location.search).get('emulator') === '1';
+if (USE_EMULATOR) firebaseConfig.projectId = 'demo-gvd';
 
 let db = null;
 if (typeof firebase !== 'undefined' && firebase.apps) {
@@ -12,6 +19,61 @@ if (typeof firebase !== 'undefined' && firebase.apps) {
     firebase.initializeApp(firebaseConfig);
   }
   db = firebase.firestore();
+}
+
+// Sign-in is done by the `login` Cloud Function, which returns a Firebase custom token (role claims inside).
+let auth = null;
+let fns = null;
+if (db) {
+  auth = firebase.auth();
+  fns = firebase.app().functions('us-central1');
+  if (USE_EMULATOR) {
+    db.useEmulator('127.0.0.1', 8080);
+    auth.useEmulator('http://127.0.0.1:9099');
+    fns.useEmulator('127.0.0.1', 5001);
+  }
+}
+let syncStarted = false;
+function startSyncOnce() {
+  if (syncStarted) return;
+  syncStarted = true;
+  initFirestoreSync();
+}
+
+async function callFn(name, data) {
+  try {
+    return (await fns.httpsCallable(name)(data || {})).data;
+  } catch (err) {
+    const known = ['invalid-argument', 'permission-denied', 'not-found', 'already-exists', 'resource-exhausted', 'unauthenticated'];
+    const e = new Error(known.includes(String(err.code).replace('functions/', '')) ? err.message : 'Could not reach the server. Please check your connection and try again.');
+    e.code = String(err.code || '').replace('functions/', '');
+    throw e;
+  }
+}
+
+// Signs in with a token from login / register / refreshSession and returns the user record
+async function signInWithServerSession(res) {
+  await auth.signInWithCustomToken(res.token);
+  currentUser = res.user;
+  localStorage.setItem('gvd_current_user_id', res.user.id);
+  return res.user;
+}
+
+// Pending accounts wait here; when an administrator approves them we fetch fresh claims and let them in
+let approvalUnsub = null;
+function watchApproval(userId) {
+  if (approvalUnsub) approvalUnsub();
+  approvalUnsub = db.collection('users').doc(String(userId)).onSnapshot(async docSnap => {
+    if (!docSnap.exists || docSnap.data().status !== 'Active') return;
+    try {
+      const res = await callFn('refreshSession');
+      if (approvalUnsub) { approvalUnsub(); approvalUnsub = null; }
+      await signInWithServerSession(res);
+      startSyncOnce();
+      onUserAuthenticated();
+      showGreenToast('🎉 Account Approved! Welcome to Works Planner.');
+    } catch (e) { console.warn('Approval refresh failed', e); }
+  }, err => console.warn('Approval watch error:', err));
 }
 
 const REST_FALLBACK_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0dea5e03e1f14';
@@ -36,6 +98,10 @@ let knownShiftIds = null;
 let currentCustomerToken = null;
 
 // Helper Role Validation Functions
+// Deleting a site is for Owners only (everyone else archives). The database rules enforce this too.
+function isOwnerRole(user) {
+  return !!user && (user.role === 'Owner' || user.email === 'phil@gvdcontracts.com');
+}
 function isManagementUser(user) {
   if (!user) return false;
   return user.role === 'Owner' || user.role === 'Admin' || user.role === 'Manager' || user.email === 'phil@gvdcontracts.com';
@@ -75,6 +141,10 @@ function isOwnerOrAdminUser(user) {
 }
 
 function formatSiteId(siteId) {
+  // Jobs published from GVD Logic show the Logic reference (e.g. GVD-2026-002) instead of the internal number
+  const known = typeof allSites !== 'undefined' && allSites.find(x => parseInt(x.id) === parseInt(siteId));
+  if (known && known.logic_ref) return known.logic_ref;
+  if (typeof custData !== 'undefined' && custData && custData.site && String(custData.site.id) === String(siteId) && custData.site.logic_ref) return custData.site.logic_ref;
   const idNum = parseInt(siteId);
   if (isNaN(idNum)) return `Site #${siteId}`;
   if (idNum >= 10000) return `Site #${idNum}`;
@@ -217,7 +287,7 @@ function deduplicatePhotos() {
 
 function loadLocalStorageData() {
   try {
-    allUsers = JSON.parse(localStorage.getItem('gvd_users')) || [];
+    allUsers = (JSON.parse(localStorage.getItem('gvd_users')) || []).map(u => { const c = { ...u }; delete c.password_hash; delete c.temp_password; return c; });
     allSites = JSON.parse(localStorage.getItem('gvd_sites')) || [];
     allShifts = JSON.parse(localStorage.getItem('gvd_shifts')) || [];
     allPhotos = JSON.parse(localStorage.getItem('gvd_photos')) || [];
@@ -257,6 +327,7 @@ function initFirestoreSync() {
   db.collection('users').onSnapshot(snapshot => {
     allUsers = snapshot.docs.map(doc => {
       const d = doc.data();
+      delete d.password_hash; delete d.temp_password; // never keep credentials in memory or the local cache
       return { ...d, id: d.id || doc.id };
     });
 
@@ -304,6 +375,7 @@ function initFirestoreSync() {
       return;
     }
     renderActiveView();
+    fsMarkReady('sites');
   }, err => console.warn('Firestore sites error:', err));
 
 
@@ -324,6 +396,7 @@ function initFirestoreSync() {
     }
     renderActiveView();
     if (typeof refreshFinanceViews === 'function') refreshFinanceViews();
+    fsMarkReady('shifts');
   }, err => console.warn('Firestore shifts error:', err));
 
   // Real-time Photos Collection Sync
@@ -346,6 +419,7 @@ function initFirestoreSync() {
     if (activeSiteId) loadProjectPage(activeSiteId);
     const invView = document.getElementById('view-invoices');
     if (invView && invView.style.display !== 'none') renderInvoiceRegister();
+    fsMarkReady('pdfs');
   }, err => console.warn('Firestore pdfs error:', err));
 
   // Real-time App Settings Sync
@@ -355,6 +429,7 @@ function initFirestoreSync() {
       saveLocalStorageData();
       updateBrandingUI();
     }
+    fsMarkReady('settings');
   }, err => console.warn('Firestore settings error:', err));
 }
 
@@ -410,14 +485,49 @@ async function fetchRestFallback() {
   }
 }
 
-// Simple hash for password check
-function hashSimple(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return hash.toString(16);
+// ---- GVD Hub single sign-on: when this app is opened inside the Hub, the Hub signs management in once and hands us a
+// GVD Live ID token. We swap it for a normal session on the server. Only messages from the Hub itself are accepted.
+const HUB_ORIGIN = USE_EMULATOR ? 'http://localhost:5056' : 'https://gvd-hub.web.app';
+let ssoBusy = false;
+// While the Hub is handing over the sign-in, show a plain splash instead of flashing the login page
+let ssoSplashTimer = null;
+function showSsoSplash() {
+  if (document.getElementById('ssoSplash')) return;
+  const d = document.createElement('div');
+  d.id = 'ssoSplash';
+  d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#0b1020;color:#8a93b5;display:grid;place-items:center;font:15px -apple-system,BlinkMacSystemFont,sans-serif';
+  d.textContent = 'Signing you in…';
+  document.body.appendChild(d);
+  ssoSplashTimer = setTimeout(hideSsoSplash, 6000);   // never hide the login page for long if the Hub does not answer
+}
+function hideSsoSplash() {
+  clearTimeout(ssoSplashTimer);
+  const d = document.getElementById('ssoSplash');
+  if (d) d.remove();
+}
+function setupHubSso() {
+  if (window.parent === window || !auth) return;
+  showSsoSplash();
+  window.addEventListener('message', async e => {
+    if (e.origin !== HUB_ORIGIN || !e.data) return;
+    if (e.data.type === 'gvd-sso-logout') {
+      localStorage.removeItem('gvd_current_user_id');
+      await auth.signOut().catch(() => {});
+      window.location.reload();
+      return;
+    }
+    if (e.data.type !== 'gvd-sso' || !e.data.idToken || ssoBusy) return;
+    ssoBusy = true;
+    try {
+      const res = await callFn('ssoSession', { idToken: e.data.idToken });
+      if (currentUser && String(currentUser.id) === String(res.user.id) && auth.currentUser) { hideSsoSplash(); return; } // already this person
+      await signInWithServerSession(res);
+      startSyncOnce();
+      onUserAuthenticated();
+    } catch (err) { console.warn('Hub sign-in failed:', err.message); hideSsoSplash(); }
+    finally { ssoBusy = false; }
+  });
+  window.parent.postMessage({ type: 'gvd-sso-ready' }, HUB_ORIGIN);
 }
 
 // -------------------------------------------------------------------
@@ -426,14 +536,13 @@ function hashSimple(str) {
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
+  setupHubSso();
   setupFeedbackListeners();
   setupChatListeners();
   setupCustomerInvoiceListeners();
   registerServiceWorker();
 
-  initFirestoreSync();
-
-  // Check URL query for customer token (e.g. ?customer=TOKEN)
+  // Check URL query for customer token (e.g. ?customer=TOKEN). Customers never sign in and never touch the database directly.
   const urlParams = new URLSearchParams(window.location.search);
   const custToken = urlParams.get('customer');
   if (custToken) {
@@ -441,15 +550,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // Check logged-in session
+  if (!auth) { showView('view-login'); return; }
+
+  // Restore a signed-in session: Firebase keeps the sign-in, and we ask the server for fresh role claims.
+  const fbUser = await new Promise(resolve => { const off = auth.onAuthStateChanged(u => { off(); resolve(u); }); });
   const storedUserId = localStorage.getItem('gvd_current_user_id');
-  if (storedUserId) {
-    const user = allUsers.find(u => String(u.id) === String(storedUserId));
-    if (user && user.status === 'Active') {
-      currentUser = user;
-      onUserAuthenticated();
+  if (fbUser && storedUserId && fbUser.uid === storedUserId) {
+    try {
+      const res = await callFn('refreshSession');
+      await signInWithServerSession(res);
+      if (res.user.status === 'Active') {
+        startSyncOnce();
+        onUserAuthenticated();
+      } else {
+        showView('view-awaiting-approval');
+        watchApproval(res.user.id);
+      }
       return;
+    } catch (err) {
+      console.warn('Session refresh failed:', err);
+      if (err.code === 'unauthenticated' || err.code === 'permission-denied') {
+        await auth.signOut().catch(() => {});
+        localStorage.removeItem('gvd_current_user_id');
+      } else {
+        // offline: carry on with the cached record; the data listeners resume when the connection returns
+        const cached = allUsers.find(u => String(u.id) === String(storedUserId));
+        if (cached && cached.status === 'Active') {
+          currentUser = cached;
+          startSyncOnce();
+          onUserAuthenticated();
+          return;
+        }
+      }
     }
+  } else if (storedUserId) {
+    localStorage.removeItem('gvd_current_user_id'); // saved before sign-in moved to the server: sign in once more
   }
 
   showView('view-login');
@@ -457,6 +592,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function onUserAuthenticated() {
   if (!currentUser) return;
+  requestAnimationFrame(() => requestAnimationFrame(hideSsoSplash));   // lift the splash only once the signed-in screen has painted
 
   if (currentUser.must_change_password) {
     document.getElementById('appHeader').style.display = 'none';
@@ -762,8 +898,14 @@ function formatUKDate(dateInput) {
   return `${dayStr}/${monthStr}/${yearStr}`;
 }
 
+// Status from GVD Logic (Confirmed, WIP, On hold...): shown for jobs published from Logic
+const JOB_STATUS_STYLE = { approved: '#dcfce7;color:#166534', wip: '#dbeafe;color:#1e40af', on_hold: '#fef3c7;color:#92400e', awaiting_certs: '#fef3c7;color:#92400e', completed: '#e2e8f0;color:#334155' };
+function jobStatusBadgeHtml(site) {
+  if (!site || !site.job_status) return '';
+  return `<span class="site-type-badge" style="background:${JOB_STATUS_STYLE[site.job_status_key] || '#e2e8f0;color:#334155'}">${diaryEsc(site.job_status)}</span>`;
+}
 function siteTypeBadgeHtml(site) {
-  return site.construction_type ? `<span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>` : '';
+  return (site.construction_type ? `<span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>` : '') + jobStatusBadgeHtml(site);
 }
 
 function formatShortUKDayDate(iso) {
@@ -2053,7 +2195,7 @@ function renderSitesList() {
       ? `<button class="btn btn-secondary btn-sm restore-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">↩️ Restore</button>`
       : `<button class="btn btn-warning btn-sm archive-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24; display: inline-flex; align-items: center; gap: 6px;">📦 Archive</button>`;
 
-    const deleteBtn = `<button class="btn btn-danger btn-sm delete-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">🗑️ Delete</button>`;
+    const deleteBtn = !isOwnerRole(currentUser) ? '' : `<button class="btn btn-danger btn-sm delete-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">🗑️ Delete</button>`;
 
     return `
       <div class="site-card" data-site-id="${site.id}">
@@ -2168,7 +2310,7 @@ function loadProjectPage(siteId) {
         : `<button class="btn btn-warning btn-sm" id="btnArchiveProject" style="background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24;">📦 Archive Project</button>`;
 
       const reportBtnHtml = isOwnerOrAdminUser(currentUser) ? `<button class="btn btn-primary btn-sm" id="btnJobReport">📄 Completed Job Report</button> ` : '';
-      actionsContainer.innerHTML = `${reportBtnHtml}${archiveRestoreHtml} <button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>`;
+      actionsContainer.innerHTML = `${reportBtnHtml}${archiveRestoreHtml} ${isOwnerRole(currentUser) ? '<button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>' : ''}`;
       actionsContainer.style.display = 'flex';
 
       const repBtn = document.getElementById('btnJobReport');
@@ -2293,6 +2435,7 @@ async function downloadJobReport(site, btn) {
     const summary = [
       ['Site reference', formatSiteId(site.id)],
       ['Construction type', site.construction_type || '-'],
+      ...(site.job_status ? [['Job status (from GVD Logic)', site.job_status]] : []),
       ['Status', site.is_archived ? 'Archived' : (finishShift ? 'Completed' : 'Active')],
       ['First shift', first ? formatUKDate(first) : '-'],
       ['Completed / last shift', finishShift ? formatUKDate(finishShift.shift_date) : (last ? formatUKDate(last) : '-')],
@@ -2438,8 +2581,16 @@ async function handleRestoreSite(siteId) {
 async function handleDeleteSite(siteId) {
   const site = allSites.find(s => parseInt(s.id) === parseInt(siteId));
   if (!site) return;
+  if (!isOwnerRole(currentUser)) { alert('Only an Owner can delete a site. You can archive it instead.'); return; }
 
   if (!confirm(`Are you sure you want to PERMANENTLY DELETE Site #${site.id} (${site.address})?\n\nThis will remove the site and all its associated shifts, photos and documents from the database. This action cannot be undone.`)) {
+    return;
+  }
+
+  const wantRef = formatSiteId(site.id);
+  const typed = prompt(`Type the site reference (${wantRef}) to confirm the permanent delete:`);
+  if (typed === null || typed.trim().toLowerCase() !== String(wantRef).trim().toLowerCase()) {
+    if (typed !== null) alert('That did not match, so nothing was deleted.');
     return;
   }
 
@@ -2972,7 +3123,10 @@ async function renderAdminUserPushMonitor() {
 // -------------------------------------------------------------------
 // PUBLIC CUSTOMER SCHEDULE VIEW (NO ACCOUNT REQUIRED)
 // -------------------------------------------------------------------
-function loadCustomerPublicView(token) {
+let custData = null;
+let custPollTimer = null;
+
+async function loadCustomerPublicView(token) {
   if (!token) return;
   currentCustomerToken = token;
   document.getElementById('appHeader').style.display = 'none';
@@ -2980,16 +3134,19 @@ function loadCustomerPublicView(token) {
 
   const customerView = document.getElementById('view-customer-public');
   customerView.style.display = 'block';
+  if (!custData) customerView.innerHTML = `<div style="text-align: center; margin-top: 60px; color: #64748b; font-size: 1.1rem;">⏳ Loading live project schedule...</div>`;
 
-  const site = allSites.find(s => s.customer_token === token);
-  if (!site) {
-    if (allSites.length === 0) {
-      customerView.innerHTML = `<div style="text-align: center; margin-top: 60px; color: #64748b; font-size: 1.1rem;">⏳ Loading live project schedule...</div>`;
-    } else {
-      customerView.innerHTML = `<div class="alert-box alert-error" style="text-align: center; margin-top: 40px;">Invalid or expired customer schedule link.</div>`;
+  try {
+    custData = await callFn('customerView', { token });
+  } catch (err) {
+    if (!custData) {
+      customerView.innerHTML = `<div class="alert-box alert-error" style="text-align: center; margin-top: 40px;">${err.code === 'not-found' ? 'Invalid or expired customer schedule link.' : 'Sorry, the schedule could not be loaded. Please try again shortly.'}</div>`;
     }
     return;
   }
+  if (!custPollTimer) custPollTimer = setInterval(() => { if (!document.hidden) loadCustomerPublicView(currentCustomerToken); }, 60000);
+  const site = custData.site;
+  appSettings = { ...appSettings, ...custData.settings };
 
   // Restore public view HTML structure if it was replaced by loading placeholder
   if (!document.getElementById('custPubAppName')) {
@@ -3039,7 +3196,7 @@ function renderCustomerSchedule(site) {
   if (!container) return;
   const todayKey = diaryDateKey(new Date());
   const rank = { am: 0, all_day: 1, pm: 2 };
-  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
+  const siteShifts = (custData && custData.shifts) || [];
   const byDate = (a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (rank[a.shift_period] ?? 1) - (rank[b.shift_period] ?? 1);
   const current = siteShifts.filter(s => (s.shift_date || '') >= todayKey).sort(byDate);
   const completed = siteShifts.filter(s => (s.shift_date || '') < todayKey).sort((a, b) => byDate(b, a));
@@ -3054,8 +3211,7 @@ function renderCustomerSchedule(site) {
       const b = e.target.closest('[data-cust-tab]');
       if (!b) return;
       custScheduleTab = b.dataset.custTab;
-      const st = allSites.find(x => x.customer_token === currentCustomerToken);
-      if (st) renderCustomerSchedule(st);
+      if (custData) renderCustomerSchedule(custData.site);
     });
   }
   tabs.innerHTML = `
@@ -3069,7 +3225,6 @@ function renderCustomerSchedule(site) {
   }
   const done = custScheduleTab === 'completed';
   container.innerHTML = list.map(s => {
-    const op = allUsers.find(u => String(u.id) === String(s.operative_id));
     const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
     const dim = done ? 'opacity: 0.8;' : '';
     if (s.is_drying_day) {
@@ -3078,7 +3233,7 @@ function renderCustomerSchedule(site) {
     return `
       <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}">
         <strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
-        <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? diaryEsc(op.full_name) : 'Operative'}</div>
+        <div style="margin-top: 6px; font-weight: 600;">Operative: ${s.operative_name ? diaryEsc(s.operative_name) : 'Operative'}</div>
         <div style="margin-top: 4px; color: #475569;">Task: ${diaryEsc(s.task)}</div>
       </div>
     `;
@@ -3539,20 +3694,15 @@ function drawCustomerFeedbackForm(site, card) {
     btn.disabled = true;
     btn.textContent = 'Sending...';
     try {
-      await db.collection('feedback').add({
-        site_id: String(site.id),
-        site_ref: formatSiteId(site.id),
-        site_address: site.address,
+      await callFn('customerFeedback', {
+        token: currentCustomerToken,
         rating,
-        sentiment: fbSentiment(rating),
         comment: val('fbComment').slice(0, 2000),
         customer_name: val('fbName').slice(0, 80),
         customer_address: val('fbAddress').slice(0, 200),
         customer_email: val('fbEmail').slice(0, 120),
         customer_phone: val('fbPhone').slice(0, 30),
-        consent: true,
-        source: 'customer_qr',
-        created_at: new Date().toISOString()
+        consent: true
       });
       localStorage.setItem('gvd_fb_last', String(Date.now()));
       card.innerHTML = `
@@ -4020,21 +4170,15 @@ function setupEventListeners() {
   document.getElementById('logoutBtn').addEventListener('click', handleLogout);
 
   document.getElementById('btnCheckApproval').addEventListener('click', async () => {
-    if (db) {
-      try {
-        const snap = await db.collection('users').get();
-        allUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      } catch (e) {}
-    }
-    const storedUserId = localStorage.getItem('gvd_current_user_id');
-    if (storedUserId) {
-      const user = allUsers.find(u => String(u.id) === String(storedUserId));
-      if (user && user.status === 'Active') {
-        currentUser = user;
+    try {
+      const res = await callFn('refreshSession');
+      if (res.user.status === 'Active') {
+        await signInWithServerSession(res);
+        startSyncOnce();
         onUserAuthenticated();
         return;
       }
-    }
+    } catch (e) {}
     alert('Your account is still awaiting approval by an administrator.');
   });
 
@@ -4190,59 +4334,24 @@ async function handleRegister(e) {
     return;
   }
 
-  if (db) {
-    try {
-      const snap = await db.collection('users').get();
-      allUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (err) {
-      console.warn('Firestore fetch error, using local/REST state:', err);
+  const btn = e.submitter || document.querySelector('#registerForm button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await callFn('register', { full_name, email, phone, role: regRoleSelect, password });
+    await signInWithServerSession(res);
+    if (res.user.status === 'Active') {
+      alert('Registration successful! Your account has been registered and activated as the Owner.');
+      startSyncOnce();
+      onUserAuthenticated();
+    } else {
+      showView('view-awaiting-approval');
+      watchApproval(res.user.id);
     }
-  }
-
-  const existing = allUsers.find(u => u.email === email);
-  if (existing) {
-    alertEl.textContent = 'An account with this email address already exists.';
+  } catch (err) {
+    alertEl.textContent = err.message;
     alertEl.style.display = 'block';
-    return;
-  }
-
-  const isOwnerEmail = email === 'phil@gvdcontracts.com';
-  const isFirstUser = allUsers.length === 0;
-  const isOwner = isFirstUser || isOwnerEmail;
-
-  const role = isOwner ? 'Owner' : regRoleSelect;
-  const status = isOwner ? 'Active' : 'Pending';
-
-  const newUserId = 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-
-  const newUser = {
-    id: newUserId,
-    full_name,
-    email,
-    phone,
-    password_hash: hashSimple(password),
-    role,
-    status,
-    created_at: new Date().toISOString()
-  };
-
-  if (db) {
-    try {
-      await db.collection('users').doc(newUserId).set(newUser);
-    } catch (err) {
-      console.warn('Firestore write error:', err);
-    }
-  }
-  allUsers.push(newUser);
-  saveLocalStorageData();
-
-  if (isOwner) {
-    currentUser = newUser;
-    alert('Registration successful! Your account has been registered and activated as the Owner.');
-    onUserAuthenticated();
-  } else {
-    localStorage.setItem('gvd_current_user_id', newUserId);
-    showView('view-awaiting-approval');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -4255,52 +4364,24 @@ async function handleLogin(e) {
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const password = document.getElementById('loginPassword').value;
 
-  if (db) {
-    try {
-      const snap = await db.collection('users').get();
-      allUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (err) {
-      console.warn('Firestore login fetch warning:', err);
+  const btn = e.submitter || document.querySelector('#loginForm button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await callFn('login', { email, password });
+    await signInWithServerSession(res);
+    if (res.user.status === 'Pending' || res.user.status === 'Pending Approval') {
+      showView('view-awaiting-approval');
+      watchApproval(res.user.id);
+      return;
     }
-  }
-
-  const user = allUsers.find(u => u.email === email && u.password_hash === hashSimple(password));
-  if (!user) {
-    alertEl.textContent = 'Invalid email address or password.';
+    startSyncOnce();
+    onUserAuthenticated();
+  } catch (err) {
+    alertEl.textContent = err.message;
     alertEl.style.display = 'block';
-    return;
+  } finally {
+    if (btn) btn.disabled = false;
   }
-
-  if (user.status === 'Pending' || user.status === 'Pending Approval') {
-    currentUser = user;
-    localStorage.setItem('gvd_current_user_id', user.id);
-    showView('view-awaiting-approval');
-
-    if (db) {
-      db.collection('users').doc(String(user.id)).onSnapshot(docSnap => {
-        if (docSnap.exists) {
-          const u = docSnap.data();
-          if (u.status === 'Active') {
-            currentUser = { ...u, id: docSnap.id };
-            onUserAuthenticated(currentUser);
-            showGreenToast('🎉 Account Approved! Welcome to Works Planner.');
-          }
-        }
-      });
-    }
-    return;
-  }
-
-  if (user.status === 'Restricted') {
-    alertEl.textContent = 'Your account access has been restricted by an administrator.';
-    alertEl.style.display = 'block';
-    return;
-  }
-
-  currentUser = user;
-  user.last_login_at = new Date().toISOString();
-  if (db) db.collection('users').doc(String(user.id)).update({ last_login_at: user.last_login_at }).catch(console.warn);
-  onUserAuthenticated();
 }
 
 async function handleSetNewPassword(e) {
@@ -4311,24 +4392,31 @@ async function handleSetNewPassword(e) {
   const pw2 = document.getElementById('resetConfirmPassword').value;
   const problem = pw.length < 6 ? 'Password must be at least 6 characters.'
     : pw !== pw2 ? 'The two passwords do not match.'
-    : hashSimple(pw) === currentUser.password_hash ? 'Please choose a different password to your temporary one.' : '';
+    : '';
   if (problem) {
     alertEl.textContent = problem;
     alertEl.style.display = 'block';
     return;
   }
-  const updates = { password_hash: hashSimple(pw), must_change_password: false };
-  Object.assign(currentUser, updates);
-  if (db) await db.collection('users').doc(String(currentUser.id)).update(updates).catch(err => alert('Could not save: ' + err.message));
+  try {
+    await callFn('setPassword', { newPassword: pw });
+  } catch (err) {
+    alertEl.textContent = err.message;
+    alertEl.style.display = 'block';
+    return;
+  }
+  currentUser.must_change_password = false;
   saveLocalStorageData();
   document.getElementById('resetNewPassword').value = '';
   document.getElementById('resetConfirmPassword').value = '';
   onUserAuthenticated();
 }
 
-function handleForgotPassword(e) {
+async function handleForgotPassword(e) {
   e.preventDefault();
   const alertEl = document.getElementById('forgotAlert');
+  const email = ((document.getElementById('forgotEmail') || {}).value || '').trim().toLowerCase();
+  if (email) await callFn('requestPasswordReset', { email }).catch(() => {});
   alertEl.textContent = 'Password reset request received. If an account exists with that email, instructions have been sent.';
   alertEl.style.display = 'block';
 }
@@ -4349,8 +4437,9 @@ async function handleLogout() {
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
   localStorage.removeItem('gvd_push_subscribed');
-  document.getElementById('appHeader').style.display = 'none';
-  showView('view-login');
+  if (auth) await auth.signOut().catch(() => {});
+  // a clean reload drops every data listener, which would otherwise keep running without a signed-in user
+  window.location.reload();
 }
 
 function getLogoBase64() {
@@ -4828,8 +4917,10 @@ async function saveShiftFromForm() {
     renderActiveView();
 
     if (targetShift && shift_date >= todayStr && !isDraftPlanningMode) {
-      await triggerShiftNotification(targetShift, '⚡ Live Shift Assigned');
-      showGreenToast('⚡ Live Shift Saved & Operative Notified!');
+      showGreenToast('✅ Shift updated & operative notified');
+      triggerShiftNotification(targetShift, '⚡ Live Shift Assigned').catch(console.warn);
+    } else {
+      showGreenToast(isDraftPlanningMode ? '✅ Draft shift updated (silent)' : '✅ Shift updated');
     }
   } else {
     // Creating Shift(s)
@@ -4838,6 +4929,7 @@ async function saveShiftFromForm() {
 
     const [year, month, day] = shift_date.split('-').map(Number);
     let createdCount = 0, skippedDuplicates = 0;
+    const notifyShifts = [];
 
     const includeWeekends = !!document.getElementById('shiftDuplicateWeekends')?.checked;
     let dayOffset = -1;
@@ -4866,10 +4958,7 @@ async function saveShiftFromForm() {
       if (db) await db.collection('shifts').doc(String(nextShiftId)).set(newShift);
       allShifts.push(newShift);
       createdCount++;
-
-      if (!isDraftPlanningMode && currentDateStr >= todayStr) {
-        await triggerShiftNotification(newShift, '⚡ Live Shift Assigned');
-      }
+      if (!isDraftPlanningMode && currentDateStr >= todayStr) notifyShifts.push(newShift);
     }
 
     deduplicateShifts();
@@ -4880,12 +4969,16 @@ async function saveShiftFromForm() {
     if (skippedDuplicates && !createdCount) {
       showGreenToast('That shift already exists - nothing added');
     } else if (createdCount > 1) {
-      showGreenToast(`⚡ ${createdCount} shifts assigned${includeWeekends ? '' : ' (Mon–Fri)'}!`);
-    } else if (!isDraftPlanningMode && shift_date >= todayStr) {
-      showGreenToast('⚡ Live Shift Saved & Operative Notified!');
+      showGreenToast(`✅ ${createdCount} shifts saved${includeWeekends ? '' : ' (Mon–Fri)'}${notifyShifts.length ? ' & operative notified' : ''}`);
     } else if (isDraftPlanningMode) {
-      showGreenToast('📝 Draft Shift Saved (Silent)');
+      showGreenToast('✅ Draft shift saved (silent)');
+    } else if (notifyShifts.length) {
+      showGreenToast('✅ Shift saved & operative notified');
+    } else {
+      showGreenToast('✅ Shift saved');
     }
+    // Notify in the background so the box is already closed
+    notifyShifts.forEach(sh => triggerShiftNotification(sh, '⚡ Live Shift Assigned').catch(console.warn));
   }
 }
 
@@ -5667,10 +5760,9 @@ function buildLoginMessage(user, tempPw) {
 }
 
 async function applyTempLogin(user, tempPw) {
-  if (user.must_change_password && user.password_hash === hashSimple(tempPw)) return;
-  const updates = { password_hash: hashSimple(tempPw), must_change_password: true };
-  Object.assign(user, updates);
-  if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
+  // The server stores only a hash of the temporary password; it is never kept in the user record
+  await callFn('adminSetTempPassword', { userId: String(user.id), tempPassword: tempPw });
+  user.must_change_password = true;
   saveLocalStorageData();
 }
 
@@ -5681,7 +5773,7 @@ async function userModalShareLogin(mode) {
   if (tempPw.length < 3) { alert('Enter a temporary password (at least 3 characters).'); return; }
   if (hasUsedApp(user)) { alert('This person has already used the app, so their password was not changed.'); return; }
   if (!user.must_change_password && !confirm(`This will set ${user.full_name}'s password to "${tempPw}" and make them choose a new one at first login. Continue?`)) return;
-  await applyTempLogin(user, tempPw);
+  try { await applyTempLogin(user, tempPw); } catch (err) { alert('Could not set the temporary password: ' + err.message); return; }
   document.getElementById('userModalLoginState').textContent = 'Temporary login is set. They will be asked to choose a new password when they first log in.';
   const msg = buildLoginMessage(user, tempPw);
   if (mode === 'email') {
@@ -5715,6 +5807,7 @@ function startPOSync() {
       if (site) { renderPOTab(site); renderSiteFinance(site); }
     }
     refreshFinanceViews();
+    fsMarkReady('pos');
   }, err => console.warn('Firestore purchase_orders error:', err));
 }
 
@@ -5722,6 +5815,7 @@ function stopPOSync() {
   if (poUnsub) poUnsub();
   poUnsub = null;
   allPOs = [];
+  fsReady.delete('pos');
 }
 
 function formatPounds(v) {
@@ -5888,13 +5982,17 @@ async function extractPdfLines(file) {
   const pdfjs = await loadPdfJs();
   const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
   const lines = [];
+  // Every page is read, in order, so totals printed on page 2, 3... are found too
   for (let i = 1; i <= doc.numPages; i++) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
-    const rows = {};
-    content.items.forEach(it => {
-      const y = Math.round(it.transform[5]);
-      (rows[y] = rows[y] || []).push([it.transform[4], it.str]);
+    const items = content.items.filter(it => it.str && it.str.trim()).map(it => ({ x: it.transform[4], y: it.transform[5], str: it.str }))
+      .sort((p, q) => q.y - p.y || p.x - q.x);
+    // Text whose baseline is within a few points sits on the same printed line
+    const rows = [];
+    items.forEach(it => {
+      const row = rows.find(r => Math.abs(r.y - it.y) <= 3);
+      if (row) row.items.push(it); else rows.push({ y: it.y, items: [it] });
     });
     // typed-in form fields (our operative invoice template) are not part of the page text: read them and put them on the line of their label
     try {
@@ -5903,29 +6001,38 @@ async function extractPdfLines(file) {
         if (a.subtype !== 'Widget' || typeof a.fieldValue !== 'string' || !a.fieldValue.trim() || !a.rect) return;
         let v = a.fieldValue.trim();
         if (/^(rate|amount|net_total|total_vat|invoice_total)/.test(a.fieldName || '') && /^[£\s]*\d[\d,]*(\.\d{1,2})?$/.test(v)) v = '£' + parseFloat(v.replace(/[£,\s]/g, '')).toFixed(2);
-        const y = Math.round(a.rect[1] + 4);
-        (rows[y] = rows[y] || []).push([a.rect[0], v]);
+        const y = a.rect[1] + 4;
+        const row = rows.find(r => Math.abs(r.y - y) <= 3);
+        if (row) row.items.push({ x: a.rect[0], y, str: v }); else rows.push({ y, items: [{ x: a.rect[0], y, str: v }] });
       });
     } catch (e) { /* plain PDF */ }
-    Object.keys(rows).map(Number).sort((a, b) => b - a).forEach(y => {
-      const text = rows[y].sort((a, b) => a[0] - b[0]).map(x => x[1]).join(' ').replace(/\s+/g, ' ').trim();
+    rows.sort((p, q) => q.y - p.y).forEach(r => {
+      const text = r.items.sort((p, q) => p.x - q.x).map(x => x.str).join(' ').replace(/\s+/g, ' ').trim();
       if (text) lines.push(text);
     });
   }
   return lines;
 }
 
+const r2 = n => Math.round(n * 100) / 100;
+
 function parseInvoiceText(lines) {
   const money = /(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g;
-  const lastAmount = line => {
-    const found = [...line.matchAll(money)];
-    return found.length ? parseFloat(found[found.length - 1][1].replace(/,/g, '')) : null;
+  const amountsIn = line => [...line.matchAll(money)].map(m => parseFloat(m[1].replace(/,/g, '')));
+  // A label's amount is on its own line, or - when the figures are laid out below the labels - on the next line or two
+  const amountFor = idx => {
+    for (let k = 0; k <= 2 && idx + k < lines.length; k++) {
+      const found = amountsIn(lines[idx + k]);
+      if (found.length) return found[found.length - 1];
+    }
+    return null;
   };
+  // Last match wins: on multi-page invoices the real totals are at the end, earlier pages only carry page sub-totals
   const findAmount = patterns => {
     for (const pat of patterns) {
-      for (const line of lines) {
-        if (pat.test(line)) {
-          const v = lastAmount(line);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (pat.test(lines[i])) {
+          const v = amountFor(i);
           if (v != null) return v;
         }
       }
@@ -5937,15 +6044,44 @@ function parseInvoiceText(lines) {
   let vat = findAmount([/total vat/i, /vat\s*(total|amount)/i, /^vat\s*:/i]);
   let gross = findAmount([/inv(oice)?\s*total/i, /total\s*(inc|incl)/i, /amount due/i, /balance due/i, /total due/i, /grand total/i, /^total\s*:?\s*£/i]);
   let netEstimated = false;
-  if (net == null && gross != null && vat != null) net = Math.round((gross - vat) * 100) / 100;
+  const agrees = () => net != null && vat != null && gross != null && Math.abs(net + vat - gross) < 0.02;
+
+  // When the labelled figures do not add up, look for the net + VAT = total set among all the amounts,
+  // working back from the end of the invoice
+  if (!agrees()) {
+    const all = [];
+    lines.forEach(l => amountsIn(l).forEach(a => all.push(a)));
+    const tail = all.slice(-60).reverse();
+    const rates = [0.2, 0.05, 0];
+    const candidates = gross != null ? [gross, ...tail] : tail;
+    outer: for (const g of candidates) {
+      for (const n of tail) {
+        if (n >= g || n <= 0) continue;
+        const v = r2(g - n);
+        if (rates.some(r => Math.abs(n * r - v) <= 0.03) && (v === 0 || tail.some(t => Math.abs(t - v) < 0.005))) {
+          net = n; vat = v; gross = g; netEstimated = false; break outer;
+        }
+      }
+    }
+  }
+  if (net == null && gross != null && vat != null) net = r2(gross - vat);
   if (net == null && gross != null) {
     const rateLine = lines.find(l => /rate\s*%\s*:/i.test(l));
     const rate = rateLine ? parseFloat((rateLine.match(/(\d+(?:\.\d+)?)\s*$/) || [])[1]) : 20;
-    net = Math.round(gross / (1 + (rate || 20) / 100) * 100) / 100;
+    net = r2(gross / (1 + (rate || 20) / 100));
     netEstimated = true;
   }
-  if (vat == null && net != null && gross != null) vat = Math.round((gross - net) * 100) / 100;
-  const totalsAgree = net != null && vat != null && gross != null && Math.abs(net + vat - gross) < 0.02;
+  // VAT must be the difference between the total and the net price - never a repeat of the net figure
+  if (gross != null && net != null && !agrees()) {
+    if (net >= gross || Math.abs(net - (vat == null ? NaN : vat)) < 0.005) {
+      const derived = r2(gross / 1.2);
+      if (Math.abs(derived - net) > 0.02) netEstimated = true; // the labelled net already fits the total at 20% VAT, so it is not a guess
+      net = derived;
+    }
+    vat = r2(gross - net);
+  }
+  if (vat == null && net != null && gross != null) vat = r2(gross - net);
+  const totalsAgree = agrees();
 
   const text = lines.join('\n');
   const po = (text.match(/\bPO-\d{4,6}-\d{3,4}\b/i) || [])[0] || null;
@@ -6070,6 +6206,19 @@ function invPoOptions(siteId, selectedPo) {
     `<option value="${diaryEsc(po.po_number)}"${po.po_number === selectedPo ? ' selected' : ''}>${diaryEsc(po.po_number)} - ${diaryEsc(po.merchant)} - ${diaryEsc(String(po.description || '').slice(0, 30))}</option>`).join('');
 }
 
+// Why an invoice looks like a repeat (or '' if it does not): already imported, or twice in this batch
+function invDuplicateReason(it) {
+  const no = String(it.invNo || '').trim().toLowerCase();
+  const inRegister = allPdfs.filter(f => f.file_type === 'invoice');
+  if (no && inRegister.some(f => String(f.invoice_no || '').trim().toLowerCase() === no)) return 'invoice number already imported';
+  if (inRegister.some(f => f.filename === it.file.name && (it.net == null || Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005))) return 'this file was already imported';
+  if (it.net != null && it.gross != null && inRegister.some(f => !f.dup_dismissed && Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005 && Math.abs((parseFloat(f.invoice_gross) || 0) - it.gross) < 0.005 && (!it.date || !f.invoice_date || f.invoice_date === it.date))) return 'same amounts and date as an invoice already imported';
+  const others = invBatch.filter(o => o !== it && o.status !== 'error');
+  if (no && others.some(o => String(o.invNo || '').trim().toLowerCase() === no)) return 'same invoice number appears twice in this batch';
+  if (others.some(o => o.file.name === it.file.name && o.file.size === it.file.size)) return 'same file added twice in this batch';
+  return '';
+}
+
 function analyseInvoice(parsed) {
   const matchedPo = parsed.po ? allPOs.find(po => String(po.po_number).toUpperCase() === parsed.po) : null;
   let site = matchedPo ? allSites.find(s => String(s.id) === String(matchedPo.site_id)) : null;
@@ -6081,22 +6230,12 @@ function analyseInvoice(parsed) {
   if (!site) {
     const guess = suggestSites((parsed.deliverText || '') + ' ' + (parsed.rawText || ''), allSites.filter(s => !s.is_archived), 1)[0];
     how = parsed.po ? `⚠️ ${parsed.po} is on the invoice but not in the app - choose the job` : '⚠️ No PO number or matching address found - choose the job';
-    if (guess) { site = guess.site; how = `🤔 Could be ${guess.site.address} (invoice mentions "${guess.hits.join(', ')}") - check it`; return { matchedPo, site, how, duplicate: parsed.invNo && allPdfs.some(f => f.file_type === 'invoice' && f.invoice_no === parsed.invNo), confident: false }; }
+    if (guess) { site = guess.site; how = `🤔 Could be ${guess.site.address} (invoice mentions "${guess.hits.join(', ')}") - check it`; return { matchedPo, site, how, duplicate: false, confident: false }; }
   }
-  const duplicate = parsed.invNo && allPdfs.some(f => f.file_type === 'invoice' && f.invoice_no === parsed.invNo);
+  const duplicate = false; // worked out by invDuplicateReason() so it also catches repeats inside the same batch
   const priceOk = parsed.net != null && parsed.hasText;
-  const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated && !duplicate;
+  const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated;
   return { matchedPo, site, how, duplicate, confident };
-}
-
-function suggestContractor(merchant) {
-  const m = String(merchant || '').toLowerCase();
-  if (!m) return '';
-  const hit = priceWorkUsers().find(u => {
-    const tokens = String(u.full_name).toLowerCase().split(/\s+/).filter(t => t.length > 2);
-    return tokens.length && tokens.every(t => m.includes(t));
-  });
-  return hit ? String(hit.id) : '';
 }
 
 async function handleInvoiceBatchPicked(e) {
@@ -6116,11 +6255,11 @@ async function handleInvoiceBatchPicked(e) {
       catch (err) { parsed = { net: null, vat: null, gross: null, po: null, invNo: null, merchant: null, date: null, deliverText: '', hasText: false }; }
       const a = analyseInvoice(parsed);
       Object.assign(item, {
-        parsed, how: a.how, duplicate: a.duplicate, confident: a.confident,
+        parsed, how: a.how, confident: a.confident,
         siteId: a.site ? String(a.site.id) : '', poNumber: a.matchedPo ? a.matchedPo.po_number : '',
         net: parsed.net, vat: parsed.vat, gross: parsed.gross, invNo: parsed.invNo || '',
         merchant: parsed.merchant || (a.matchedPo ? a.matchedPo.merchant : '') || '', date: parsed.date || '',
-        selected: a.confident,
+        selected: false,
         contractorId: suggestContractor((parsed.merchant || '') + ' ' + ((String(parsed.rawText || '').match(/Operative:\s*([^\n]+)/i) || [])[1] || '')),
         week: guessInvoiceWeek(parsed),
         splits: (() => { const al = parseAllocations(parsed); return al.length >= 2 ? al : null; })(),
@@ -6134,6 +6273,11 @@ async function handleInvoiceBatchPicked(e) {
   }
   document.getElementById('invBatchReading').style.display = 'none';
   e.target.value = '';
+  invBatch.forEach(it => {
+    if (it.status !== 'ready') return;
+    it.duplicateReason = invDuplicateReason(it);
+    it.selected = it.confident && !it.duplicateReason;
+  });
   renderInvBatch();
 }
 
@@ -6156,14 +6300,19 @@ function invSplitHtml(it) {
 
 function renderInvBatch() {
   const host = document.getElementById('invBatchList');
-  const btn = document.getElementById('btnInvImportSelected');
-  if (!invBatch.length) { host.innerHTML = ''; btn.style.display = 'none'; return; }
+  const actions = document.getElementById('invBatchActions');
+  if (!invBatch.length) { host.innerHTML = ''; actions.style.display = 'none'; return; }
+  invBatch.forEach(it => { if (it.status === 'ready') it.duplicateReason = invDuplicateReason(it); });
   host.innerHTML = invBatch.map(it => {
     if (it.status === 'error') return `<div class="diary-agenda-item" style="cursor: default; border-color: var(--danger);">❌ ${diaryEsc(it.file.name)} - ${diaryEsc(it.message)}</div>`;
     if (it.status === 'done') return `<div class="diary-agenda-item" style="cursor: default; border-color: var(--success);">✅ ${diaryEsc(it.file.name)} - ${diaryEsc(it.message)}</div>`;
-    return `<div class="diary-agenda-item" data-key="${it.key}" style="cursor: default;${it.confident ? ' border-color: var(--success);' : ' border-color: var(--warning);'}">
+    // red = possible duplicate, amber = no job picked yet, green = ready
+    const style = it.duplicateReason ? 'border-color: var(--danger); background: rgba(239, 68, 68, 0.15);'
+      : !it.siteId ? 'border-color: var(--warning); background: rgba(245, 158, 11, 0.14);'
+      : it.confident ? 'border-color: var(--success);' : 'border-color: var(--warning);';
+    return `<div class="diary-agenda-item" data-key="${it.key}" style="cursor: default; ${style}">
       <label style="display: flex; gap: 8px; align-items: center; font-weight: 700;"><input type="checkbox" class="inv-select"${it.selected ? ' checked' : ''}> ${diaryEsc(it.file.name)}</label>
-      <div style="font-size: 0.8rem; margin: 4px 0;">${diaryEsc(it.how)}${it.duplicate ? ' · ⚠️ invoice number already imported' : ''}${it.priceNote ? ' · ' + diaryEsc(it.priceNote) : ''}</div>
+      <div style="font-size: 0.8rem; margin: 4px 0;">${diaryEsc(it.how)}${it.duplicateReason ? ` · <strong style="color: #fca5a5;">⚠️ Possible duplicate - ${diaryEsc(it.duplicateReason)}</strong>` : ''}${it.priceNote ? ' · ' + diaryEsc(it.priceNote) : ''}${!it.siteId ? ' · <strong style="color: var(--warning);">No job yet - will import as unattributed</strong>' : ''}</div>
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px;">
         <select class="form-control inv-site" style="min-height: 34px; padding: 4px 8px;">${invSiteOptions(it.siteId)}</select>
         <select class="form-control inv-po" style="min-height: 34px; padding: 4px 8px;">${invPoOptions(it.siteId, it.poNumber)}</select>
@@ -6180,17 +6329,22 @@ function renderInvBatch() {
       </div>
     </div>`;
   }).join('');
-  btn.style.display = invBatch.some(i => i.status === 'ready') ? '' : 'none';
+  const ready = invBatch.filter(i => i.status === 'ready');
+  actions.style.display = ready.length ? 'flex' : 'none';
+  const tickAll = document.getElementById('invTickAll');
+  tickAll.checked = ready.length > 0 && ready.every(i => i.selected);
+  document.getElementById('btnInvImportSelected').textContent = `Import ticked invoices (${ready.filter(i => i.selected).length})`;
+  document.getElementById('btnInvImportAll').textContent = `Import all (${ready.length})`;
 
   host.querySelectorAll('[data-key]').forEach(row => {
     const it = invBatch.find(x => x.key === row.dataset.key);
     const bind = (sel, fn) => row.querySelector(sel).addEventListener('change', fn);
-    bind('.inv-select', ev => { it.selected = ev.target.checked; });
-    bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; row.querySelector('.inv-po').innerHTML = invPoOptions(it.siteId, ''); });
+    bind('.inv-select', ev => { it.selected = ev.target.checked; renderInvBatch(); });
+    bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; renderInvBatch(); });
     bind('.inv-po', ev => { it.poNumber = ev.target.value; });
     bind('.inv-contractor', ev => { it.contractorId = ev.target.value; if (it.contractorId && !it.week) it.week = guessInvoiceWeek(it.parsed || {}); renderInvBatch(); });
     bind('.inv-merchant', ev => { it.merchant = ev.target.value.trim(); });
-    bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); });
+    bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); renderInvBatch(); });
     bind('.inv-net', ev => { it.net = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-vat', ev => { it.vat = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-gross', ev => { it.gross = ev.target.value === '' ? null : parseFloat(ev.target.value); });
@@ -6204,6 +6358,24 @@ function renderInvBatch() {
   });
 }
 
+function priceWorkUsersForImport() { return typeof priceWorkUsers === 'function' ? priceWorkUsers() : []; }
+
+// Labour invoices are tied to the operative they came from (so the cost lands in that week's labour, not materials)
+function suggestContractor(merchant) {
+  const m = String(merchant || '').toLowerCase();
+  if (!m) return '';
+  const hit = priceWorkUsersForImport().find(u => {
+    const tokens = String(u.full_name).toLowerCase().split(/\s+/).filter(t => t.length > 2);
+    return tokens.length && tokens.every(t => m.includes(t));
+  });
+  return hit ? String(hit.id) : '';
+}
+
+function contractorOptionsHtml(selected) {
+  return '<option value="">Materials / other (not a labour invoice)</option>' + priceWorkUsersForImport()
+    .map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(selected) ? ' selected' : ''}>👷 Labour invoice - ${diaryEsc(u.full_name)}</option>`).join('');
+}
+
 async function recalcPoFromInvoices(poNumber, extraFiles = []) {
   const files = allPdfs.filter(f => f.file_type === 'invoice' && f.po_number === poNumber && !extraFiles.some(x => x.id === f.id)).concat(extraFiles);
   const sum = key => Math.round(files.reduce((t, f) => t + (parseFloat(f[key]) || 0), 0) * 100) / 100;
@@ -6215,7 +6387,30 @@ async function recalcPoFromInvoices(poNumber, extraFiles = []) {
   };
 }
 
+// No job picked: still imported (kept out of every job's costs) and shown amber in the register until it is attached
+async function importUnassignedInvoice(it) {
+  if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
+  const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `site_files/unassigned/${fileId}_${safeName}`;
+  const up = await uploadSiteFile(path, it.file);
+  const net = Math.round(it.net * 100) / 100;
+  const isLabour = !!it.contractorId;
+  const record = {
+    id: fileId, site_id: '', uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+    filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
+    po_number: `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '',
+    contractor_id: it.contractorId || null, cost_type: isLabour ? 'labour' : 'materials', week_start: isLabour ? (it.week || '') : '',
+    invoice_net: net, invoice_vat: it.vat == null || isNaN(it.vat) ? null : it.vat, invoice_gross: it.gross == null || isNaN(it.gross) ? null : it.gross,
+    created_at: new Date().toISOString()
+  };
+  await db.collection('pdfs').doc(fileId).set(record);
+  if (!allPdfs.some(f => String(f.id) === fileId)) allPdfs.push(record);
+  return `${formatPounds(net)} ex VAT imported - no job yet (shown in amber in the register)`;
+}
+
 async function importInvoiceItem(it) {
+  if (!it.siteId && !(it.splits && it.splits.length > 1)) return importUnassignedInvoice(it);
   const splits = it.splits && it.splits.length > 1 ? it.splits : [{ siteId: it.siteId, net: it.net }];
   const sites = splits.map(sp => invSiteById(sp.siteId));
   if (sites.some(x => !x)) throw new Error(splits.length > 1 ? 'Choose a job for every line of the split' : 'Choose the job');
@@ -6271,27 +6466,38 @@ async function importInvoiceItem(it) {
   return isLabour ? `Labour ${msgs.join(' · ')}` : `${msgs.join(' · ')} ex VAT added`;
 }
 
-async function handleImportSelectedInvoices() {
+async function runInvoiceImport(todo) {
   if (!db || !isManagementUser(currentUser)) return;
-  const todo = invBatch.filter(i => i.status === 'ready' && i.selected);
   if (!todo.length) { alert('Tick the invoices you want to import.'); return; }
-  const btn = document.getElementById('btnInvImportSelected');
-  btn.disabled = true;
-  let ok = 0;
+  const dups = todo.filter(i => i.duplicateReason).length;
+  if (dups && !confirm(`${dups} of these look like duplicates (highlighted red). Import them anyway?`)) return;
+  const btns = [document.getElementById('btnInvImportSelected'), document.getElementById('btnInvImportAll')];
+  btns.forEach(b => { b.disabled = true; });
+  let ok = 0, unattributed = 0;
   for (const it of todo) {
-    btn.textContent = `Importing ${ok + 1} of ${todo.length}...`;
+    btns[0].textContent = `Importing ${ok + 1} of ${todo.length}...`;
     try {
       it.message = await importInvoiceItem(it);
       it.status = 'done';
+      if (!it.siteId) unattributed++;
       ok++;
     } catch (err) {
       alert(`${it.file.name}: ${err.message}`);
     }
   }
-  btn.disabled = false;
-  btn.textContent = 'Import ticked invoices';
+  btns.forEach(b => { b.disabled = false; });
+  invBatch = invBatch.filter(i => i.status !== 'done'); // imported ones leave the list, only unimported/failed stay
   renderInvBatch();
-  if (ok) showGreenToast(`🧾 ${ok} invoice${ok > 1 ? 's' : ''} imported and costed to the job`);
+  renderInvoiceRegister();
+  if (ok) showGreenToast(`✅ ${ok} invoice${ok > 1 ? 's' : ''} imported successfully${unattributed ? ` (${unattributed} still need a job - see the register)` : ''}`);
+}
+
+function handleImportSelectedInvoices() {
+  return runInvoiceImport(invBatch.filter(i => i.status === 'ready' && i.selected));
+}
+
+function handleImportAllInvoices() {
+  return runInvoiceImport(invBatch.filter(i => i.status === 'ready'));
 }
 
 // ---- Register ----
@@ -6376,22 +6582,45 @@ function renderInvoiceRegister() {
     ? `${rows.length} invoice${rows.length > 1 ? 's' : ''} · Net ${formatPounds(sum('invoice_net'))} · VAT ${formatPounds(sum('invoice_vat'))} · Total ${formatPounds(sum('invoice_gross'))}`
     : 'No invoices found.';
   const canDelete = isOwnerOrAdminUser(currentUser);
+  // Repeats: same invoice number, or same net + total + date. "Not a duplicate" (dup_dismissed) takes an invoice out of the check.
+  const allInv = allPdfs.filter(f => f.file_type === 'invoice');
+  const sameInvoice = (f, o) => {
+    const n1 = String(f.invoice_no || '').trim().toLowerCase(), n2 = String(o.invoice_no || '').trim().toLowerCase();
+    if (n1 && n1 === n2) return true;
+    const a = parseFloat(f.invoice_net), b = parseFloat(o.invoice_net), ga = parseFloat(f.invoice_gross), gb = parseFloat(o.invoice_gross);
+    if ([a, b, ga, gb].some(isNaN)) return false;
+    return Math.abs(a - b) < 0.005 && Math.abs(ga - gb) < 0.005 && (!f.invoice_date || !o.invoice_date || f.invoice_date === o.invoice_date);
+  };
+  const dupMatch = f => f.dup_dismissed ? null : allInv.find(o => String(o.id) !== String(f.id) && !o.dup_dismissed && sameInvoice(f, o)) || null;
   body.innerHTML = rows.map(f => {
     const site = invSiteById(f.site_id);
-    return `<tr>
+    const unassigned = !site;
+    const match = dupMatch(f);
+    const dup = !!match;
+    const matchSite = match ? invSiteById(match.site_id) : null;
+    const rowStyle = dup ? DUP_ROW_STYLE : unassigned ? 'background: rgba(245, 158, 11, 0.18); box-shadow: inset 4px 0 0 var(--warning);' : '';
+    return `<tr${rowStyle ? ` style="${rowStyle}"` : ''}>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
-      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}</td>
+      <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}${dup ? DUP_BADGE + `<div style="font-size: 0.72rem; color: #fca5a5;">Matches ${diaryEsc(match.invoice_no ? 'invoice ' + match.invoice_no : match.filename)} on ${diaryEsc(matchSite ? matchSite.address : 'no job yet')}</div>` : ''}${f.source === 'email' ? `<div style="font-size: 0.72rem; color: var(--text-muted);">📧 Emailed${f.needs_review && f.review_reason ? ' - ' + diaryEsc(f.review_reason) : ''}</div>` : ''}</td>
       <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}${isLabourInvoice(f) ? `<div style="font-size: 0.72rem; color: var(--text-muted);">👷 Labour${f.contractor_id ? ' - ' + diaryEsc((allUsers.find(u => String(u.id) === String(f.contractor_id)) || {}).full_name || '') : ''}${f.week_start ? ' - w/c ' + diaryEsc(formatUKDate(f.week_start)) : ''}</div>` : ''}${f.split_group ? `<div style="font-size: 0.72rem; color: var(--text-muted);">✂️ part of ${formatPounds(f.split_total_net)} invoice</div>` : ''}</td>
       <td data-label="PO">${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
-      <td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td>
+      <td data-label="Job">${unassigned ? '<div style="color: var(--warning); font-weight: 700; font-size: 0.8rem;">⚠️ Not attributed to a job</div>' : diaryEsc(site.address)}</td>
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
       <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
       <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
-      <td style="white-space: nowrap;"><a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${!site || site === OVERHEAD_SITE ? ` <button type="button" class="btn ${site ? 'btn-outline' : 'btn-primary'} btn-sm inv-assign" data-id="${diaryEsc(f.id)}">${site ? 'Change job' : 'Attach to job'}</button>` : ''}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+      <td style="white-space: nowrap;">${dup ? `<button type="button" class="btn btn-outline btn-sm inv-keep" data-id="${diaryEsc(f.id)}" title="This is a different invoice - keep it">Not a duplicate</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${!site || site === OVERHEAD_SITE ? ` <button type="button" class="btn ${site ? 'btn-outline' : 'btn-primary'} btn-sm inv-assign" data-id="${diaryEsc(f.id)}">${site ? 'Change job' : 'Attach to job'}</button>` : ''}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
   body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => openAssignInvoice(b.dataset.id)));
   body.querySelectorAll('.inv-delete').forEach(b => b.addEventListener('click', () => deleteInvoice(b.dataset.id)));
+  body.querySelectorAll('.inv-keep').forEach(b => b.addEventListener('click', async () => {
+    const f = allPdfs.find(x => String(x.id) === String(b.dataset.id));
+    if (!f || !db) return;
+    await db.collection('pdfs').doc(String(f.id)).update({ dup_dismissed: true }).catch(err => alert('Could not save: ' + err.message));
+    f.dup_dismissed = true;
+    renderInvoiceRegister();
+    showGreenToast('✅ Kept - marked as not a duplicate');
+  }));
 }
 
 // ---- Attach an unassigned invoice to a job ----
@@ -6442,12 +6671,30 @@ async function openAssignInvoice(fileId) {
 async function assignInvoiceToSite(f, siteId) {
   const site = invSiteById(siteId);
   if (!site) throw new Error('Job not found');
-  await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id) });
-  f.site_id = String(site.id);
+  // an invoice imported with no job (or an emailed one with no price found) has no cost on any job yet
+  if (f.invoice_net == null || isNaN(parseFloat(f.invoice_net))) {
+    const typed = prompt('The price was not found on this invoice. Enter the net price (ex VAT):');
+    const net = parseFloat(String(typed || '').replace(/[£,\s]/g, ''));
+    if (isNaN(net)) throw new Error('A net price is needed to cost the invoice');
+    f.invoice_net = Math.round(net * 100) / 100;
+    await db.collection('pdfs').doc(String(f.id)).update({ invoice_net: f.invoice_net });
+  }
+  await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id), needs_review: false });
+  f.site_id = String(site.id); f.needs_review = false;
   const po = allPOs.find(p => p.po_number === f.po_number);
   if (po) {
     await db.collection('purchase_orders').doc(po.po_number).update({ site_id: String(site.id), site_address: site.address });
     po.site_id = String(site.id); po.site_address = site.address;
+  } else {
+    const poNumber = f.po_number || `INV-${String(f.invoice_no || f.id).replace(/[^A-Za-z0-9]/g, '')}`;
+    const fields = await recalcPoFromInvoices(poNumber, [f]);
+    await db.collection('purchase_orders').doc(poNumber).set({
+      po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
+      requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
+      merchant: f.merchant || 'Unknown merchant', description: `${isLabourInvoice(f) ? 'Labour invoice' : 'Invoice'} ${f.invoice_no || ''} (no PO)`.trim(), est_value: null,
+      created_at: new Date().toISOString(), ...fields
+    });
+    if (f.po_number !== poNumber) { await db.collection('pdfs').doc(String(f.id)).update({ po_number: poNumber }); f.po_number = poNumber; }
   }
   renderInvoiceRegister();
 }
@@ -6476,6 +6723,11 @@ async function deleteInvoice(fileId) {
 function setupInvoiceListeners() {
   document.getElementById('invBatchInput').addEventListener('change', handleInvoiceBatchPicked);
   document.getElementById('btnInvImportSelected').addEventListener('click', handleImportSelectedInvoices);
+  document.getElementById('btnInvImportAll').addEventListener('click', handleImportAllInvoices);
+  document.getElementById('invTickAll').addEventListener('change', ev => {
+    invBatch.forEach(i => { if (i.status === 'ready') i.selected = ev.target.checked; });
+    renderInvBatch();
+  });
   ['invSearch', 'invFilterSite', 'invFilterMerchant'].forEach(id => {
     document.getElementById(id).addEventListener(id === 'invSearch' ? 'input' : 'change', renderInvoiceRegister);
   });
@@ -6503,18 +6755,22 @@ function startFinanceSync() {
     financeJobs = {};
     snap.docs.forEach(d => { financeJobs[d.id] = d.data(); });
     refreshFinanceViews();
+    fsMarkReady('finance_jobs');
   }, warn('finance_jobs')));
   financeUnsubs.push(db.collection('finance_costs').onSnapshot(snap => {
     financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
+    fsMarkReady('finance_costs');
   }, warn('finance_costs')));
   financeUnsubs.push(db.collection('finance_variations').onSnapshot(snap => {
     financeVariations = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
+    fsMarkReady('finance_variations');
   }, warn('finance_variations')));
   financeUnsubs.push(db.collection('customer_invoices').onSnapshot(snap => {
     customerInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
+    fsMarkReady('customer_invoices');
   }, warn('customer_invoices')));
   financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
@@ -6535,6 +6791,7 @@ function startFinanceSync() {
       }
     });
     refreshFinanceViews();
+    fsMarkReady('finance_rates');
   }, warn('finance_rates')));
 }
 
@@ -6548,6 +6805,10 @@ function stopFinanceSync() {
   financePay = {};
   financeHourly = {};
   customerInvoices = [];
+  // forget what was loaded so the next login never publishes from half-loaded data
+  ['finance_jobs', 'finance_costs', 'finance_variations', 'finance_rates', 'customer_invoices', 'pos'].forEach(n => fsReady.delete(n));
+  clearTimeout(fsTimer);
+  fsLast = null;
 }
 
 let uiRefreshPending = false;
@@ -6559,8 +6820,54 @@ function isTypingIn(containerId) {
   return !!(a && box && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && box.contains(a));
 }
 
+// ---- Finance summary for GVD Logic ----
+// GVD Logic (the job register) shows each linked job's cost from here. The figures come from computeSiteFinance, the same
+// calculation as the Finance tab, so the two apps always agree. Written only by a management user, only once every source
+// the calculation needs has loaded (never from cached or half-loaded data), and only for jobs whose figures have changed.
+const FS_NEEDED = ['sites', 'shifts', 'pdfs', 'pos', 'settings', 'finance_jobs', 'finance_costs', 'finance_variations', 'finance_rates', 'customer_invoices'];
+const fsReady = new Set();
+let fsTimer = null;
+let fsLast = null;   // site id -> signature of what is already stored
+const fsSig = o => JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]]));
+const fs2 = n => n == null || isNaN(n) ? null : Math.round(n * 100) / 100;
+function fsMarkReady(name) {
+  fsReady.add(name);
+  if (!db || !currentUser || !isManagementUser(currentUser) || !FS_NEEDED.every(n => fsReady.has(n))) return;
+  clearTimeout(fsTimer);
+  fsTimer = setTimeout(publishFinanceSummary, 5000);
+}
+async function publishFinanceSummary() {
+  try {
+    if (!db || !currentUser || !isManagementUser(currentUser)) return;
+    if (!fsLast) {
+      fsLast = {};
+      const snap = await db.collection('finance_summary').get();
+      snap.forEach(d => { const x = { ...d.data() }; delete x.updated_at; fsLast[d.id] = fsSig(x); });
+    }
+    const writes = [];
+    allSites.forEach(site => {
+      const f = computeSiteFinance(site);
+      const rec = {
+        site_id: String(site.id), site_address: site.address || '',
+        value: fs2(f.value), variations_approved: fs2(f.variationsApproved), total_cost: fs2(f.totalCost), profit: fs2(f.profit),
+        materials_invoiced: fs2(f.invoiced), labour_invoiced: fs2(f.labourInvoiced), labour_day_rate: fs2(f.labour),
+        on_order: fs2(f.onOrder), extras: fs2(f.extras), labour_planned: fs2(f.labourPlanned)
+      };
+      const sig = fsSig(rec);
+      if (fsLast[rec.site_id] !== sig) writes.push({ rec, sig });
+    });
+    for (let i = 0; i < writes.length; i += 400) {
+      const batch = db.batch();
+      writes.slice(i, i + 400).forEach(w => batch.set(db.collection('finance_summary').doc(w.rec.site_id), { ...w.rec, updated_at: new Date().toISOString() }));
+      await batch.commit();
+      writes.slice(i, i + 400).forEach(w => { fsLast[w.rec.site_id] = w.sig; });
+    }
+  } catch (err) { console.warn('Finance summary publish failed:', err); }
+}
+
 function refreshFinanceViews() {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  if (fsReady.size) { clearTimeout(fsTimer); if (FS_NEEDED.every(n => fsReady.has(n))) fsTimer = setTimeout(publishFinanceSummary, 5000); }
   const v = document.getElementById('view-finance');
   if (v && v.style.display !== 'none') renderFinanceView();
   if (activeSiteId) {
@@ -6710,9 +7017,9 @@ function renderSiteFinance(site) {
 
   const row = (label, val, sub) => `<tr><td>${label}${sub ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${sub}</div>` : ''}</td><td style="text-align: right; white-space: nowrap;">${val}</td></tr>`;
   const labourRows = f.byOp.map(o => `<tr><td>${diaryEsc(o.name)}</td><td>${o.days} day${o.days === 1 ? '' : 's'}</td><td style="text-align: right;">${o.priceWork ? '<span style="color: var(--text-muted);">Price work - see invoices</span>' : money(o.cost)}</td></tr>`).join('');
-  const contractorRows = f.contractors.map(c => `<tr><td>${diaryEsc(c.name)}</td><td style="text-align: right;">${money(c.total)}</td></tr>`).join('');
-  const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || ''))).map(c => `<tr>
-      <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
+  const dupIds = findDuplicateCostIds(f.extrasList);
+  const costRows = f.extrasList.sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || ''))).map(c => `<tr${dupIds.has(c.id) ? ` style="${DUP_ROW_STYLE}"` : ''}>
+      <td>${diaryEsc(formatUKDate(c.date))}</td><td>${diaryEsc(c.description)}${dupIds.has(c.id) ? DUP_BADGE : ''}<div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(c.category || '')}</div></td>
       <td style="text-align: right;">${money(c.amount)}</td>
       <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
 
@@ -6787,7 +7094,6 @@ function renderSiteFinance(site) {
       ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
-    ${contractorRows ? `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Price work paid (ex VAT)</h4><table class="planner-table" style="min-width: 0;"><tbody>${contractorRows}</tbody></table><p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 6px;">Already included in materials / extra costs above.</p></div>` : ''}
     <div class="site-card" style="margin-bottom: 16px;">
       <h4 style="margin-bottom: 8px;">Labour on this job</h4>
       ${labourRows ? `<table class="planner-table" style="min-width: 0;"><tbody>${labourRows}</tbody></table>` : '<p style="color: var(--text-muted);">No shifts with a day rate yet.</p>'}
@@ -6797,7 +7103,6 @@ function renderSiteFinance(site) {
       <h4 style="margin-bottom: 8px;">Extra costs</h4>
       <form id="finSiteCostForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 10px;">
         <input type="text" id="finSiteCostDesc" class="form-control" placeholder="Description" required>
-        <select id="finSiteCostContractor" class="form-control">${contractorOptionsHtml('')}</select>
         <select id="finSiteCostCategory" class="form-control"><option>Materials</option><option>Plant / equipment hire</option><option>Subcontractor</option><option>Waste / skips</option><option>Travel / fuel</option><option>Other</option></select>
         <input type="text" inputmode="decimal" autocomplete="off" id="finSiteCostAmount" class="form-control" step="0.01" min="0" placeholder="£ ex VAT" required>
         <input type="date" id="finSiteCostDate" class="form-control" value="${diaryDateKey(new Date())}" required>
@@ -6826,7 +7131,7 @@ function renderSiteFinance(site) {
   host.querySelector('#finSiteCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(site.id, host.querySelector('#finSiteCostDesc').value, host.querySelector('#finSiteCostCategory').value,
-      host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value, host.querySelector('#finSiteCostContractor').value);
+      host.querySelector('#finSiteCostAmount').value, host.querySelector('#finSiteCostDate').value);
   });
   host.querySelectorAll('.fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
   host.querySelectorAll('.fin-edit-cost').forEach(b => b.addEventListener('click', () => openCostEdit(b.dataset.id)));
@@ -6857,19 +7162,27 @@ function priceWorkUsers() {
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
 }
 
-function contractorOptionsHtml(selected) {
-  return '<option value="">Paid to: nobody in particular</option>' + priceWorkUsers()
-    .map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(selected) ? ' selected' : ''}>Paid to: ${diaryEsc(u.full_name)}</option>`).join('');
+// Costs on the same job with the same description and amount - flagged for admin to review
+function findDuplicateCostIds(costs) {
+  const groups = {};
+  costs.forEach(c => {
+    const key = [c.site_id, String(c.description || '').trim().toLowerCase(), Math.round((parseFloat(c.amount) || 0) * 100)].join('|');
+    (groups[key] = groups[key] || []).push(c.id);
+  });
+  const dup = new Set();
+  Object.values(groups).forEach(ids => { if (ids.length > 1) ids.forEach(id => dup.add(id)); });
+  return dup;
 }
+const DUP_ROW_STYLE = 'background: rgba(239, 68, 68, 0.18); box-shadow: inset 4px 0 0 var(--danger);';
+const DUP_BADGE = ' <span style="color: #fca5a5; font-size: 0.72rem; font-weight: 700; white-space: nowrap;">⚠️ Possible duplicate - review</span>';
 
-async function addFinanceCost(siteId, description, category, amount, date, contractorId) {
+async function addFinanceCost(siteId, description, category, amount, date) {
   if (!db || !isManagementUser(currentUser)) return;
   const amt = parseFloat(amount);
   if (!description.trim() || isNaN(amt) || !date) { alert('Please fill in the description, amount and date.'); return; }
   const id = 'cost_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
   await db.collection('finance_costs').doc(id).set({
     site_id: String(siteId), description: description.trim(), category, amount: Math.round(amt * 100) / 100, date,
-    contractor_id: contractorId || null,
     added_by: currentUser.full_name, created_at: new Date().toISOString()
   }).catch(err => alert('Could not save: ' + err.message));
   showGreenToast('Cost added');
@@ -6920,8 +7233,6 @@ function renderFinanceView(force) {
   const prev = costSite.value;
   costSite.innerHTML = allSites.filter(s => !s.is_archived).map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
   if (prev) costSite.value = prev;
-  const contractorSel = document.getElementById('finCostContractor');
-  contractorSel.innerHTML = contractorOptionsHtml(contractorSel.value);
   const dateEl = document.getElementById('finCostDate');
   if (!dateEl.value) dateEl.value = diaryDateKey(new Date());
   // Ledger: newest first, optionally one job, scrolls inside its own box
@@ -6931,11 +7242,14 @@ function renderFinanceView(force) {
   costFilter.value = prevFilter;
   const ledger = financeCosts.filter(c => !costFilter.value || String(c.site_id) === costFilter.value)
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const ledgerDupIds = findDuplicateCostIds(financeCosts);
+  const ledgerDupCount = ledger.filter(c => ledgerDupIds.has(c.id)).length;
   const ledgerTotal = ledger.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
-  document.getElementById('finCostsCount').textContent = `${ledger.length} cost${ledger.length === 1 ? '' : 's'} · ${money(ledgerTotal)} · newest first`;
+  document.getElementById('finCostsCount').textContent = `${ledger.length} cost${ledger.length === 1 ? '' : 's'} · ${money(ledgerTotal)} · newest first${ledgerDupCount ? ` · ⚠️ ${ledgerDupCount} possible duplicate${ledgerDupCount === 1 ? '' : 's'} highlighted` : ''}`;
   document.getElementById('finCostsBody').innerHTML = ledger.map(c => {
       const site = allSites.find(s => String(s.id) === String(c.site_id));
-      return `<tr><td>${diaryEsc(formatUKDate(c.date))}</td><td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td><td data-label="Description">${diaryEsc(c.description)}${c.contractor_id ? ` <small style="color: var(--text-muted);">(${diaryEsc((allUsers.find(u => String(u.id) === String(c.contractor_id)) || {}).full_name || 'Unknown')})</small>` : ''}</td><td data-label="Category">${diaryEsc(c.category || '')}</td><td data-label="Amount">${money(c.amount)}</td>
+      const isDup = ledgerDupIds.has(c.id);
+      return `<tr${isDup ? ` style="${DUP_ROW_STYLE}"` : ''}><td>${diaryEsc(formatUKDate(c.date))}</td><td data-label="Job">${diaryEsc(site ? site.address : 'Unknown job')}</td><td data-label="Description">${diaryEsc(c.description)}${isDup ? DUP_BADGE : ''}</td><td data-label="Category">${diaryEsc(c.category || '')}</td><td data-label="Amount">${money(c.amount)}</td>
         <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`;
     }).join('') || '<tr><td colspan="6" style="color: var(--text-muted);">No extra costs logged.</td></tr>';
   document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
@@ -6996,7 +7310,6 @@ function openCostEdit(id) {
   document.getElementById('costEditSite').innerHTML = allSites.map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(c.site_id) ? ' selected' : ''}>${diaryEsc(x.address)}${x.is_archived ? ' (archived)' : ''}</option>`).join('');
   document.getElementById('costEditDesc').value = c.description || '';
   document.getElementById('costEditCategory').value = c.category || 'Other';
-  document.getElementById('costEditContractor').innerHTML = contractorOptionsHtml(c.contractor_id);
   document.getElementById('costEditAmount').value = c.amount != null ? c.amount : '';
   document.getElementById('costEditDate').value = c.date || diaryDateKey(new Date());
   openModal('modalCostEdit');
@@ -7012,7 +7325,6 @@ async function handleSaveCostEdit(e) {
     site_id: document.getElementById('costEditSite').value,
     description: document.getElementById('costEditDesc').value.trim(),
     category: document.getElementById('costEditCategory').value,
-    contractor_id: document.getElementById('costEditContractor').value || null,
     amount: Math.round(amt * 100) / 100,
     date: document.getElementById('costEditDate').value,
     edited_by: currentUser.full_name,
@@ -7125,8 +7437,7 @@ function setupFinanceListeners() {
   document.getElementById('finCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(document.getElementById('finCostSite').value, document.getElementById('finCostDesc').value,
-      document.getElementById('finCostCategory').value, document.getElementById('finCostAmount').value, document.getElementById('finCostDate').value,
-      document.getElementById('finCostContractor').value);
+      document.getElementById('finCostCategory').value, document.getElementById('finCostAmount').value, document.getElementById('finCostDate').value);
     document.getElementById('finCostDesc').value = '';
     document.getElementById('finCostAmount').value = '';
   });

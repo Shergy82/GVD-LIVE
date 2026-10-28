@@ -1,8 +1,61 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+    function signedIn() { return request.auth != null; }
+    function active() { return signedIn() && request.auth.token.active == true; }
+    function mgmt() { return active() && request.auth.token.mgmt == true; }
+    function isMe(id) { return signedIn() && request.auth.uid == id; }
+
+    // Credentials, rate limits and reset requests are server-only (Admin SDK bypasses rules).
+    match /credentials/{id} { allow read, write: if false; }
+    match /rate_limits/{id} { allow read, write: if false; }
+    match /password_reset_requests/{id} { allow read, delete: if mgmt(); allow create, update: if false; }
+
+    match /users/{id} {
+      allow read: if active() || isMe(id);
+      allow create, delete: if mgmt();
+      allow update: if mgmt() || (isMe(id) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['last_active_at']));
+      match /subscriptions/{dev} { allow read: if active(); allow write: if isMe(id) || mgmt(); }
     }
+
+    match /sites/{id} {
+      allow read: if active();
+      allow create, update: if mgmt();
+      allow delete: if mgmt() && request.auth.token.role == 'Owner';   // only Owners delete sites; everyone else archives
+    }
+    match /shifts/{id} { allow read, write: if active(); }
+    match /pdfs/{id} { allow read, write: if active(); }
+    match /photos/{id} { allow read, write: if active(); }
+    match /purchase_orders/{id} { allow read, write: if active(); }
+    match /po_counters/{id} { allow read, write: if active(); }
+    match /diary/{id} { allow read, write: if active(); }
+    match /group_chat/{id} { allow read, write: if active(); }
+    match /notifications/{id} { allow create: if active(); allow read, update, delete: if mgmt() || (active() && resource.data.target_user_id == request.auth.uid); }
+    match /notification_logs/{id} { allow read, write: if active(); }
+    match /settings/{id} { allow read: if active() && id != 'invoice_email'; allow write: if mgmt(); }
+    match /settings/invoice_email { allow read: if mgmt(); }
+
+    // Customer feedback arrives through the customerFeedback function only.
+    match /feedback/{id} { allow read: if active(); allow delete: if mgmt(); allow create, update: if false; }
+    match /feedback_removed/{id} { allow read, write: if mgmt(); }
+
+    // Operatives see and create only their own invoices; management reviews all.
+    match /operative_invoices/{id} {
+      allow read: if mgmt() || (active() && resource.data.user_id == request.auth.uid);
+      allow create: if active() && request.resource.data.user_id == request.auth.uid;
+      allow update: if mgmt() || (active() && resource.data.user_id == request.auth.uid && request.resource.data.user_id == request.auth.uid);
+      allow delete: if mgmt();
+    }
+    match /invoice_profiles/{id} { allow read, write: if mgmt() || (active() && isMe(id)); }
+
+    // Money: management only.
+    match /finance_jobs/{id} { allow read, write: if mgmt(); }
+    match /finance_costs/{id} { allow read, write: if mgmt(); }
+    match /finance_rates/{id} { allow read, write: if mgmt(); }
+    match /finance_variations/{id} { allow read, write: if mgmt(); }
+    match /customer_invoices/{id} { allow read, write: if mgmt(); }
+    match /finance_summary/{id} { allow read, write: if mgmt(); }
+
+    match /{document=**} { allow read, write: if false; }
   }
 }

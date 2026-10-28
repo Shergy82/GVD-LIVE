@@ -1,0 +1,12 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Site documents (PDF / Excel / photos), up to 30MB each. Signed-in active staff only.
+    // Downloads for phones go through the siteFile function (/files/<id>), which uses the Admin SDK.
+    match /site_files/{allPaths=**} {
+      allow read: if request.auth != null && request.auth.token.active == true;
+      allow write: if request.auth != null && request.auth.token.active == true
+                   && (request.resource == null || request.resource.size < 30 * 1024 * 1024);
+    }
+  }
+}

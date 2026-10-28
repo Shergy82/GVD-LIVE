@@ -132,3 +132,9 @@ exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (r
     if (!res.headersSent) res.status(500).send('Could not open file');
   }
 });
+
+// Invoices inbox (Gmail) - imports emailed PDF invoices automatically
+exports.importInvoiceEmails = require('./invoiceMail').importInvoiceEmails;
+
+// Auth, customer page and finance summary callables
+Object.assign(exports, require('./api'));
