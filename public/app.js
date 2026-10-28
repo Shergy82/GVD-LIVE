@@ -890,8 +890,14 @@ function formatUKDate(dateInput) {
   return `${dayStr}/${monthStr}/${yearStr}`;
 }
 
+// Status from GVD Logic (Confirmed, WIP, On hold...): shown for jobs published from Logic
+const JOB_STATUS_STYLE = { approved: '#dcfce7;color:#166534', wip: '#dbeafe;color:#1e40af', on_hold: '#fef3c7;color:#92400e', awaiting_certs: '#fef3c7;color:#92400e', completed: '#e2e8f0;color:#334155' };
+function jobStatusBadgeHtml(site) {
+  if (!site || !site.job_status) return '';
+  return `<span class="site-type-badge" style="background:${JOB_STATUS_STYLE[site.job_status_key] || '#e2e8f0;color:#334155'}">${diaryEsc(site.job_status)}</span>`;
+}
 function siteTypeBadgeHtml(site) {
-  return site.construction_type ? `<span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>` : '';
+  return (site.construction_type ? `<span class="site-type-badge ${site.construction_type.toLowerCase()}">${site.construction_type}</span>` : '') + jobStatusBadgeHtml(site);
 }
 
 function formatShortUKDayDate(iso) {
@@ -2421,6 +2427,7 @@ async function downloadJobReport(site, btn) {
     const summary = [
       ['Site reference', formatSiteId(site.id)],
       ['Construction type', site.construction_type || '-'],
+      ...(site.job_status ? [['Job status (from GVD Logic)', site.job_status]] : []),
       ['Status', site.is_archived ? 'Archived' : (finishShift ? 'Completed' : 'Active')],
       ['First shift', first ? formatUKDate(first) : '-'],
       ['Completed / last shift', finishShift ? formatUKDate(finishShift.shift_date) : (last ? formatUKDate(last) : '-')],
