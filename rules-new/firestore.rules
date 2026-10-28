@@ -28,7 +28,8 @@ service cloud.firestore {
     match /group_chat/{id} { allow read, write: if active(); }
     match /notifications/{id} { allow create: if active(); allow read, update, delete: if mgmt() || (active() && resource.data.target_user_id == request.auth.uid); }
     match /notification_logs/{id} { allow read, write: if active(); }
-    match /settings/{id} { allow read: if active(); allow write: if mgmt(); }
+    match /settings/{id} { allow read: if active() && id != 'invoice_email'; allow write: if mgmt(); }
+    match /settings/invoice_email { allow read: if mgmt(); }
 
     // Customer feedback arrives through the customerFeedback function only.
     match /feedback/{id} { allow read: if active(); allow delete: if mgmt(); allow create, update: if false; }

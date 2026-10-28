@@ -18,6 +18,8 @@ before(async () => {
     await d.doc('credentials/op1').set({ hash: 'x' });
     await d.doc('sites/1').set({ address: 'a', customer_token: 't' });
     await d.doc('shifts/1').set({ site_id: 1 });
+    await d.doc('settings/app').set({ app_name: 'x' });
+    await d.doc('settings/invoice_email').set({ x: 1 });
     await d.doc('finance_costs/1').set({ amount: 1 });
     await d.doc('finance_summary/1').set({ cost: 1 });
     await d.doc('customer_invoices/1').set({ n: 1 });
@@ -85,4 +87,11 @@ test('pending user: can see only own user doc', async () => {
   await assertFails(pend().doc('users/op1').get());
   await assertFails(pend().doc('sites/1').get());
   await assertFails(pend().doc('shifts/1').get());
+});
+
+test('settings: everyone active reads app settings, only management reads invoice_email config', async () => {
+  await assertSucceeds(op().doc('settings/app').get());
+  await assertFails(op().doc('settings/invoice_email').get());
+  await assertSucceeds(admin().doc('settings/invoice_email').get());
+  await assertFails(op().doc('settings/app').set({ app_name: 'y' }));
 });
