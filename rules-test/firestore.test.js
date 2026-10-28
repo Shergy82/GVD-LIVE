@@ -35,6 +35,8 @@ after(async () => env && env.cleanup());
 const anon = () => env.unauthenticatedContext().firestore();
 const admin = () => env.authenticatedContext('admin1', { role: 'Admin', mgmt: true, active: true }).firestore();
 const op = () => env.authenticatedContext('op1', { role: 'Operative', mgmt: false, active: true }).firestore();
+const ownerCtx = () => env.authenticatedContext('own1', { role: 'Owner', mgmt: true, active: true }).firestore();
+const mgrCtx = () => env.authenticatedContext('mgr1', { role: 'Manager', mgmt: true, active: true }).firestore();
 const pend = () => env.authenticatedContext('pend1', { role: 'Operative', mgmt: false, active: false }).firestore();
 
 test('anonymous: nothing readable or writable', async () => {
@@ -94,4 +96,15 @@ test('settings: everyone active reads app settings, only management reads invoic
   await assertFails(op().doc('settings/invoice_email').get());
   await assertSucceeds(admin().doc('settings/invoice_email').get());
   await assertFails(op().doc('settings/app').set({ app_name: 'y' }));
+});
+
+test('only an Owner can delete a site; Admins and Managers can still edit and archive', async () => {
+  await env.withSecurityRulesDisabled(async ctx => { const d = ctx.firestore(); await d.doc('sites/9').set({ address: 'x' }); await d.doc('sites/10').set({ address: 'y' }); });
+  await assertFails(admin().doc('sites/9').delete());
+  await assertFails(mgrCtx().doc('sites/9').delete());
+  await assertFails(op().doc('sites/9').delete());
+  await assertFails(anon().doc('sites/9').delete());
+  await assertSucceeds(admin().doc('sites/9').update({ is_archived: true }));
+  await assertSucceeds(mgrCtx().doc('sites/10').update({ branch: 'Stoke' }));
+  await assertSucceeds(ownerCtx().doc('sites/9').delete());
 });

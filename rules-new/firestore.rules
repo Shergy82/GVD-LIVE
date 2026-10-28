@@ -18,7 +18,11 @@ service cloud.firestore {
       match /subscriptions/{dev} { allow read: if active(); allow write: if isMe(id) || mgmt(); }
     }
 
-    match /sites/{id} { allow read: if active(); allow write: if mgmt(); }
+    match /sites/{id} {
+      allow read: if active();
+      allow create, update: if mgmt();
+      allow delete: if mgmt() && request.auth.token.role == 'Owner';   // only Owners delete sites; everyone else archives
+    }
     match /shifts/{id} { allow read, write: if active(); }
     match /pdfs/{id} { allow read, write: if active(); }
     match /photos/{id} { allow read, write: if active(); }

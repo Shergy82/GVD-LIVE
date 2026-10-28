@@ -98,6 +98,10 @@ let knownShiftIds = null;
 let currentCustomerToken = null;
 
 // Helper Role Validation Functions
+// Deleting a site is for Owners only (everyone else archives). The database rules enforce this too.
+function isOwnerRole(user) {
+  return !!user && (user.role === 'Owner' || user.email === 'phil@gvdcontracts.com');
+}
 function isManagementUser(user) {
   if (!user) return false;
   return user.role === 'Owner' || user.role === 'Admin' || user.role === 'Manager' || user.email === 'phil@gvdcontracts.com';
@@ -2191,7 +2195,7 @@ function renderSitesList() {
       ? `<button class="btn btn-secondary btn-sm restore-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">↩️ Restore</button>`
       : `<button class="btn btn-warning btn-sm archive-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24; display: inline-flex; align-items: center; gap: 6px;">📦 Archive</button>`;
 
-    const deleteBtn = `<button class="btn btn-danger btn-sm delete-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">🗑️ Delete</button>`;
+    const deleteBtn = !isOwnerRole(currentUser) ? '' : `<button class="btn btn-danger btn-sm delete-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">🗑️ Delete</button>`;
 
     return `
       <div class="site-card" data-site-id="${site.id}">
@@ -2306,7 +2310,7 @@ function loadProjectPage(siteId) {
         : `<button class="btn btn-warning btn-sm" id="btnArchiveProject" style="background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24;">📦 Archive Project</button>`;
 
       const reportBtnHtml = isOwnerOrAdminUser(currentUser) ? `<button class="btn btn-primary btn-sm" id="btnJobReport">📄 Completed Job Report</button> ` : '';
-      actionsContainer.innerHTML = `${reportBtnHtml}${archiveRestoreHtml} <button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>`;
+      actionsContainer.innerHTML = `${reportBtnHtml}${archiveRestoreHtml} ${isOwnerRole(currentUser) ? '<button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>' : ''}`;
       actionsContainer.style.display = 'flex';
 
       const repBtn = document.getElementById('btnJobReport');
@@ -2577,8 +2581,16 @@ async function handleRestoreSite(siteId) {
 async function handleDeleteSite(siteId) {
   const site = allSites.find(s => parseInt(s.id) === parseInt(siteId));
   if (!site) return;
+  if (!isOwnerRole(currentUser)) { alert('Only an Owner can delete a site. You can archive it instead.'); return; }
 
   if (!confirm(`Are you sure you want to PERMANENTLY DELETE Site #${site.id} (${site.address})?\n\nThis will remove the site and all its associated shifts, photos and documents from the database. This action cannot be undone.`)) {
+    return;
+  }
+
+  const wantRef = formatSiteId(site.id);
+  const typed = prompt(`Type the site reference (${wantRef}) to confirm the permanent delete:`);
+  if (typed === null || typed.trim().toLowerCase() !== String(wantRef).trim().toLowerCase()) {
+    if (typed !== null) alert('That did not match, so nothing was deleted.');
     return;
   }
 
