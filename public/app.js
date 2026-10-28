@@ -137,6 +137,10 @@ function isOwnerOrAdminUser(user) {
 }
 
 function formatSiteId(siteId) {
+  // Jobs published from GVD Logic show the Logic reference (e.g. GVD-2026-002) instead of the internal number
+  const known = typeof allSites !== 'undefined' && allSites.find(x => parseInt(x.id) === parseInt(siteId));
+  if (known && known.logic_ref) return known.logic_ref;
+  if (typeof custData !== 'undefined' && custData && custData.site && String(custData.site.id) === String(siteId) && custData.site.logic_ref) return custData.site.logic_ref;
   const idNum = parseInt(siteId);
   if (isNaN(idNum)) return `Site #${siteId}`;
   if (idNum >= 10000) return `Site #${idNum}`;

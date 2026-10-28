@@ -257,7 +257,7 @@ exports.customerView = onCall(opts, async (req) => {
   }));
   const s = settingsSnap.exists ? settingsSnap.data() : {};
   return {
-    site: { id: site.id, address: site.address || '', construction_type: site.construction_type || '' },
+    site: { id: site.id, address: site.address || '', construction_type: site.construction_type || '', logic_ref: site.logic_ref || '' },
     settings: { app_name: s.app_name || 'GVD LIVE', logo_url: s.logo_url || '/gvd-logo.png' },
     shifts: shiftSnap.docs.map(d => {
       const x = d.data();
@@ -293,7 +293,7 @@ exports.customerFeedback = onCall(opts, async (req) => {
 
   await db().collection('feedback').add({
     site_id: String(site.id),
-    site_ref: formatSiteId(site.id),
+    site_ref: site.logic_ref || formatSiteId(site.id),
     site_address: site.address || '',
     rating,
     sentiment: rating >= 4 ? 'pos' : rating === 3 ? 'neu' : 'neg',
