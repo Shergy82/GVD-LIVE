@@ -304,6 +304,7 @@ function initFirestoreSync() {
       return;
     }
     renderActiveView();
+    fsMarkReady('sites');
   }, err => console.warn('Firestore sites error:', err));
 
 
@@ -324,6 +325,7 @@ function initFirestoreSync() {
     }
     renderActiveView();
     if (typeof refreshFinanceViews === 'function') refreshFinanceViews();
+    fsMarkReady('shifts');
   }, err => console.warn('Firestore shifts error:', err));
 
   // Real-time Photos Collection Sync
@@ -346,6 +348,7 @@ function initFirestoreSync() {
     if (activeSiteId) loadProjectPage(activeSiteId);
     const invView = document.getElementById('view-invoices');
     if (invView && invView.style.display !== 'none') renderInvoiceRegister();
+    fsMarkReady('pdfs');
   }, err => console.warn('Firestore pdfs error:', err));
 
   // Real-time App Settings Sync
@@ -355,6 +358,7 @@ function initFirestoreSync() {
       saveLocalStorageData();
       updateBrandingUI();
     }
+    fsMarkReady('settings');
   }, err => console.warn('Firestore settings error:', err));
 }
 
@@ -5719,6 +5723,7 @@ function startPOSync() {
       if (site) { renderPOTab(site); renderSiteFinance(site); }
     }
     refreshFinanceViews();
+    fsMarkReady('pos');
   }, err => console.warn('Firestore purchase_orders error:', err));
 }
 
@@ -5726,6 +5731,7 @@ function stopPOSync() {
   if (poUnsub) poUnsub();
   poUnsub = null;
   allPOs = [];
+  fsReady.delete('pos');
 }
 
 function formatPounds(v) {
@@ -6665,18 +6671,22 @@ function startFinanceSync() {
     financeJobs = {};
     snap.docs.forEach(d => { financeJobs[d.id] = d.data(); });
     refreshFinanceViews();
+    fsMarkReady('finance_jobs');
   }, warn('finance_jobs')));
   financeUnsubs.push(db.collection('finance_costs').onSnapshot(snap => {
     financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
+    fsMarkReady('finance_costs');
   }, warn('finance_costs')));
   financeUnsubs.push(db.collection('finance_variations').onSnapshot(snap => {
     financeVariations = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
+    fsMarkReady('finance_variations');
   }, warn('finance_variations')));
   financeUnsubs.push(db.collection('customer_invoices').onSnapshot(snap => {
     customerInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
+    fsMarkReady('customer_invoices');
   }, warn('customer_invoices')));
   financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
@@ -6697,6 +6707,7 @@ function startFinanceSync() {
       }
     });
     refreshFinanceViews();
+    fsMarkReady('finance_rates');
   }, warn('finance_rates')));
 }
 
@@ -6710,6 +6721,10 @@ function stopFinanceSync() {
   financePay = {};
   financeHourly = {};
   customerInvoices = [];
+  // forget what was loaded so the next login never publishes from half-loaded data
+  ['finance_jobs', 'finance_costs', 'finance_variations', 'finance_rates', 'customer_invoices', 'pos'].forEach(n => fsReady.delete(n));
+  clearTimeout(fsTimer);
+  fsLast = null;
 }
 
 let uiRefreshPending = false;
@@ -6721,8 +6736,54 @@ function isTypingIn(containerId) {
   return !!(a && box && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && box.contains(a));
 }
 
+// ---- Finance summary for GVD Logic ----
+// GVD Logic (the job register) shows each linked job's cost from here. The figures come from computeSiteFinance, the same
+// calculation as the Finance tab, so the two apps always agree. Written only by a management user, only once every source
+// the calculation needs has loaded (never from cached or half-loaded data), and only for jobs whose figures have changed.
+const FS_NEEDED = ['sites', 'shifts', 'pdfs', 'pos', 'settings', 'finance_jobs', 'finance_costs', 'finance_variations', 'finance_rates', 'customer_invoices'];
+const fsReady = new Set();
+let fsTimer = null;
+let fsLast = null;   // site id -> signature of what is already stored
+const fsSig = o => JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]]));
+const fs2 = n => n == null || isNaN(n) ? null : Math.round(n * 100) / 100;
+function fsMarkReady(name) {
+  fsReady.add(name);
+  if (!db || !currentUser || !isManagementUser(currentUser) || !FS_NEEDED.every(n => fsReady.has(n))) return;
+  clearTimeout(fsTimer);
+  fsTimer = setTimeout(publishFinanceSummary, 5000);
+}
+async function publishFinanceSummary() {
+  try {
+    if (!db || !currentUser || !isManagementUser(currentUser)) return;
+    if (!fsLast) {
+      fsLast = {};
+      const snap = await db.collection('finance_summary').get();
+      snap.forEach(d => { const x = { ...d.data() }; delete x.updated_at; fsLast[d.id] = fsSig(x); });
+    }
+    const writes = [];
+    allSites.forEach(site => {
+      const f = computeSiteFinance(site);
+      const rec = {
+        site_id: String(site.id), site_address: site.address || '',
+        value: fs2(f.value), variations_approved: fs2(f.variationsApproved), total_cost: fs2(f.totalCost), profit: fs2(f.profit),
+        materials_invoiced: fs2(f.invoiced), labour_invoiced: fs2(f.labourInvoiced), labour_day_rate: fs2(f.labour),
+        on_order: fs2(f.onOrder), extras: fs2(f.extras), labour_planned: fs2(f.labourPlanned)
+      };
+      const sig = fsSig(rec);
+      if (fsLast[rec.site_id] !== sig) writes.push({ rec, sig });
+    });
+    for (let i = 0; i < writes.length; i += 400) {
+      const batch = db.batch();
+      writes.slice(i, i + 400).forEach(w => batch.set(db.collection('finance_summary').doc(w.rec.site_id), { ...w.rec, updated_at: new Date().toISOString() }));
+      await batch.commit();
+      writes.slice(i, i + 400).forEach(w => { fsLast[w.rec.site_id] = w.sig; });
+    }
+  } catch (err) { console.warn('Finance summary publish failed:', err); }
+}
+
 function refreshFinanceViews() {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  if (fsReady.size) { clearTimeout(fsTimer); if (FS_NEEDED.every(n => fsReady.has(n))) fsTimer = setTimeout(publishFinanceSummary, 5000); }
   const v = document.getElementById('view-finance');
   if (v && v.style.display !== 'none') renderFinanceView();
   if (activeSiteId) {
