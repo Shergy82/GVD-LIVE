@@ -1,4 +1,16 @@
-# GVD Live security change – deploy order and rollback (DRAFT, nothing deployed yet)
+# GVD Live security change: what changed and how to roll back
+
+## Status: DEPLOYED 2026-10-28
+Anonymous read/write is closed on Firestore and Storage. Done in this order: Firestore backup (gs://gvd-live-backup-2026-10-28/pre-security, delete once happy: it holds the old hashes), IAM + Authentication, functions, credentials copy, hosting, Hub `liveData` function + Logic, `--purge`, rules. Verified: anonymous reads/writes refused (403) on all collections and Storage listing; customer QR link, planner, Finance and operative views work when logged in; Logic shows live job values through the Hub function.
+
+## Rollback quick reference
+- **Rules (about a minute):** `cp rules-backup/firestore.rules.open firestore.rules && cp rules-backup/storage.rules.open storage.rules && firebase deploy --only firestore:rules,storage --project gvd-live`
+- **Hosting:** the old client can no longer log anyone in (hashes purged). To go back further than the rules, restore the Firestore export (`gcloud firestore import gs://gvd-live-backup-2026-10-28/pre-security --project gvd-live`, which overwrites data written since) and the previous hosting release 7cd04d1c504ba5ae.
+- **Hub (gvd-hub, branch security/live-data-function):** roll gvd-logic hosting back in the console; the Hub function and IAM grant (`roles/datastore.viewer` for 13789283321-compute@developer.gserviceaccount.com on gvd-live) can stay or be removed with `gcloud projects remove-iam-policy-binding`.
+
+## GVD Logic (UPDATED: no change needed in Logic's login)
+Logic users sign in on the gvd-hub project, so Logic now gets GVD Live costs and sites from the Hub's `liveData` function (staff list only), which reads gvd-live server-side. The snippet below (Logic signing in through the GVD Live login) is superseded and not used.
+
 
 ## What changed in the repo
 - `functions/api.js`, `functions/credentials.js`: login, refreshSession, setPassword, adminSetTempPassword, register, requestPasswordReset, customerView, customerFeedback, getFinanceSummary. Passwords are scrypt-hashed in `credentials/{id}` (no client access). Old 32-bit hashes are accepted once, upgraded, and the user must then choose a new password.
@@ -6,7 +18,7 @@
 - `rules-new/*.rules`: new rules. The live `firestore.rules` / `storage.rules` are untouched until the last step. `rules-backup/*.open` = the current open rules.
 - `scripts/migrate-credentials.js`, `rules-test/*`, `firebase.emu.json`: migration and emulator tests.
 
-## Deploy order (each step needs sign-off; rules last)
+## Deploy order that was followed
 0. Firestore export (backup) of project gvd-live.
 1. One-time: enable Authentication (Firebase console > Authentication > Get started) and make sure the Identity Toolkit API is enabled; grant the functions' runtime service account `roles/iam.serviceAccountTokenCreator` on itself (exact command shown before running).
 2. `firebase deploy --only functions` (additive; old app unaffected).
