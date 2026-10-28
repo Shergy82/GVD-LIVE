@@ -142,6 +142,7 @@ test('ssoSession: management ID token gives a session; operatives and bad tokens
   const r = await call('ssoSession', { idToken: adminIdt });
   assert.strictEqual(r.user.id, 'admin1');
   assert.strictEqual(claims(await idTokenFrom(r.token)).mgmt, true);
+  assert.strictEqual(claims(adminIdt).u_email, 'ann@x.com');
   await db.doc('credentials/op1').set({ failed_count: 0, locked_until: null }, { merge: true });
   const op = await call('login', { email: 'ollie@x.com', password: 'oppass1' });
   assert.strictEqual((await call('ssoSession', { idToken: await idTokenFrom(op.token) })).error.status, 'PERMISSION_DENIED');

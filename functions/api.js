@@ -26,7 +26,8 @@ function publicUser(id, u) {
 
 async function issueToken(id, u) {
   const mgmt = isMgmtRole(u.role, u.email);
-  const claims = { role: u.role || 'Operative', mgmt, active: u.status === 'Active' };
+  // u_email lets other GVD apps (Portal) match a Hub sign-in to their own staff profile without reading this database
+  const claims = { role: u.role || 'Operative', mgmt, active: u.status === 'Active', u_email: String(u.email || '').toLowerCase() };
   return getAuth().createCustomToken(String(id), claims);
 }
 
