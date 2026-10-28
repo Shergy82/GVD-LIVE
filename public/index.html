@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GVD LIVE</title>
-  <link rel="stylesheet" href="/styles.css?v=13.0">
+  <link rel="stylesheet" href="/styles.css?v=20.0">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
@@ -28,9 +28,10 @@
       <button class="nav-item manager-admin-only" data-target="view-planner" id="navPlannerBtn"><span class="nav-ico">📅</span><span class="nav-lbl">Planner</span></button>
       <button class="nav-item manager-admin-only" data-target="view-projects" id="navProjectsBtn"><span class="nav-ico">🏗️</span><span class="nav-lbl">Sites & Projects</span></button>
       <button class="nav-item manager-admin-only" data-target="view-labour-sheet" id="navLabourBtn"><span class="nav-ico">📊</span><span class="nav-lbl">Labour Sheet</span></button>
-      <button class="nav-item manager-admin-only" data-target="view-invoices" id="navInvoicesBtn"><span class="nav-ico">🧾</span><span class="nav-lbl">Invoices</span></button>
       <button class="nav-item manager-admin-only" data-target="view-finance" id="navFinanceBtn"><span class="nav-ico">💷</span><span class="nav-lbl">Finance</span></button>
       <button class="nav-item manager-admin-only" data-target="view-diary" id="navDiaryBtn"><span class="nav-ico">📖</span><span class="nav-lbl">Diary</span></button>
+      <button class="nav-item" data-target="view-chat" id="navChatBtn"><span class="nav-ico">💬</span><span class="nav-lbl">Team Chat</span></button>
+      <button class="nav-item" data-target="view-feedback" id="navFeedbackBtn"><span class="nav-ico">⭐</span><span class="nav-lbl">Feedback</span></button>
       <button class="nav-item admin-only" data-target="view-admin" id="navAdminBtn"><span class="nav-ico">⚙️</span><span class="nav-lbl">Admin Settings</span> <span id="pendingBadge" class="badge-pending" style="display:none; background: #ef4444; color: white; border-radius: 999px; padding: 2px 6px; font-size: 0.75rem; margin-left: 4px;">0</span></button>
       
       <!-- Operative Links -->
@@ -180,6 +181,7 @@
           <button class="btn btn-secondary btn-sm" id="plannerPrevWeekBtn">← Previous 7 days</button>
           <button class="btn btn-outline btn-sm" id="plannerCurrentWeekBtn">Today</button>
           <button class="btn btn-secondary btn-sm" id="plannerNextWeekBtn">Next 7 days →</button>
+          <select class="form-control job-scope-select manager-admin-only" title="Whose jobs to show" style="width: auto;"></select>
           <button class="btn btn-outline btn-sm manager-admin-only" id="btnPlannerDownloadPdf">📄 Download shifts PDF</button>
           <button class="btn btn-sm manager-admin-only" id="btnTogglePlanningMode" style="font-weight: 700; transition: all 0.3s ease;"></button>
           <span class="current-week-label" id="plannerWeekRangeLabel"></span>
@@ -223,6 +225,16 @@
     <!-- ------------------------------------------------------------- -->
     <!-- OPERATIVE "MY SHIFTS" VIEW -->
     <!-- ------------------------------------------------------------- -->
+    <div id="view-my-invoice" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>My Invoice</h2>
+          <p>Your weekly invoice, pre-filled from the planner. Check it, add your rate and submit.</p>
+        </div>
+      </div>
+      <div id="myInvoiceBody"></div>
+    </div>
+
     <div id="view-my-shifts" class="app-view" style="display: none;">
       <div class="section-header">
         <div class="section-title-group">
@@ -254,10 +266,12 @@
           <p>Manage site details, construction types, photos, PDFs and customer QR cards</p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <select class="form-control job-scope-select manager-admin-only" title="Whose jobs to show" style="width: auto;"></select>
           <div style="display: flex; gap: 4px; background: rgba(255,255,255,0.05); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <button class="btn btn-primary btn-sm" id="btnFilterActiveSites" style="font-size: 0.8rem; padding: 4px 10px;">Active Sites</button>
             <button class="btn btn-outline btn-sm" id="btnFilterArchivedSites" style="font-size: 0.8rem; padding: 4px 10px;">📦 Archived Sites</button>
           </div>
+          <button class="btn btn-outline btn-sm admin-only" id="btnAssignUnassignedSites" style="display: none;"></button>
           <button class="btn btn-primary btn-sm admin-only" id="btnOpenCreateSiteModal">+ Create New Site</button>
         </div>
       </div>
@@ -368,7 +382,7 @@
                 </div>
 
                 <div class="print-instruction" style="font-size: 1.05rem; font-weight: 600; color: #334155; max-width: 520px; margin: 0 auto 24px auto; line-height: 1.5;">
-                  Scan this QR code using your phone camera to view the live, real-time works schedule for this property.
+                  Scan this QR code using your phone camera to view the live, real-time works schedule for this property, and to tell us how we did.
                 </div>
               </div>
 
@@ -433,18 +447,66 @@
           <button class="btn btn-primary btn-sm" id="diaryAddBtn">+ Add Entry</button>
         </div>
       </div>
+      <div id="diaryFilter" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px;"></div>
       <div id="diaryGrid" class="diary-grid"></div>
       <h3 style="margin: 20px 0 10px;">This month</h3>
       <div id="diaryAgenda"></div>
     </div>
 
+    <div id="view-chat" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Team Chat</h2>
+          <p>Everyone at GVD in one place. Announcements from the office are highlighted and alert every phone.</p>
+        </div>
+      </div>
+      <div id="chatPinned"></div>
+      <div class="chat-box">
+        <div id="chatMessages" class="chat-messages"></div>
+        <div class="chat-composer">
+          <div id="chatMentionMenu" class="chat-mention-menu" style="display: none;"></div>
+          <label id="chatAnnounceRow" class="chat-announce-row" style="display: none;"><input type="checkbox" id="chatAnnounce"> <span>📢 Send as an announcement (alerts everyone's phone)</span></label>
+          <div class="chat-input-row">
+            <textarea id="chatInput" rows="1" maxlength="2000" placeholder="Message the team…"></textarea>
+            <button type="button" class="btn btn-primary" id="chatSend">Send</button>
+          </div>
+          <div class="chat-hint">Type @ to tag someone, or @all for everyone</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="view-feedback" class="app-view" style="display: none;">
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Customer Feedback</h2>
+          <p>What our customers say about our work. Left by customers through the QR code on site.</p>
+        </div>
+      </div>
+      <div id="fbSummary"></div>
+      <div class="fb-toolbar">
+        <div class="fb-chips" id="fbChips"></div>
+        <select id="fbSite" class="form-control"></select>
+        <input type="text" id="fbSearch" class="form-control" placeholder="Search name, address or comment...">
+      </div>
+      <div id="fbList"></div>
+    </div>
+
     <div id="view-invoices" class="app-view manager-admin-only" style="display: none;">
+      <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="fin-subtab" data-view="view-finance">💷 Job finance</button>
+        <button type="button" class="fin-subtab active" data-view="view-invoices">🧾 Invoices</button>
+        <button type="button" class="fin-subtab" data-view="view-reports">📊 Reports</button>
+      </div>
       <div class="section-header">
         <div class="section-title-group">
           <h2>Invoices</h2>
           <p>Import merchant invoices. The app finds the PO number in each PDF and adds the cost (ex VAT) to that job.</p>
         </div>
       </div>
+
+      <div class="site-card" id="opInvoiceInbox" style="margin-bottom: 20px; display: none;"></div>
+
+      <div class="site-card" id="invLabourCheck" style="margin-bottom: 20px; display: none;"></div>
 
       <div class="site-card" style="margin-bottom: 20px;">
         <h3 style="margin-bottom: 10px;">📥 Import invoices</h3>
@@ -462,6 +524,7 @@
       <div class="site-card">
         <h3 style="margin-bottom: 10px;">Invoice register</h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px;">
+          <select class="form-control job-scope-select manager-admin-only" title="Whose jobs to show"></select>
           <input type="text" id="invSearch" class="form-control" placeholder="Search invoice no, PO, merchant...">
           <select id="invFilterSite" class="form-control"></select>
           <select id="invFilterMerchant" class="form-control"></select>
@@ -476,13 +539,53 @@
       </div>
     </div>
 
+    <div id="view-reports" class="app-view manager-admin-only" style="display: none;">
+      <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="fin-subtab" data-view="view-finance">💷 Job finance</button>
+        <button type="button" class="fin-subtab" data-view="view-invoices">🧾 Invoices</button>
+        <button type="button" class="fin-subtab active" data-view="view-reports">📊 Reports</button>
+      </div>
+      <div class="section-header">
+        <div class="section-title-group">
+          <h2>Reports</h2>
+          <p>Quarterly finance report and weekly activity report, built from the jobs, shifts, invoices and costs already in the app.</p>
+        </div>
+      </div>
+      <div class="site-card" style="margin-bottom: 14px;">
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <div style="display: flex; gap: 4px; background: rgba(255,255,255,0.05); padding: 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <button type="button" class="btn btn-outline btn-sm rep-type" data-type="quarter">Quarterly finance</button>
+            <button type="button" class="btn btn-outline btn-sm rep-type" data-type="week">Weekly activity</button>
+          </div>
+          <select id="repFor" class="form-control" style="width: auto;"></select>
+          <span id="repQuarterWrap"><select id="repQuarter" class="form-control" style="width: auto;"></select></span>
+          <span id="repWeekWrap" style="display: none; gap: 6px; align-items: center;">
+            <button type="button" class="btn btn-secondary btn-sm" id="repWeekPrev">←</button>
+            <strong id="repWeekLabel" style="min-width: 190px; text-align: center;"></strong>
+            <button type="button" class="btn btn-secondary btn-sm" id="repWeekNext">→</button>
+            <button type="button" class="btn btn-outline btn-sm" id="repWeekThis">This week</button>
+          </span>
+          <span style="flex: 1;"></span>
+          <button type="button" class="btn btn-primary btn-sm" id="btnRepPdf">📄 Download PDF</button>
+          <button type="button" class="btn btn-outline btn-sm" id="btnRepCsv">📊 Download Excel (CSV)</button>
+        </div>
+      </div>
+      <div id="repOutput"></div>
+    </div>
+
     <div id="view-finance" class="app-view manager-admin-only" style="display: none;">
+      <div class="fin-subtabs" style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <button type="button" class="fin-subtab active" data-view="view-finance">💷 Job finance</button>
+        <button type="button" class="fin-subtab" data-view="view-invoices">🧾 Invoices</button>
+        <button type="button" class="fin-subtab" data-view="view-reports">📊 Reports</button>
+      </div>
       <div class="section-header">
         <div class="section-title-group">
           <h2>Finance</h2>
           <p>Job values against materials, labour and extra costs. Owners, Admins and Managers only. All figures exclude VAT.</p>
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <select class="form-control job-scope-select manager-admin-only" title="Whose jobs to show" style="width: auto;"></select>
           <select id="finFilterStatus" class="form-control" style="width: auto;">
             <option value="active">Active jobs</option>
             <option value="archived">Archived jobs</option>
@@ -528,9 +631,19 @@
         </div>
       </div>
 
+      <div class="site-card" id="finLabourModeCard" style="margin-bottom: 14px;">
+        <h3 style="margin-bottom: 6px;">How labour is costed</h3>
+        <select id="finLabourMode" class="form-control" style="width: auto; margin-bottom: 8px; display: inline-block;">
+          <option value="invoices">Operatives' weekly invoices (recommended)</option>
+          <option value="day_rate">Automatic day rates from the planner</option>
+        </select>
+        <label style="font-size: 0.85rem; margin-left: 8px;">from <input type="date" id="finLabourFrom" class="form-control" style="display: inline-block; width: auto;"></label>
+        <p style="color: var(--text-muted); font-size: 0.85rem;" id="finLabourModeHelp"></p>
+      </div>
+
       <div class="site-card" id="finRatesCard">
         <h3 style="margin-bottom: 6px;">Day rates</h3>
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. People set to Price work cost nothing per shift - their cost comes from their invoices or extra costs. Only Owners and Admins can change rates.</p>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 10px;">Each shift costs the person's day rate against the job. AM or PM shifts cost half. Drying days cost nothing. People set to Price work cost nothing per shift - their cost comes from their invoices or extra costs. Only Owners, Admins and Managers can change rates.</p>
         <div style="overflow-x: auto;">
           <table class="planner-table responsive-table" style="min-width: 420px;">
             <thead><tr><th>Person</th><th>Role</th><th>Paid by</th><th>Day rate £</th></tr></thead>
@@ -572,6 +685,31 @@
             </div>
           </div>
           <button type="submit" class="btn btn-primary btn-sm" style="width: auto;">Save Settings & Branding Changes</button>
+        </form>
+      </div>
+
+      <!-- Company & invoice details (letterhead for customer invoices) -->
+      <div class="site-card" style="margin-bottom: 24px;">
+        <h3 style="margin-bottom: 6px;">Company &amp; Invoice Details</h3>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 16px;">Printed on the letterhead of customer invoices. Fill in once.</p>
+        <form id="settingsCompanyForm">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-bottom: 16px;">
+            <div class="form-group"><label for="coName">Company name</label><input type="text" id="coName" class="form-control" placeholder="GVD Contracts Ltd"></div>
+            <div class="form-group"><label for="coPhone">Phone</label><input type="tel" id="coPhone" class="form-control"></div>
+            <div class="form-group"><label for="coEmail">Email</label><input type="email" id="coEmail" class="form-control"></div>
+            <div class="form-group"><label for="coWeb">Website</label><input type="text" id="coWeb" class="form-control" placeholder="www.example.com"></div>
+            <div class="form-group" style="grid-column: 1 / -1;"><label for="coAddress">Company address (one line per row)</label><textarea id="coAddress" class="form-control" rows="3"></textarea></div>
+            <div class="form-group"><label for="coRegNo">Company registration no.</label><input type="text" id="coRegNo" class="form-control"></div>
+            <div class="form-group"><label for="coVatNo">VAT registration no.</label><input type="text" id="coVatNo" class="form-control"></div>
+            <div class="form-group"><label for="coBankName">Bank</label><input type="text" id="coBankName" class="form-control"></div>
+            <div class="form-group"><label for="coAccName">Account name</label><input type="text" id="coAccName" class="form-control"></div>
+            <div class="form-group"><label for="coSortCode">Sort code</label><input type="text" id="coSortCode" class="form-control" placeholder="00-00-00"></div>
+            <div class="form-group"><label for="coAccNo">Account number</label><input type="text" id="coAccNo" class="form-control"></div>
+            <div class="form-group"><label for="coTermsDays">Payment terms (days)</label><input type="number" id="coTermsDays" class="form-control" min="0" placeholder="30"></div>
+            <div class="form-group"><label for="coNextNo">Next invoice number (optional)</label><input type="number" id="coNextNo" class="form-control" min="1" placeholder="e.g. 1001"></div>
+            <div class="form-group" style="grid-column: 1 / -1;"><label for="coNote">Standard note printed on every invoice (optional)</label><textarea id="coNote" class="form-control" rows="2" placeholder="e.g. Thank you for your business."></textarea></div>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm" style="width: auto;">Save company details</button>
         </form>
       </div>
 
@@ -692,14 +830,15 @@
         </div>
         <div class="form-group" id="shiftDuplicateGroup" style="margin-top: 14px;">
           <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
-            <input type="checkbox" id="shiftDuplicateChk"> 🔁 Duplicate shift across consecutive days
+            <input type="checkbox" id="shiftDuplicateChk"> 🔁 Repeat shift over several days
           </label>
           <div id="shiftDuplicateDaysContainer" style="display: none; margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px; border: 1px solid var(--border-color);">
-            <label for="shiftDuplicateDaysInput" style="font-size: 0.85rem; margin-bottom: 6px; display: block; color: var(--text-muted);">Number of consecutive days (including start date):</label>
+            <label for="shiftDuplicateDaysInput" style="font-size: 0.85rem; margin-bottom: 6px; display: block; color: var(--text-muted);">Number of working days (including the start date):</label>
             <div style="display: flex; align-items: center; gap: 10px;">
               <input type="number" id="shiftDuplicateDaysInput" class="form-control" min="2" max="30" value="2" style="width: 90px; padding: 6px 10px;">
-              <span style="font-size: 0.85rem; color: #94a3b8;" id="shiftDuplicateDaysLabel">2 consecutive days</span>
+              <span style="font-size: 0.85rem; color: #94a3b8;" id="shiftDuplicateDaysLabel">2 working days</span>
             </div>
+            <label style="display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.85rem; cursor: pointer;"><input type="checkbox" id="shiftDuplicateWeekends"> Include Saturdays and Sundays</label>
           </div>
         </div>
         <div class="form-group">
@@ -716,6 +855,63 @@
           <button type="submit" class="btn btn-primary">Save Shift</button>
           <button type="button" class="btn btn-danger" id="btnDeleteShift" style="display: none;">Remove Shift</button>
         </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Create customer invoice (Admin or higher) -->
+  <div class="modal-overlay" id="modalCustInvoice">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Create invoice</h3>
+        <button class="close-btn" data-close="modalCustInvoice">&times;</button>
+      </div>
+      <form id="custInvoiceForm">
+        <input type="hidden" id="ciSiteId">
+        <div id="ciCompanyWarn" style="display: none; color: var(--warning); font-size: 0.85rem; margin-bottom: 10px;"></div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciNumber">Invoice number</label><input type="text" id="ciNumber" class="form-control" required></div>
+          <div class="form-group"><label for="ciDate">Invoice date</label><input type="date" id="ciDate" class="form-control" required></div>
+          <div class="form-group"><label for="ciDue">Due date</label><input type="date" id="ciDue" class="form-control" required></div>
+        </div>
+        <div class="form-group"><label for="ciCustomerName">Customer name</label><input type="text" id="ciCustomerName" class="form-control" required placeholder="Who is being invoiced"></div>
+        <div class="form-group"><label for="ciCustomerAddress">Customer address</label><textarea id="ciCustomerAddress" class="form-control" rows="3" placeholder="One line per row"></textarea></div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciCustomerRef">Customer PO / reference (optional)</label><input type="text" id="ciCustomerRef" class="form-control"></div>
+          <div class="form-group"><label for="ciSiteAddress">Project / site</label><input type="text" id="ciSiteAddress" class="form-control" readonly></div>
+        </div>
+        <div class="form-group"><label for="ciDescription">Description of works</label><textarea id="ciDescription" class="form-control" rows="3" required></textarea></div>
+        <div class="form-group">
+          <label for="ciNet">Project total (ex VAT)</label>
+          <input type="text" id="ciNet" class="form-control" readonly>
+          <small style="color: var(--text-muted);">This is the Job value on the site's Finance tab. Change it there if it is wrong.</small>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciVatMode">VAT</label>
+            <select id="ciVatMode" class="form-control">
+              <option value="standard">Standard rate</option>
+              <option value="none">No VAT</option>
+              <option value="reverse">Domestic reverse charge (CIS)</option>
+            </select>
+          </div>
+          <div class="form-group" id="ciVatRateGroup"><label for="ciVatRate">VAT rate %</label><input type="number" id="ciVatRate" class="form-control" value="20" min="0" max="100" step="0.1"></div>
+        </div>
+        <div class="form-group" style="margin-bottom: 6px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;"><input type="checkbox" id="ciCis"> CIS applies (customer deducts Construction Industry Scheme tax)</label>
+        </div>
+        <div id="ciCisGroup" style="display: none; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+          <div class="form-group"><label for="ciCisRate">CIS deduction rate</label>
+            <select id="ciCisRate" class="form-control">
+              <option value="20">20% (registered)</option>
+              <option value="30">30% (not registered)</option>
+              <option value="0">0% (gross payment status)</option>
+            </select>
+          </div>
+          <div class="form-group"><label for="ciMaterials">Materials included (ex VAT, not deducted)</label><input type="number" id="ciMaterials" class="form-control" value="0" min="0" step="0.01"><small style="color: var(--text-muted);">CIS is taken off labour only, never materials or VAT.</small></div>
+        </div>
+        <div id="ciTotals" style="background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px 14px; margin: 6px 0 14px;"></div>
+        <div class="form-group"><label for="ciNotes">Notes (optional)</label><textarea id="ciNotes" class="form-control" rows="2"></textarea></div>
+        <button type="submit" class="btn btn-primary" id="ciSubmit">🧾 Create invoice &amp; download PDF</button>
       </form>
     </div>
   </div>
@@ -738,16 +934,34 @@
           <input type="date" id="diaryDateInput" class="form-control" required>
         </div>
         <div class="form-group">
-          <label for="diaryTimeInput">Time window</label>
+          <label for="diaryTimeInput">Time slot (hourly or 2-hour window)</label>
           <select id="diaryTimeInput" class="form-control">
             <option value="">No set time</option>
-            <option value="06:00-08:00">6am - 8am</option>
-            <option value="08:00-10:00">8am - 10am</option>
-            <option value="10:00-12:00">10am - 12pm</option>
-            <option value="12:00-14:00">12pm - 2pm</option>
-            <option value="14:00-16:00">2pm - 4pm</option>
-            <option value="16:00-18:00">4pm - 6pm</option>
-            <option value="18:00-20:00">6pm - 8pm</option>
+            <optgroup label="Hourly">
+              <option value="06:00-07:00">6am - 7am</option>
+              <option value="07:00-08:00">7am - 8am</option>
+              <option value="08:00-09:00">8am - 9am</option>
+              <option value="09:00-10:00">9am - 10am</option>
+              <option value="10:00-11:00">10am - 11am</option>
+              <option value="11:00-12:00">11am - 12pm</option>
+              <option value="12:00-13:00">12pm - 1pm</option>
+              <option value="13:00-14:00">1pm - 2pm</option>
+              <option value="14:00-15:00">2pm - 3pm</option>
+              <option value="15:00-16:00">3pm - 4pm</option>
+              <option value="16:00-17:00">4pm - 5pm</option>
+              <option value="17:00-18:00">5pm - 6pm</option>
+              <option value="18:00-19:00">6pm - 7pm</option>
+              <option value="19:00-20:00">7pm - 8pm</option>
+            </optgroup>
+            <optgroup label="Two-hour windows">
+              <option value="06:00-08:00">6am - 8am</option>
+              <option value="08:00-10:00">8am - 10am</option>
+              <option value="10:00-12:00">10am - 12pm</option>
+              <option value="12:00-14:00">12pm - 2pm</option>
+              <option value="14:00-16:00">2pm - 4pm</option>
+              <option value="16:00-18:00">4pm - 6pm</option>
+              <option value="18:00-20:00">6pm - 8pm</option>
+            </optgroup>
           </select>
         </div>
         <div class="form-group">
@@ -814,13 +1028,20 @@
         </select>
       </div>
       <div class="form-group" id="userModalRateGroup">
-        <label for="userModalPayType">Paid by (finance - Owners and Admins only)</label>
+        <label for="userModalPayType">Paid by (finance - Owners, Admins and Managers only)</label>
         <select id="userModalPayType" class="form-control" style="margin-bottom: 8px;">
           <option value="day">Day rate</option>
           <option value="price">Price work (per m2 / job price - cost comes from invoices)</option>
+          <option value="hourly">Hourly - direct employee (costed from shifts)</option>
+          <option value="direct">Day rate - direct employee (costed from shifts)</option>
         </select>
-        <label for="userModalDayRate">Day rate £</label>
+        <label for="userModalDayRate" id="userModalRateLabel">Day rate £</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="userModalDayRate" class="form-control" placeholder="e.g. 200">
+        <div id="userModalHoursWrap" style="display: none; margin-top: 8px;">
+          <label for="userModalHours">Hours in a full day</label>
+          <input type="text" inputmode="decimal" autocomplete="off" id="userModalHours" class="form-control" value="8">
+          <small style="color: var(--text-muted);">A full-day shift costs hourly rate × these hours; AM or PM shifts cost half.</small>
+        </div>
       </div>
       <div class="form-group">
         <label for="userModalColor">Planner colour</label>
@@ -1021,6 +1242,9 @@
   <script src="/qrcode.min.js?v=17.0"></script>
   <script src="/jspdf.umd.min.js"></script>
   <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=47.0"></script>
+  <script src="/app.js?v=72.0"></script>
+  <script src="/reports.js?v=1.5"></script>
+  <script src="/invoice-template.js?v=1.4"></script>
+  <script src="/my-invoice.js?v=1.5"></script>
 </body>
 </html>

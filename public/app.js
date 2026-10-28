@@ -41,9 +41,37 @@ function isManagementUser(user) {
   return user.role === 'Owner' || user.role === 'Admin' || user.role === 'Manager' || user.email === 'phil@gvdcontracts.com';
 }
 
+// ---- Job scope: managers see their own jobs by default, everyone's on request ----
+let jobScope = 'mine';
+try { jobScope = localStorage.getItem('gvd_job_scope') === 'all' ? 'all' : 'mine'; } catch (e) {}
+function managerUsers() { return allUsers.filter(u => isManagementUser(u)).sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))); }
+// Jobs with no manager yet show for everyone until someone takes them, so nothing disappears
+function siteInScope(site) {
+  if (!site) return true;
+  if (!currentUser || !isManagementUser(currentUser) || jobScope === 'all') return true;
+  return !site.manager_id || String(site.manager_id) === String(currentUser.id);
+}
+function siteManagerName(site) {
+  const u = site && site.manager_id ? allUsers.find(x => String(x.id) === String(site.manager_id)) : null;
+  return u ? u.full_name : '';
+}
+function refreshJobScopeSelects() {
+  document.querySelectorAll('.job-scope-select').forEach(sel => {
+    sel.innerHTML = '<option value="mine">👤 My jobs</option><option value="all">👥 Everyone\'s jobs</option>';
+    sel.value = jobScope;
+  });
+}
+function setJobScope(v) {
+  jobScope = v === 'all' ? 'all' : 'mine';
+  try { localStorage.setItem('gvd_job_scope', jobScope); } catch (e) {}
+  refreshJobScopeSelects();
+  renderActiveView();
+}
+
+// Managers have the same permissions as Owners and Admins
 function isOwnerOrAdminUser(user) {
   if (!user) return false;
-  return user.role === 'Owner' || user.role === 'Admin' || user.email === 'phil@gvdcontracts.com';
+  return user.role === 'Owner' || user.role === 'Admin' || user.role === 'Manager' || user.email === 'phil@gvdcontracts.com';
 }
 
 function formatSiteId(siteId) {
@@ -398,6 +426,9 @@ function hashSimple(str) {
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
+  setupFeedbackListeners();
+  setupChatListeners();
+  setupCustomerInvoiceListeners();
   registerServiceWorker();
 
   initFirestoreSync();
@@ -438,6 +469,9 @@ function onUserAuthenticated() {
   localStorage.setItem('gvd_current_user_id', currentUser.id);
   document.getElementById('appHeader').style.display = 'flex';
   document.getElementById('userNameText').textContent = currentUser.full_name;
+  const nameEl = document.getElementById('userNameText');
+  nameEl.style.cursor = 'pointer'; nameEl.title = 'My invoice and details';
+  nameEl.onclick = () => { activeSiteId = null; showView('view-my-invoice'); };
 
   if ('Notification' in window && Notification.permission === 'granted') {
     const dot = document.getElementById('bellStatusDot');
@@ -479,7 +513,10 @@ function onUserAuthenticated() {
   updateCleanPushUI();
   if (isManagerOrHigher) startDiarySync();
   startPOSync();
+  startFeedbackSync();
+  startChatSync();
   if (isManagerOrHigher) startFinanceSync();
+  if (typeof startMyInvoiceSync === 'function' && true) startMyInvoiceSync();
 
   if (isManagerOrHigher) {
     showView('view-planner');
@@ -562,7 +599,7 @@ function showView(viewId) {
   updateMobileMenuLabel(viewId);
 
   document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.target === viewId);
+    btn.classList.toggle('active', btn.dataset.target === viewId || ((viewId === 'view-invoices' || viewId === 'view-reports') && btn.dataset.target === 'view-finance'));
   });
 
   renderActiveView();
@@ -600,6 +637,14 @@ function renderActiveView() {
     renderInvoicesView();
   } else if (viewId === 'view-finance') {
     renderFinanceView();
+  } else if (viewId === 'view-reports') {
+    renderReportsView();
+  } else if (viewId === 'view-my-invoice') {
+    if (typeof renderMyInvoiceView === 'function') renderMyInvoiceView();
+  } else if (viewId === 'view-feedback') {
+    renderFeedbackView();
+  } else if (viewId === 'view-chat') {
+    renderChatView(true);
   }
 }
 
@@ -1380,7 +1425,7 @@ function getSiteFinish(siteId) {
 
 // Sites finishing soonest first, then sites with no finish date yet, then completed sites last
 function getPlannerSites() {
-  const sites = allSites.filter(site => !site.is_archived);
+  const sites = allSites.filter(site => !site.is_archived && (!currentUser || !isManagementUser(currentUser) || siteInScope(site)));
   const info = new Map(sites.map(site => [site.id, getSiteFinish(site.id)]));
   const rank = site => { const f = info.get(site.id); return !f ? 1 : f.completed ? 2 : 0; };
   return sites
@@ -1767,14 +1812,16 @@ function formatShiftPeriodBadge(period) {
 // OPERATIVE "MY SHIFTS" VIEW & AUTOMATIC SEEN TIMESTAMP ON APP OPEN
 // -------------------------------------------------------------------
 let myShiftsTab = 'today'; // always starts on today's work
+const SHIFT_GRACE_DAYS = 3; // operatives keep access to a job (e.g. to attach photos) for this many days after the shift
 
 function renderMyShiftsView() {
   const container = document.getElementById('myShiftsContainer');
   if (!currentUser) return;
   const todayKey = diaryDateKey(new Date());
   const periodRank = { am: 0, all_day: 1, pm: 2 };
+  const graceKey = addDaysISO(todayKey, -SHIFT_GRACE_DAYS);
   const upcoming = allShifts
-    .filter(s => String(s.operative_id) === String(currentUser.id) && (s.shift_date || '') >= todayKey)
+    .filter(s => String(s.operative_id) === String(currentUser.id) && (s.shift_date || '') >= graceKey)
     .sort((a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (periodRank[a.shift_period] ?? 1) - (periodRank[b.shift_period] ?? 1));
   const myShifts = myShiftsTab === 'today' ? upcoming.filter(s => s.shift_date === todayKey) : upcoming;
 
@@ -1813,7 +1860,7 @@ function renderMyShiftsView() {
       let heading = '';
       if (myShiftsTab === 'all' && s.shift_date !== lastDate) {
         lastDate = s.shift_date;
-        const label = s.shift_date === todayKey ? 'Today' : s.shift_date === addDaysISO(todayKey, 1) ? 'Tomorrow' : '';
+        const label = s.shift_date < todayKey ? 'Recent' : s.shift_date === todayKey ? 'Today' : s.shift_date === addDaysISO(todayKey, 1) ? 'Tomorrow' : '';
         heading = `<h3 style="grid-column: 1 / -1; margin: 8px 0 -4px;">${label ? label + ' - ' : ''}${formatShortUKDayDate(s.shift_date)}</h3>`;
       }
       const site = allSites.find(st => parseInt(st.id) === parseInt(s.site_id));
@@ -1925,7 +1972,25 @@ async function openShiftDetailModal(shiftId) {
 // -------------------------------------------------------------------
 // SITES LIST & PROJECT PAGE
 // -------------------------------------------------------------------
+function updateAssignUnassignedBtn() {
+  const btn = document.getElementById('btnAssignUnassignedSites');
+  if (!btn) return;
+  const n = allSites.filter(s => !s.is_archived && !s.manager_id).length;
+  btn.style.display = n && currentUser && isManagementUser(currentUser) ? '' : 'none';
+  btn.textContent = `Assign ${n} unassigned to me`;
+}
+async function assignUnassignedToMe() {
+  const todo = allSites.filter(s => !s.is_archived && !s.manager_id);
+  if (!todo.length || !confirm(`Assign ${todo.length} active job${todo.length > 1 ? 's' : ''} with no manager to ${currentUser.full_name}?`)) return;
+  try {
+    for (const s of todo) { await db.collection('sites').doc(String(s.id)).update({ manager_id: String(currentUser.id) }); s.manager_id = String(currentUser.id); }
+    showGreenToast(`${todo.length} job${todo.length > 1 ? 's' : ''} assigned to you`);
+  } catch (err) { alert('Could not assign: ' + err.message); }
+  renderSitesList();
+}
+
 function renderSitesList() {
+  updateAssignUnassignedBtn();
   const container = document.getElementById('sitesListContainer');
   const projectPage = document.getElementById('projectPageContainer');
 
@@ -1959,6 +2024,8 @@ function renderSitesList() {
     sitesToDisplay = sitesToDisplay.filter(st => !st.is_archived);
   }
 
+  // Managers see their own jobs (plus any not yet given a manager) unless they pick everyone's
+  if (isManagementUser(currentUser)) sitesToDisplay = sitesToDisplay.filter(siteInScope);
   // Management roles see all filtered sites; operatives see assigned sites
   if (!isManagementUser(currentUser)) {
     const assignedSiteIds = allShifts.filter(s => String(s.operative_id) === String(currentUser.id)).map(s => parseInt(s.site_id));
@@ -1996,6 +2063,8 @@ function renderSitesList() {
             ${siteTypeBadgeHtml(site)}
           </div>
           <h3 class="site-card-address">${site.address}</h3>
+          ${isMgmt ? `<select class="form-control site-manager-select" data-site-id="${site.id}" title="Manager responsible for this job" style="margin-top: 8px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Manager: not assigned</option>${managerUsers().map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(site.manager_id) ? ' selected' : ''}>Manager: ${diaryEsc(u.full_name)}</option>`).join('')}</select>
+          <select class="form-control site-branch-select" data-site-id="${site.id}" title="Branch / department" style="margin-top: 6px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Branch: none</option>${repBranches().map(b => `<option value="${diaryEsc(b)}"${(site.branch || '').trim() === b ? ' selected' : ''}>Branch: ${diaryEsc(b)}</option>`).join('')}<option value="__new__">+ New branch...</option></select>` : ''}
         </div>
         ${isMgmt ? `
           <div style="margin-top: 18px; display: flex; gap: 10px; width: 100%;" class="no-print">
@@ -2009,11 +2078,38 @@ function renderSitesList() {
 
   container.querySelectorAll('.site-card').forEach(card => {
     card.addEventListener('click', (e) => {
+      if (e.target.closest('.site-manager-select') || e.target.closest('.site-branch-select')) return;
       if (e.target.closest('.archive-site-card-btn') || e.target.closest('.restore-site-card-btn') || e.target.closest('.delete-site-card-btn')) {
         return;
       }
       activeSiteId = parseInt(card.dataset.siteId);
       loadProjectPage(activeSiteId);
+    });
+  });
+
+  container.querySelectorAll('.site-manager-select').forEach(sel => {
+    sel.addEventListener('click', e => e.stopPropagation());
+    sel.addEventListener('change', async () => {
+      const site = allSites.find(x => String(x.id) === String(sel.dataset.siteId));
+      if (!site) return;
+      site.manager_id = sel.value || null;
+      try { await db.collection('sites').doc(String(site.id)).update({ manager_id: site.manager_id }); showGreenToast(site.manager_id ? `Job assigned to ${siteManagerName(site)}` : 'Manager cleared'); }
+      catch (err) { alert('Could not save: ' + err.message); }
+      renderSitesList();
+    });
+  });
+
+  container.querySelectorAll('.site-branch-select').forEach(sel => {
+    sel.addEventListener('click', e => e.stopPropagation());
+    sel.addEventListener('change', async () => {
+      const site = allSites.find(x => String(x.id) === String(sel.dataset.siteId));
+      if (!site) return;
+      let v = sel.value;
+      if (v === '__new__') { v = (prompt('Name of the new branch / department (e.g. Stoke):') || '').trim(); if (!v) { renderSitesList(); return; } }
+      site.branch = v || null;
+      try { await db.collection('sites').doc(String(site.id)).update({ branch: site.branch }); showGreenToast(v ? `Branch set to ${v}` : 'Branch cleared'); }
+      catch (err) { alert('Could not save: ' + err.message); }
+      renderSitesList();
     });
   });
 
@@ -2071,8 +2167,12 @@ function loadProjectPage(siteId) {
         ? `<button class="btn btn-secondary btn-sm" id="btnRestoreProject">↩️ Restore Project</button>`
         : `<button class="btn btn-warning btn-sm" id="btnArchiveProject" style="background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24;">📦 Archive Project</button>`;
 
-      actionsContainer.innerHTML = `${archiveRestoreHtml} <button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>`;
+      const reportBtnHtml = isOwnerOrAdminUser(currentUser) ? `<button class="btn btn-primary btn-sm" id="btnJobReport">📄 Completed Job Report</button> ` : '';
+      actionsContainer.innerHTML = `${reportBtnHtml}${archiveRestoreHtml} <button class="btn btn-danger btn-sm" id="btnDeleteProject">🗑️ Delete Project</button>`;
       actionsContainer.style.display = 'flex';
+
+      const repBtn = document.getElementById('btnJobReport');
+      if (repBtn) repBtn.onclick = () => downloadJobReport(site, repBtn);
 
       const arcBtn = document.getElementById('btnArchiveProject');
       if (arcBtn) arcBtn.onclick = () => handleArchiveSite(site.id);
@@ -2101,6 +2201,201 @@ function loadProjectPage(siteId) {
   renderPlasterCalc(site);
   renderPOTab(site);
   renderSiteFinance(site);
+}
+
+
+// -------------------------------------------------------------------
+// COMPLETED JOB REPORT (Owner / Admin): full PDF of a job incl. photos, for the completion folder
+// -------------------------------------------------------------------
+// Loads a photo (URL or data URL) and returns a downscaled JPEG data URL, or null if it can't be read
+async function jobReportPhoto(photo) {
+  // Same-origin /files/<id> first (the browser blocks cross-origin reads of the Storage URL), then fall back
+  const sources = [];
+  if (photo.id && String(photo.id).startsWith('photo_') && photo.storage_path) sources.push(`/files/${encodeURIComponent(photo.id)}`);
+  if (photo.data_url) sources.push(photo.data_url);
+  if (photo.file_url) sources.push(photo.file_url);
+  for (const src of sources) {
+    const r = await jobReportPhotoFrom(src);
+    if (r) return r;
+  }
+  return null;
+}
+
+async function jobReportPhotoFrom(src) {
+  if (!src) return null;
+  try {
+    let blobUrl = src, made = false;
+    if (!src.startsWith('data:')) {
+      const res = await fetch(src);
+      if (!res.ok) return null;
+      blobUrl = URL.createObjectURL(await res.blob()); made = true;
+    }
+    const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = blobUrl; });
+    const max = 1000, sc = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * sc); c.height = Math.round(img.naturalHeight * sc);
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    if (made) URL.revokeObjectURL(blobUrl);
+    return { data: c.toDataURL('image/jpeg', 0.78), w: c.width, h: c.height };
+  } catch (e) { console.warn('Report photo skipped', e); return null; }
+}
+
+async function downloadJobReport(site, btn) {
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') { alert('The PDF library is still loading, please try again.'); return; }
+  const original = btn ? btn.textContent : '';
+  const setBtn = t => { if (btn) { btn.textContent = t; btn.disabled = t !== original; } };
+  try {
+    setBtn('⏳ Building report...');
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const navy = [15, 23, 42], grey = [100, 116, 139], line = [203, 213, 225];
+    const W = 210, M = 15, R = W - M;
+    const nowStr = new Date().toLocaleString('en-GB');
+    let y = 0;
+
+    const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id))
+      .sort((a, b) => (a.shift_date || '').localeCompare(b.shift_date || ''));
+    const workShifts = siteShifts.filter(s => !s.is_drying_day);
+    const finishShift = siteShifts.filter(s => s.is_finish).pop();
+    const dates = siteShifts.map(s => s.shift_date).filter(Boolean);
+    const sitePhotos = allPhotos.filter(p => String(p.site_id) === String(site.id))
+      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+    const sitePdfs = allPdfs.filter(p => String(p.site_id) === String(site.id));
+    const sitePOs = allPOs.filter(p => String(p.site_id) === String(site.id));
+    const operatives = [...new Set(workShifts.map(s => (allUsers.find(u => String(u.id) === String(s.operative_id)) || {}).full_name).filter(Boolean))];
+    const contactIds = Array.isArray(site.customer_contacts) ? site.customer_contacts.map(String) : [];
+    const contacts = allUsers.filter(u => contactIds.includes(String(u.id)));
+
+    // ---- header ----
+    doc.setFillColor(...navy); doc.rect(0, 0, W, 5, 'F');
+    const logo = await getLogoBase64();
+    if (logo) {
+      const sz = await ciImageSize(logo);
+      let w = 50, h = 22;
+      if (sz && sz.w && sz.h) { const ar = sz.w / sz.h; if (ar > 50 / 22) { w = 50; h = 50 / ar; } else { h = 22; w = 22 * ar; } }
+      try { doc.addImage(logo, 'PNG', M, 12, w, h, undefined, 'FAST'); } catch (e) { /* logo optional */ }
+    }
+    doc.setTextColor(...navy); doc.setFont('helvetica', 'bold'); doc.setFontSize(20);
+    doc.text('JOB COMPLETION REPORT', R, 22, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+    doc.text(`Generated ${nowStr} by ${currentUser.full_name || 'Admin'}`, R, 28, { align: 'right' });
+    doc.setDrawColor(...line); doc.setLineWidth(0.4); doc.line(M, 37, R, 37);
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(...navy);
+    const addrLines = doc.splitTextToSize(site.address || '', R - M);
+    doc.text(addrLines, M, 46);
+    y = 46 + addrLines.length * 6;
+
+    const first = dates[0], last = dates[dates.length - 1];
+    const summary = [
+      ['Site reference', formatSiteId(site.id)],
+      ['Construction type', site.construction_type || '-'],
+      ['Status', site.is_archived ? 'Archived' : (finishShift ? 'Completed' : 'Active')],
+      ['First shift', first ? formatUKDate(first) : '-'],
+      ['Completed / last shift', finishShift ? formatUKDate(finishShift.shift_date) : (last ? formatUKDate(last) : '-')],
+      ['Shifts worked', String(workShifts.length)],
+      ['Operatives', operatives.join(', ') || '-'],
+      ['Photos on file', String(sitePhotos.length)]
+    ];
+    if (contacts.length) summary.push(['Customer contact', contacts.map(c => c.full_name + (c.phone ? ' (' + c.phone + ')' : '')).join(', ')]);
+    SITE_INFO_FIELDS.forEach(([key, label]) => { if ((site[key] || '').trim()) summary.push([label, site[key].trim()]); });
+    doc.autoTable({
+      startY: y + 2, body: summary, theme: 'plain', margin: { left: M, right: M },
+      styles: { fontSize: 10, cellPadding: 1.8, textColor: [30, 41, 59], overflow: 'linebreak' },
+      columnStyles: { 0: { cellWidth: 48, textColor: grey, fontStyle: 'bold' } }
+    });
+    y = doc.lastAutoTable.finalY + 8;
+
+    // ---- shift history ----
+    const section = (title) => {
+      if (y > 250) { doc.addPage(); y = 20; }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+      doc.text(title, M, y);
+      y += 3;
+    };
+    const tableStyle = {
+      theme: 'grid', margin: { left: M, right: M },
+      headStyles: { fillColor: navy, textColor: [255, 255, 255], fontSize: 9 },
+      styles: { fontSize: 9, cellPadding: 2.5, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2, overflow: 'linebreak' }
+    };
+    section('Shift history');
+    if (siteShifts.length) {
+      doc.autoTable({
+        ...tableStyle, startY: y,
+        head: [['Date', 'Period', 'Operative', 'Task']],
+        body: siteShifts.map(s => {
+          const op = allUsers.find(u => String(u.id) === String(s.operative_id));
+          const per = s.is_drying_day ? '-' : (s.shift_period === 'am' ? 'AM' : s.shift_period === 'pm' ? 'PM' : 'All day');
+          return [formatUKDate(s.shift_date), per, s.is_drying_day ? '-' : (op ? op.full_name : 'Unassigned'), (s.is_drying_day ? 'Drying day' : (s.task || '')) + (s.is_finish ? '  [FINISH]' : '')];
+        })
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    } else { doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...grey); doc.text('No shifts recorded.', M, y + 5); y += 12; }
+
+    // ---- documents & POs ----
+    if (sitePdfs.length || sitePOs.length) {
+      section('Documents & purchase orders');
+      const rows = [
+        ...sitePdfs.map(p => ['Document', p.filename || p.name || 'PDF', p.uploader_name || '', formatUKDate(p.created_at)]),
+        ...sitePOs.map(p => ['Purchase order', p.po_number || '', p.requested_by_name || p.requested_by || '', formatUKDate(p.created_at || p.requested_at)])
+      ];
+      doc.autoTable({ ...tableStyle, startY: y, head: [['Type', 'Reference / file', 'By', 'Date']], body: rows });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+
+    // ---- photos ----
+    doc.addPage(); y = 20;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+    doc.text(`Photos (${sitePhotos.length})`, M, y); y += 6;
+    if (!sitePhotos.length) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...grey);
+      doc.text('No photos were uploaded for this job.', M, y + 4);
+    }
+    const colW = (R - M - 6) / 2, cellH = 78;
+    let col = 0, skipped = 0;
+    for (let i = 0; i < sitePhotos.length; i++) {
+      setBtn(`⏳ Photos ${i + 1}/${sitePhotos.length}...`);
+      const p = sitePhotos[i];
+      const img = await jobReportPhoto(p);
+      if (col === 0 && y + cellH > 280) { doc.addPage(); y = 20; }
+      const x = M + col * (colW + 6);
+      if (img) {
+        const ar = img.w / img.h;
+        let w = colW, h = colW / ar;
+        if (h > cellH - 10) { h = cellH - 10; w = h * ar; }
+        try { doc.addImage(img.data, 'JPEG', x + (colW - w) / 2, y, w, h, undefined, 'FAST'); } catch (e) { skipped++; }
+      } else {
+        skipped++;
+        doc.setDrawColor(...line); doc.rect(x, y, colW, cellH - 10);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+        doc.text('Photo could not be loaded', x + colW / 2, y + (cellH - 10) / 2, { align: 'center' });
+      }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...grey);
+      doc.text(`${i + 1}. ${p.uploader_name || 'Operative'} - ${formatUKDate(p.created_at)}`, x, y + cellH - 4);
+      if (col === 1) { col = 0; y += cellH; } else col = 1;
+    }
+    if (skipped) console.warn(`${skipped} photo(s) could not be added to the report`);
+
+    // ---- footer page numbers ----
+    const pages = doc.getNumberOfPages();
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...grey);
+      doc.text(`${formatSiteId(site.id)} - ${site.address || ''}`.slice(0, 90), M, 289);
+      doc.text(`Page ${i} of ${pages}`, R, 289, { align: 'right' });
+    }
+
+    const safe = (site.address || 'job').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 50);
+    doc.save(`Completion-Report-${formatSiteId(site.id)}-${safe}.pdf`);
+    showGreenToast(skipped ? `📄 Report saved (${skipped} photo${skipped > 1 ? 's' : ''} could not be loaded)` : '📄 Completion report saved');
+  } catch (err) {
+    console.error('Job report error:', err);
+    alert('Could not build the report: ' + err.message);
+  } finally {
+    setBtn(original);
+  }
 }
 
 async function handleArchiveSite(siteId) {
@@ -2527,6 +2822,7 @@ function renderAdminSettingsView() {
   loadPushUserIds();
   updatePendingUsersBadge();
   document.getElementById('settingsAppNameInput').value = appSettings.app_name || 'GVD LIVE';
+  fillCompanyForm();
   const includeInput = document.getElementById('settingsIncludeManagementInput');
   if (includeInput) {
     includeInput.checked = appSettings.include_management_in_planning === true;
@@ -2729,27 +3025,969 @@ function loadCustomerPublicView(token) {
   document.getElementById('custPubTypeBadge').className = `site-type-badge ${(site.construction_type || '').toLowerCase()}`;
   document.getElementById('custPubTypeBadge').style.display = site.construction_type ? '' : 'none';
 
-  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
-  const container = document.getElementById('custPubShiftsContainer');
+  renderCustomerSchedule(site);
 
-  if (siteShifts.length === 0) {
-    container.innerHTML = `<p style="color: #64748b; padding: 20px;">No current works scheduled for this property.</p>`;
+  renderCustomerFeedbackForm(site);
+}
+
+
+let custScheduleTab = 'current';
+
+/** The customer's schedule: today and future days on the main tab; days that have passed move to "Completed" */
+function renderCustomerSchedule(site) {
+  const container = document.getElementById('custPubShiftsContainer');
+  if (!container) return;
+  const todayKey = diaryDateKey(new Date());
+  const rank = { am: 0, all_day: 1, pm: 2 };
+  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
+  const byDate = (a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (rank[a.shift_period] ?? 1) - (rank[b.shift_period] ?? 1);
+  const current = siteShifts.filter(s => (s.shift_date || '') >= todayKey).sort(byDate);
+  const completed = siteShifts.filter(s => (s.shift_date || '') < todayKey).sort((a, b) => byDate(b, a));
+
+  let tabs = document.getElementById('custPubTabs');
+  if (!tabs) {
+    tabs = document.createElement('div');
+    tabs.id = 'custPubTabs';
+    tabs.className = 'cust-tabs';
+    container.parentNode.insertBefore(tabs, container);
+    tabs.addEventListener('click', e => {
+      const b = e.target.closest('[data-cust-tab]');
+      if (!b) return;
+      custScheduleTab = b.dataset.custTab;
+      const st = allSites.find(x => x.customer_token === currentCustomerToken);
+      if (st) renderCustomerSchedule(st);
+    });
+  }
+  tabs.innerHTML = `
+    <button type="button" class="cust-tab ${custScheduleTab === 'current' ? 'active' : ''}" data-cust-tab="current">Current &amp; upcoming (${current.length})</button>
+    <button type="button" class="cust-tab ${custScheduleTab === 'completed' ? 'active' : ''}" data-cust-tab="completed">Completed (${completed.length})</button>`;
+
+  const list = custScheduleTab === 'completed' ? completed : current;
+  if (list.length === 0) {
+    container.innerHTML = `<p style="color: #64748b; padding: 20px;">${custScheduleTab === 'completed' ? 'No completed works yet.' : (siteShifts.length === 0 ? 'No current works scheduled for this property.' : 'No more works are currently scheduled.')}</p>`;
+    return;
+  }
+  const done = custScheduleTab === 'completed';
+  container.innerHTML = list.map(s => {
+    const op = allUsers.find(u => String(u.id) === String(s.operative_id));
+    const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
+    const dim = done ? 'opacity: 0.8;' : '';
+    if (s.is_drying_day) {
+      return `<div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}"><strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)}</strong><div style="margin-top: 6px; font-weight: 600;">⏳ Drying Day</div></div>`;
+    }
+    return `
+      <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}">
+        <strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
+        <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? diaryEsc(op.full_name) : 'Operative'}</div>
+        <div style="margin-top: 4px; color: #475569;">Task: ${diaryEsc(s.task)}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// -------------------------------------------------------------------
+// CUSTOMER INVOICES (Admin or higher). A letterheaded PDF invoice for the project total (the job value on the Finance tab).
+// Every invoice is saved in `customer_invoices` so it can be downloaded again and numbers never repeat.
+// -------------------------------------------------------------------
+let customerInvoices = [];
+
+const ciPence = v => Math.round((parseFloat(v) || 0) * 100);
+const ciMoney = pence => money((pence || 0) / 100);
+
+function ciCompany() {
+  const c = (appSettings && appSettings.company) || {};
+  const terms = parseInt(c.terms_days);
+  return {
+    name: c.name || 'GVD Contracts Ltd', address: c.address || '', phone: c.phone || '', email: c.email || '', web: c.web || '',
+    reg_no: c.reg_no || '', vat_no: c.vat_no || '', bank_name: c.bank_name || '', account_name: c.account_name || '',
+    sort_code: c.sort_code || '', account_no: c.account_no || '', terms_days: isNaN(terms) ? 30 : terms,
+    next_invoice_no: c.next_invoice_no || '', note: c.note || ''
+  };
+}
+
+function fillCompanyForm() {
+  const c = ciCompany();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
+  set('coName', (appSettings.company || {}).name || ''); set('coAddress', c.address); set('coPhone', c.phone); set('coEmail', c.email);
+  set('coWeb', c.web); set('coRegNo', c.reg_no); set('coVatNo', c.vat_no); set('coBankName', c.bank_name); set('coAccName', c.account_name);
+  set('coSortCode', c.sort_code); set('coAccNo', c.account_no); set('coTermsDays', (appSettings.company || {}).terms_days ?? ''); set('coNextNo', c.next_invoice_no); set('coNote', c.note);
+}
+
+async function handleSaveCompany(e) {
+  e.preventDefault();
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  const v = id => (document.getElementById(id).value || '').trim();
+  appSettings.company = {
+    name: v('coName'), address: v('coAddress'), phone: v('coPhone'), email: v('coEmail'), web: v('coWeb'), reg_no: v('coRegNo'), vat_no: v('coVatNo'),
+    bank_name: v('coBankName'), account_name: v('coAccName'), sort_code: v('coSortCode'), account_no: v('coAccNo'),
+    terms_days: v('coTermsDays'), next_invoice_no: v('coNextNo'), note: v('coNote')
+  };
+  if (db) await db.collection('settings').doc('app').set(appSettings);
+  saveLocalStorageData();
+  showGreenToast('Company details saved');
+}
+
+/** Working in whole pence so the figures always add up exactly */
+function ciCalc(netPence, mode, rate, cis) {
+  const vat = mode === 'standard' ? Math.round(netPence * (parseFloat(rate) || 0) / 100) : 0;
+  const total = netPence + vat;
+  // CIS is deducted from the labour part of the net only (never materials, never VAT)
+  const materials = cis && cis.on ? Math.min(Math.max(cis.materialsPence || 0, 0), netPence) : 0;
+  const cisPence = cis && cis.on ? Math.round((netPence - materials) * (parseFloat(cis.rate) || 0) / 100) : 0;
+  return { net: netPence, vat, total, materials, cisPence, payable: total - cisPence };
+}
+
+function ciCisInput() {
+  const on = document.getElementById('ciCis').checked;
+  return { on, rate: parseFloat(document.getElementById('ciCisRate').value) || 0, materialsPence: ciPence(document.getElementById('ciMaterials').value) };
+}
+
+function ciNextNumber() {
+  const nums = customerInvoices.map(i => parseInt(String(i.number).replace(/\D/g, '')) || 0);
+  const maxN = nums.length ? Math.max(...nums) : 0;
+  const start = parseInt(ciCompany().next_invoice_no) || 1;
+  return 'INV-' + String(Math.max(maxN + 1, start)).padStart(4, '0');
+}
+
+function ciAddDays(dateStr, days) {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return diaryDateKey(d);
+}
+
+function ciUpdateTotals() {
+  const net = parseInt(document.getElementById('ciNet').dataset.pence || '0');
+  const mode = document.getElementById('ciVatMode').value;
+  const rate = document.getElementById('ciVatRate').value;
+  document.getElementById('ciVatRateGroup').style.display = mode === 'standard' ? '' : 'none';
+  const cis = ciCisInput();
+  document.getElementById('ciCisGroup').style.display = cis.on ? 'grid' : 'none';
+  const c = ciCalc(net, mode, rate, cis);
+  const row = (l, v, strong) => `<div style="display: flex; justify-content: space-between; ${strong ? 'font-weight: 800; font-size: 1.1rem; border-top: 1px solid var(--border-color); margin-top: 6px; padding-top: 6px;' : ''}"><span>${l}</span><span>${v}</span></div>`;
+  document.getElementById('ciTotals').innerHTML =
+    row('Subtotal', ciMoney(c.net)) +
+    row(mode === 'standard' ? `VAT (${parseFloat(rate) || 0}%)` : mode === 'reverse' ? 'VAT (domestic reverse charge)' : 'VAT', ciMoney(c.vat)) +
+    (cis.on ? row('Total', ciMoney(c.total)) + row(`Less CIS deduction (${cis.rate}% of ${ciMoney(c.net - c.materials)} labour)`, '-' + ciMoney(c.cisPence)) + row('Amount payable', ciMoney(c.payable), true)
+            : row('Total due', ciMoney(c.total), true));
+}
+
+function openCustomerInvoiceModal(siteId) {
+  if (!isOwnerOrAdminUser(currentUser)) return;
+  const site = allSites.find(x => parseInt(x.id) === parseInt(siteId));
+  if (!site) return;
+  const f = computeSiteFinance(site);
+  if (f.value == null || !(f.value > 0)) { alert('Enter the Job value first. The invoice is for the project total.'); return; }
+  const co = ciCompany();
+  const today = diaryDateKey(new Date());
+  const net = document.getElementById('ciNet');
+  // the project total, or what is still to invoice if an invoice has already gone out (e.g. for a later variation)
+  const alreadyInvoiced = customerInvoices.filter(i => String(i.site_id) === String(site.id)).reduce((t, i) => t + (i.net_pence || 0) / 100, 0);
+  const toInvoice = alreadyInvoiced > 0 && f.value - alreadyInvoiced > 0.004 ? Math.round((f.value - alreadyInvoiced) * 100) / 100 : f.value;
+  net.value = money(toInvoice);
+  net.dataset.pence = String(ciPence(toInvoice));
+  document.getElementById('ciSiteId').value = String(site.id);
+  document.getElementById('ciNumber').value = ciNextNumber();
+  document.getElementById('ciDate').value = today;
+  document.getElementById('ciDue').value = ciAddDays(today, co.terms_days);
+  document.getElementById('ciCustomerName').value = '';
+  document.getElementById('ciCustomerAddress').value = '';
+  document.getElementById('ciCustomerRef').value = '';
+  document.getElementById('ciSiteAddress').value = site.address || '';
+  const varText = f.variations.filter(v => v.status === 'approved').map(v => `${v.ref || 'Variation'}: ${v.description} (${money(v.amount)})`).join('\n');
+  document.getElementById('ciDescription').value = alreadyInvoiced > 0 && toInvoice !== f.value
+    ? `Balance of works at ${site.address || 'site'}${varText ? '\nIncluding variations:\n' + varText : ''}`
+    : `Works at ${site.address || 'site'}${varText ? '\nIncluding variations:\n' + varText : ''}`;
+  document.getElementById('ciVatMode').value = 'standard';
+  document.getElementById('ciVatRate').value = '20';
+  document.getElementById('ciCis').checked = false;
+  document.getElementById('ciCisRate').value = '20';
+  document.getElementById('ciMaterials').value = '0';
+  document.getElementById('ciNotes').value = co.note || '';
+  const warn = [];
+  if (!co.address || !co.account_no) warn.push('Add your company address and bank details in Admin Settings (Company & Invoice Details) so they print on the invoice.');
+  const already = customerInvoices.filter(i => String(i.site_id) === String(site.id));
+  if (already.length) warn.push(`Already invoiced for this job: ${already.map(i => `${i.number} (${ciMoney(i.total_pence)})`).join(', ')}.`);
+  const w = document.getElementById('ciCompanyWarn');
+  w.innerHTML = warn.map(t => `⚠️ ${diaryEsc(t)}`).join('<br>');
+  w.style.display = warn.length ? '' : 'none';
+  ciUpdateTotals();
+  openModal('modalCustInvoice');
+}
+
+async function handleCreateCustomerInvoice(e) {
+  e.preventDefault();
+  if (!isOwnerOrAdminUser(currentUser) || !db) return;
+  const val = id => (document.getElementById(id).value || '').trim();
+  const site = allSites.find(x => String(x.id) === val('ciSiteId'));
+  if (!site) return;
+  const number = val('ciNumber');
+  if (customerInvoices.some(i => String(i.number).toLowerCase() === number.toLowerCase())) { alert(`Invoice number ${number} has already been used. Please choose another.`); return; }
+  const mode = val('ciVatMode');
+  const rate = mode === 'standard' ? (parseFloat(val('ciVatRate')) || 0) : 0;
+  const cisIn = ciCisInput();
+  const calc = ciCalc(parseInt(document.getElementById('ciNet').dataset.pence || '0'), mode, rate, cisIn);
+  const rec = {
+    id: 'ci_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+    number, site_id: String(site.id), site_ref: formatSiteId(site.id), site_address: site.address || '',
+    customer_name: val('ciCustomerName'), customer_address: val('ciCustomerAddress'), customer_ref: val('ciCustomerRef'),
+    description: val('ciDescription'), net_pence: calc.net, vat_mode: mode, vat_rate: rate, vat_pence: calc.vat, total_pence: calc.total,
+    cis_applied: cisIn.on, cis_rate: cisIn.on ? cisIn.rate : 0, cis_materials_pence: calc.materials, cis_pence: calc.cisPence, payable_pence: calc.payable,
+    invoice_date: val('ciDate'), due_date: val('ciDue'), notes: val('ciNotes'),
+    company: ciCompany(),
+    created_by: currentUser.full_name, created_by_id: String(currentUser.id), created_at: new Date().toISOString()
+  };
+  const btn = document.getElementById('ciSubmit');
+  btn.disabled = true;
+  try {
+    await db.collection('customer_invoices').doc(rec.id).set(rec);
+    closeModal('modalCustInvoice');
+    try {
+      await ciDownloadPdf(rec);
+      showGreenToast(`🧾 Invoice ${rec.number} created`);
+    } catch (pdfErr) {
+      console.warn('Invoice PDF failed', pdfErr);
+      alert(`Invoice ${rec.number} was saved, but the PDF could not be made (${pdfErr.message}). You can download it again from "Invoices raised".`);
+    }
+  } catch (err) {
+    console.warn('Invoice save failed', err);
+    alert('Sorry, the invoice could not be saved. Please check your connection and try again.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function ciImageSize(dataUrl) {
+  return new Promise(resolve => {
+    const i = new Image();
+    i.onload = () => resolve({ w: i.naturalWidth, h: i.naturalHeight });
+    i.onerror = () => resolve(null);
+    i.src = dataUrl;
+  });
+}
+
+async function ciBuildPdf(inv) {
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') throw new Error('the PDF library is still loading, please try again');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const navy = [15, 23, 42], grey = [100, 116, 139], line = [203, 213, 225];
+  const W = 210, M = 15, R = W - M;
+  const co = inv.company || ciCompany();
+  const lines = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
+
+  // ---- letterhead ----
+  doc.setFillColor(...navy);
+  doc.rect(0, 0, W, 5, 'F');
+  const logo = await getLogoBase64();
+  if (logo) {
+    const sz = await ciImageSize(logo);
+    const maxW = 62, maxH = 28;
+    let w = maxW, h = maxH;
+    if (sz && sz.w && sz.h) { const ar = sz.w / sz.h; if (ar > maxW / maxH) { w = maxW; h = maxW / ar; } else { h = maxH; w = maxH * ar; } }
+    try { doc.addImage(logo, 'PNG', M, 13, w, h, undefined, 'FAST'); } catch (e) { console.warn('Logo not added to invoice', e); }
+  }
+  let y = 16;
+  doc.setTextColor(...navy);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  doc.text(co.name || 'GVD Contracts Ltd', R, y, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+  const head = [...lines(co.address)];
+  if (co.phone) head.push('Tel: ' + co.phone);
+  if (co.email) head.push(co.email);
+  if (co.web) head.push(co.web);
+  head.forEach(t => { y += 4.6; doc.text(t, R, y, { align: 'right' }); });
+  const reg = [];
+  if (co.reg_no) reg.push('Company No. ' + co.reg_no);
+  if (co.vat_no) reg.push('VAT No. ' + co.vat_no);
+  if (reg.length) { y += 5.2; doc.setFontSize(8); doc.text(reg.join('   |   '), R, y, { align: 'right' }); }
+  const headEnd = Math.max(y, 13 + 28) + 6;
+  doc.setDrawColor(...line); doc.setLineWidth(0.4); doc.line(M, headEnd, R, headEnd);
+
+  // ---- title + invoice details ----
+  doc.setTextColor(...navy); doc.setFont('helvetica', 'bold'); doc.setFontSize(26);
+  doc.text('INVOICE', M, headEnd + 15);
+  const meta = [['Invoice no.', inv.number], ['Invoice date', formatUKDate(inv.invoice_date)], ['Due date', formatUKDate(inv.due_date)]];
+  if (inv.customer_ref) meta.push(['Your ref', inv.customer_ref]);
+  let my = headEnd + 9;
+  meta.forEach(([l, v]) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey);
+    doc.text(l, 135, my);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...navy);
+    doc.text(String(v), R, my, { align: 'right' });
+    my += 6;
+  });
+
+  // ---- bill to / project ----
+  let by = Math.max(headEnd + 28, my + 4);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...grey);
+  doc.text('BILL TO', M, by);
+  doc.text('PROJECT / SITE', 112, by);
+  doc.setFontSize(11); doc.setTextColor(...navy);
+  let ly = by + 6;
+  doc.text(inv.customer_name || '', M, ly);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60, 72, 90);
+  lines(inv.customer_address).forEach(t => { ly += 5; doc.splitTextToSize(t, 90).forEach((p, i) => { if (i) ly += 5; doc.text(p, M, ly); }); });
+  let ry = by + 6;
+  doc.splitTextToSize(inv.site_address || '', 83).forEach((p, i) => { if (i) ry += 5; doc.text(p, 112, ry); });
+  const blockEnd = Math.max(ly, ry) + 10;
+
+  // ---- line item ----
+  doc.autoTable({
+    startY: blockEnd,
+    head: [['Description', 'Amount']],
+    body: [[inv.description || '', ciMoney(inv.net_pence)]],
+    theme: 'grid',
+    margin: { left: M, right: M },
+    headStyles: { fillColor: navy, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 10, cellPadding: 4 },
+    styles: { fontSize: 10, cellPadding: 5, textColor: [30, 41, 59], lineColor: [226, 232, 240], lineWidth: 0.2, overflow: 'linebreak' },
+    columnStyles: { 1: { cellWidth: 38, halign: 'right', fontStyle: 'bold' } },
+    didParseCell: d => { if (d.section === 'head' && d.column.index === 1) d.cell.styles.halign = 'right'; }
+  });
+
+  let ty = doc.lastAutoTable.finalY + 8;
+  const ensure = h => { if (ty + h > 272) { doc.addPage(); ty = 20; } };
+  ensure(40);
+  const vatLabel = inv.vat_mode === 'standard' ? `VAT (${inv.vat_rate}%)` : inv.vat_mode === 'reverse' ? 'VAT (domestic reverse charge)' : 'VAT';
+  const trow = (l, v) => { doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(60, 72, 90); doc.text(l, 120, ty); doc.text(v, R, ty, { align: 'right' }); ty += 7; };
+  trow('Subtotal', ciMoney(inv.net_pence));
+  trow(vatLabel, ciMoney(inv.vat_pence));
+  const totalBox = (label, amount) => {
+    doc.setFillColor(241, 245, 249);
+    doc.roundedRect(116, ty - 5, R - 116, 11, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...navy);
+    doc.text(label, 120, ty + 2);
+    doc.text(amount, R - 3, ty + 2, { align: 'right' });
+    ty += 16;
+  };
+  if (inv.cis_applied) {
+    trow('Total', ciMoney(inv.total_pence));
+    const labour = (inv.net_pence || 0) - (inv.cis_materials_pence || 0);
+    trow(`Less CIS @ ${inv.cis_rate}% of labour`, '-' + ciMoney(inv.cis_pence));
+    ty += 1;
+    totalBox('Amount payable', ciMoney(inv.payable_pence != null ? inv.payable_pence : inv.total_pence - (inv.cis_pence || 0)));
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...grey);
+    const cn = doc.splitTextToSize(`CIS: this invoice is subject to the Construction Industry Scheme. Tax of ${inv.cis_rate}% is deducted from the labour element (${ciMoney(labour)}); materials${inv.cis_materials_pence ? ' (' + ciMoney(inv.cis_materials_pence) + ')' : ''} and VAT are not subject to the deduction. The deduction is paid to HMRC on our behalf and a CIS payment and deduction statement should be provided.`, R - M);
+    doc.text(cn, M, ty); ty += cn.length * 4.5 + 4;
   } else {
-    container.innerHTML = siteShifts.map(s => {
-      const op = allUsers.find(u => String(u.id) === String(s.operative_id));
-      const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
-      if (s.is_drying_day) {
-        return `<div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;"><strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)}</strong><div style="margin-top: 6px; font-weight: 600;">⏳ Drying Day</div></div>`;
-      }
-      return `
-        <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a;">
-          <strong style="color: #2563eb; font-size: 1rem;">📅 ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
-          <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? op.full_name : 'Operative'}</div>
-          <div style="margin-top: 4px; color: #475569;">Task: ${s.task}</div>
+    totalBox('Total due', ciMoney(inv.total_pence));
+  }
+  if (inv.vat_mode === 'reverse') {
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(...grey);
+    const t = doc.splitTextToSize('Domestic reverse charge: the customer is required to account to HMRC for the VAT due on this supply.', R - M);
+    doc.text(t, M, ty); ty += t.length * 4.5 + 4;
+  }
+
+  // ---- payment details ----
+  const pay = [];
+  if (co.bank_name) pay.push(['Bank', co.bank_name]);
+  if (co.account_name) pay.push(['Account name', co.account_name]);
+  if (co.sort_code) pay.push(['Sort code', co.sort_code]);
+  if (co.account_no) pay.push(['Account number', co.account_no]);
+  pay.push(['Payment reference', inv.number]);
+  ensure(12 + pay.length * 6);
+  doc.setDrawColor(...line); doc.setLineWidth(0.3);
+  const boxH = 12 + pay.length * 6;
+  doc.roundedRect(M, ty, R - M, boxH, 2, 2, 'S');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...grey);
+  doc.text('PAYMENT DETAILS', M + 4, ty + 6);
+  let py = ty + 12;
+  pay.forEach(([l, v]) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...grey); doc.text(l, M + 4, py);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(...navy); doc.text(String(v), M + 46, py);
+    py += 6;
+  });
+  ty += boxH + 8;
+
+  // ---- terms + notes ----
+  const days = Math.max(0, Math.round((new Date(inv.due_date) - new Date(inv.invoice_date)) / 86400000));
+  const terms = [`Payment terms: ${days} day${days === 1 ? '' : 's'} from the date of invoice. Payment due by ${formatUKDate(inv.due_date)}.`];
+  if (inv.notes) terms.push(inv.notes);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(60, 72, 90);
+  terms.forEach(t => {
+    const wrapped = doc.splitTextToSize(t, R - M);
+    ensure(wrapped.length * 4.5 + 3);
+    doc.text(wrapped, M, ty);
+    ty += wrapped.length * 4.5 + 3;
+  });
+
+  // ---- footer on every page ----
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...line); doc.setLineWidth(0.3); doc.line(M, 284, R, 284);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...grey);
+    doc.text([co.name, ...reg].filter(Boolean).join('  |  '), W / 2, 289, { align: 'center' });
+    if (pages > 1) doc.text(`Page ${p} of ${pages}`, R, 289, { align: 'right' });
+  }
+  return doc;
+}
+
+async function ciDownloadPdf(inv) {
+  const doc = await ciBuildPdf(inv);
+  const safe = String(inv.site_address || 'job').replace(/[^A-Za-z0-9 ]+/g, '').trim().slice(0, 40);
+  doc.save(`Invoice ${inv.number} - ${safe}.pdf`);
+}
+
+function setupCustomerInvoiceListeners() {
+  const form = document.getElementById('custInvoiceForm');
+  if (!form) return;
+  form.addEventListener('submit', handleCreateCustomerInvoice);
+  document.getElementById('ciVatMode').addEventListener('change', ciUpdateTotals);
+  document.getElementById('ciVatRate').addEventListener('input', ciUpdateTotals);
+  ['ciCis', 'ciCisRate'].forEach(id => document.getElementById(id).addEventListener('change', ciUpdateTotals));
+  document.getElementById('ciMaterials').addEventListener('input', ciUpdateTotals);
+  document.getElementById('ciDate').addEventListener('change', e => {
+    if (e.target.value) document.getElementById('ciDue').value = ciAddDays(e.target.value, ciCompany().terms_days);
+  });
+  const co = document.getElementById('settingsCompanyForm');
+  if (co) co.addEventListener('submit', handleSaveCompany);
+}
+
+// -------------------------------------------------------------------
+// CUSTOMER FEEDBACK
+// Customers leave feedback from the QR code page (no login). Every registered user can read it in the Feedback page;
+// only Owners / Admins / Managers can remove comments (a copy is kept in feedback_removed).
+// -------------------------------------------------------------------
+let allFeedback = [];
+let feedbackUnsub = null;
+let fbFilter = 'all';
+let fbPageOpenedAt = Date.now();
+
+const FB_LABELS = { 1: 'Poor', 2: 'Not great', 3: 'Okay', 4: 'Good', 5: 'Excellent' };
+const fbSentiment = r => (r >= 4 ? 'pos' : r === 3 ? 'neu' : 'neg');
+const fbStars = r => `<span class="fb-stars" aria-label="${r} out of 5 stars">${'★'.repeat(r)}<span class="off">${'★'.repeat(5 - r)}</span></span>`;
+const fbDate = iso => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+
+function startFeedbackSync() {
+  if (feedbackUnsub || !db || !currentUser) return;
+  feedbackUnsub = db.collection('feedback').onSnapshot(snapshot => {
+    allFeedback = snapshot.docs.map(d => ({ ...d.data(), id: d.id }))
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+    const v = document.getElementById('view-feedback');
+    if (v && v.style.display !== 'none') renderFeedbackView();
+  }, err => console.warn('Firestore feedback error:', err));
+}
+
+function stopFeedbackSync() {
+  if (feedbackUnsub) feedbackUnsub();
+  feedbackUnsub = null;
+  allFeedback = [];
+}
+
+/** The customer's form, shown under the live schedule on the QR code page */
+function renderCustomerFeedbackForm(site) {
+  const host = document.querySelector('#view-customer-public .customer-print-preview');
+  if (!host || document.getElementById('custFeedbackCard')) return; // already there: never redraw while they are typing
+  const card = document.createElement('div');
+  card.id = 'custFeedbackCard';
+  card.className = 'fb-public-card';
+  host.appendChild(card);
+  fbPageOpenedAt = Date.now();
+  drawCustomerFeedbackForm(site, card);
+  if (new URLSearchParams(window.location.search).get('feedback')) card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function drawCustomerFeedbackForm(site, card) {
+  card.innerHTML = `
+    <div class="fb-public-title">How did we do?</div>
+    <p class="fb-public-sub">We would love to hear about your experience with us at <strong>${diaryEsc(site.address)}</strong>. Your feedback helps us recognise great work and keep improving.</p>
+    <div class="fb-stars-input" role="radiogroup" aria-label="Your rating">
+      ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="fb-star-btn" data-star="${n}" role="radio" aria-checked="false" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}
+    </div>
+    <div class="fb-rating-label" id="fbRatingLabel">Tap a star to rate us</div>
+    <div class="fb-grid">
+      <label class="fb-field">Your name *<input type="text" id="fbName" maxlength="80" autocomplete="name"></label>
+      <label class="fb-field">Property address *<input type="text" id="fbAddress" maxlength="200" autocomplete="street-address" value="${diaryEsc(site.address)}"></label>
+      <label class="fb-field">Email (optional)<input type="email" id="fbEmail" maxlength="120" autocomplete="email"></label>
+      <label class="fb-field">Phone (optional)<input type="tel" id="fbPhone" maxlength="30" autocomplete="tel"></label>
+      <label class="fb-field wide">Your feedback *<textarea id="fbComment" rows="5" maxlength="2000" placeholder="Tell us what went well, or what we could do better..."></textarea></label>
+    </div>
+    <label class="fb-consent"><input type="checkbox" id="fbConsent"> <span>I am happy for my name, address and comments to be recorded with this feedback and shared with the GVD team.</span></label>
+    <input type="text" id="fbWebsite" class="fb-hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+    <div class="fb-error" id="fbError" role="alert"></div>
+    <button type="button" class="fb-submit" id="fbSubmit">Send feedback</button>`;
+
+  let rating = 0;
+  const label = card.querySelector('#fbRatingLabel');
+  const paint = n => card.querySelectorAll('.fb-star-btn').forEach(b => {
+    const on = parseInt(b.dataset.star) <= n;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', String(parseInt(b.dataset.star) === rating));
+  });
+  card.querySelectorAll('.fb-star-btn').forEach(b => {
+    b.addEventListener('click', () => { rating = parseInt(b.dataset.star); paint(rating); label.textContent = `${rating} star${rating > 1 ? 's' : ''} - ${FB_LABELS[rating]}`; });
+    b.addEventListener('mouseenter', () => paint(parseInt(b.dataset.star)));
+    b.addEventListener('mouseleave', () => paint(rating));
+  });
+
+  card.querySelector('#fbSubmit').addEventListener('click', async () => {
+    const val = id => (card.querySelector('#' + id).value || '').trim();
+    const err = card.querySelector('#fbError');
+    const fail = m => { err.textContent = m; };
+    fail('');
+    if (card.querySelector('#fbWebsite').value) return; // spam trap: real people never see this box
+    if (!rating) return fail('Please tap a star to rate us.');
+    if (!val('fbName')) return fail('Please enter your name.');
+    if (!val('fbAddress')) return fail('Please enter the property address.');
+    if (val('fbComment').length < 5) return fail('Please tell us a little about your experience.');
+    if (val('fbEmail') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val('fbEmail'))) return fail('That email address does not look right.');
+    if (!card.querySelector('#fbConsent').checked) return fail('Please tick the box to confirm you are happy for us to record your feedback.');
+    if (Date.now() - fbPageOpenedAt < 4000) return fail('Please take a moment to check your answers, then press Send again.');
+    const last = parseInt(localStorage.getItem('gvd_fb_last') || '0');
+    if (Date.now() - last < 30000) return fail('Your feedback has just been sent. Thank you!');
+
+    const btn = card.querySelector('#fbSubmit');
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    try {
+      await db.collection('feedback').add({
+        site_id: String(site.id),
+        site_ref: formatSiteId(site.id),
+        site_address: site.address,
+        rating,
+        sentiment: fbSentiment(rating),
+        comment: val('fbComment').slice(0, 2000),
+        customer_name: val('fbName').slice(0, 80),
+        customer_address: val('fbAddress').slice(0, 200),
+        customer_email: val('fbEmail').slice(0, 120),
+        customer_phone: val('fbPhone').slice(0, 30),
+        consent: true,
+        source: 'customer_qr',
+        created_at: new Date().toISOString()
+      });
+      localStorage.setItem('gvd_fb_last', String(Date.now()));
+      card.innerHTML = `
+        <div class="fb-thanks">
+          <div class="fb-thanks-tick">✓</div>
+          <div class="fb-public-title">Thank you, ${diaryEsc(val('fbName') || 'again')}!</div>
+          <p class="fb-public-sub">Your feedback has been sent to the team. We really appreciate you taking the time.</p>
+        </div>`;
+    } catch (e) {
+      console.warn('Feedback failed', e);
+      btn.disabled = false;
+      btn.textContent = 'Send feedback';
+      fail('Sorry, that did not send. Please check your connection and try again.');
+    }
+  });
+}
+
+/** Everything the in-app Feedback page needs, wired once */
+function setupFeedbackListeners() {
+  const view = document.getElementById('view-feedback');
+  if (!view) return;
+  view.addEventListener('click', e => {
+    const chip = e.target.closest('[data-fb-filter]');
+    if (chip) { fbFilter = chip.dataset.fbFilter; renderFeedbackView(); return; }
+    const del = e.target.closest('[data-fb-delete]');
+    if (del) deleteFeedback(del.dataset.fbDelete);
+  });
+  document.getElementById('fbSearch').addEventListener('input', renderFeedbackList);
+  document.getElementById('fbSite').addEventListener('change', renderFeedbackList);
+}
+
+function fbFiltered() {
+  const site = (document.getElementById('fbSite') || {}).value || '';
+  const q = ((document.getElementById('fbSearch') || {}).value || '').trim().toLowerCase();
+  return allFeedback.filter(f =>
+    (fbFilter === 'all' || fbSentiment(f.rating) === fbFilter) &&
+    (!site || String(f.site_id) === site) &&
+    (!q || [f.customer_name, f.customer_address, f.site_address, f.comment].some(t => String(t || '').toLowerCase().includes(q))));
+}
+
+function renderFeedbackView() {
+  if (!currentUser) return;
+  const total = allFeedback.length;
+  const avg = total ? allFeedback.reduce((t, f) => t + (f.rating || 0), 0) / total : 0;
+  const count = n => allFeedback.filter(f => f.rating === n).length;
+  const pos = allFeedback.filter(f => f.rating >= 4).length;
+
+  document.getElementById('fbSummary').innerHTML = total === 0 ? '' : `
+    <div class="fb-summary-card">
+      <div class="fb-score">
+        <div class="fb-score-num">${avg.toFixed(1)}</div>
+        ${fbStars(Math.round(avg))}
+        <div class="fb-score-sub">${total} review${total === 1 ? '' : 's'} · ${Math.round((pos / total) * 100)}% positive</div>
+      </div>
+      <div class="fb-bars">
+        ${[5, 4, 3, 2, 1].map(n => `<div class="fb-bar-row"><span>${n} ★</span><div class="fb-bar-track"><div class="fb-bar-fill" style="width: ${(count(n) / total) * 100}%;"></div></div><span>${count(n)}</span></div>`).join('')}
+      </div>
+    </div>`;
+
+  const chips = [['all', `All (${total})`], ['pos', `Positive (${pos})`], ['neu', `Okay (${count(3)})`], ['neg', `Negative (${count(1) + count(2)})`]];
+  document.getElementById('fbChips').innerHTML = chips.map(([k, l]) => `<button type="button" class="fb-chip ${fbFilter === k ? 'active' : ''}" data-fb-filter="${k}">${l}</button>`).join('');
+
+  const siteSel = document.getElementById('fbSite');
+  const keep = siteSel.value;
+  const sites = {};
+  allFeedback.forEach(f => { sites[f.site_id] = f.site_address || f.site_ref || f.site_id; });
+  siteSel.innerHTML = `<option value="">All properties</option>` + Object.keys(sites).map(id => `<option value="${diaryEsc(id)}">${diaryEsc(sites[id])}</option>`).join('');
+  siteSel.value = Object.keys(sites).includes(keep) ? keep : '';
+
+  renderFeedbackList();
+}
+
+function renderFeedbackList() {
+  const host = document.getElementById('fbList');
+  if (!host) return;
+  const mgmt = isManagementUser(currentUser);
+  const list = fbFiltered();
+  if (list.length === 0) {
+    host.innerHTML = `<div class="fb-empty">${allFeedback.length === 0 ? 'No feedback yet. When a customer scans the QR code and leaves a review it will appear here.' : 'No feedback matches those filters.'}</div>`;
+    return;
+  }
+  host.innerHTML = list.map(f => {
+    const kind = fbSentiment(f.rating);
+    const tag = { pos: 'Positive', neu: 'Okay', neg: 'Negative' }[kind];
+    const contact = mgmt ? [
+      f.customer_email ? `<a href="mailto:${diaryEsc(f.customer_email)}">${diaryEsc(f.customer_email)}</a>` : '',
+      f.customer_phone ? `<a href="tel:${diaryEsc(f.customer_phone)}">${diaryEsc(f.customer_phone)}</a>` : ''
+    ].filter(Boolean).join(' · ') : '';
+    return `
+      <div class="fb-card ${kind}">
+        <div class="fb-card-top">
+          <div>${fbStars(f.rating || 0)} <span class="fb-tag ${kind}" style="margin-left: 8px;">${tag}</span></div>
+          <span class="fb-date">${fbDate(f.created_at)}</span>
         </div>
-      `;
+        <div class="fb-quote">${diaryEsc(f.comment)}</div>
+        <div class="fb-who">
+          <div>
+            <div class="fb-who-name">${diaryEsc(f.customer_name)}</div>
+            <div class="fb-who-detail">📍 ${diaryEsc(f.customer_address || f.site_address)}${f.site_ref ? ` · Site ${diaryEsc(f.site_ref)}` : ''}${contact ? `<br>${contact}` : ''}</div>
+          </div>
+          ${mgmt ? `<button type="button" class="fb-del" data-fb-delete="${diaryEsc(f.id)}">🗑 Remove comment</button>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function deleteFeedback(id) {
+  const f = allFeedback.find(x => x.id === id);
+  if (!f || !isManagementUser(currentUser)) return;
+  if (!confirm(`Remove this ${f.rating}-star comment from ${f.customer_name}?\n\nA record of who removed it is kept in the audit log.`)) return;
+  try {
+    await db.collection('feedback_removed').doc(id).set({
+      ...f, removed_by: currentUser.full_name, removed_by_id: String(currentUser.id), removed_at: new Date().toISOString()
+    });
+    await db.collection('feedback').doc(id).delete();
+  } catch (e) {
+    console.warn('Could not remove feedback', e);
+    alert('Could not remove that comment. Please try again.');
+  }
+}
+
+
+// -------------------------------------------------------------------
+// TEAM CHAT
+// One group chat for every registered user. Owners / Admins can post announcements, which are highlighted,
+// pinned at the top and pushed to every phone. Typing @ tags a person (or @all): they get a push and a pop-up in the app.
+// Everyone can delete their own messages; Owners / Admins can delete any.
+// -------------------------------------------------------------------
+let chatMessages = [];
+let chatUnsub = null;
+let chatFirstSnapshot = true;
+let chatMentionMatches = [];
+let chatMentionIndex = 0;
+
+const chatSeenKey = () => `gvd_chat_seen_${currentUser ? currentUser.id : ''}`;
+const chatActiveUsers = () => allUsers.filter(u => u.status === 'Active');
+const chatFirstName = u => String(u.full_name || '').trim().split(/\s+/)[0] || '';
+const chatEscRe = t => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Who a message tags: { all, ids } from the @names in the text */
+function chatFindMentions(text, senderId) {
+  const users = chatActiveUsers();
+  const lower = String(text || '').toLowerCase();
+  const all = /(^|[^\w])@(all|everyone)(?![\w])/i.test(text);
+  const firstCount = {};
+  users.forEach(u => { const f = chatFirstName(u).toLowerCase(); firstCount[f] = (firstCount[f] || 0) + 1; });
+  const ids = users.filter(u => {
+    if (String(u.id) === String(senderId)) return false;
+    if (lower.includes('@' + String(u.full_name).toLowerCase())) return true;
+    const f = chatFirstName(u).toLowerCase();
+    return f && firstCount[f] === 1 && new RegExp('(^|[^\\w])@' + chatEscRe(f) + '(?![\\w])', 'i').test(text);
+  }).map(u => String(u.id));
+  return { all, ids };
+}
+
+const chatMentionsMe = m => !!currentUser && String(m.sender_id) !== String(currentUser.id) &&
+  (m.mention_all === true || (Array.isArray(m.mentions) && m.mentions.map(String).includes(String(currentUser.id))));
+
+/** Safe HTML for a message, with @tags highlighted (stronger when it is you) */
+function chatFormatText(text) {
+  const users = chatActiveUsers();
+  const firstCount = {};
+  users.forEach(u => { const f = chatFirstName(u).toLowerCase(); firstCount[f] = (firstCount[f] || 0) + 1; });
+  const names = ['everyone', 'all'];
+  users.forEach(u => { names.push(u.full_name); if (firstCount[chatFirstName(u).toLowerCase()] === 1) names.push(chatFirstName(u)); });
+  const alt = names.filter(Boolean).sort((x, y) => y.length - x.length).map(n => chatEscRe(diaryEsc(n))).join('|');
+  const html = diaryEsc(text);
+  if (!alt) return html;
+  const mine = currentUser ? [String(currentUser.full_name).toLowerCase(), chatFirstName(currentUser).toLowerCase(), 'all', 'everyone'] : [];
+  return html.replace(new RegExp('(^|[^\\w])@(' + alt + ')(?![\\w])', 'gi'), (m0, pre, name) =>
+    `${pre}<span class="chat-mention ${mine.includes(name.toLowerCase().replace(/&#39;/g, "'")) ? 'me' : ''}">@${name}</span>`);
+}
+
+function startChatSync() {
+  if (chatUnsub || !db || !currentUser) return;
+  chatFirstSnapshot = true;
+  chatUnsub = db.collection('group_chat').orderBy('created_at').limitToLast(300).onSnapshot(snapshot => {
+    chatMessages = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
+    // first ever visit: start from now, so old history is not counted as unread
+    if (!localStorage.getItem(chatSeenKey())) {
+      const newest = chatMessages.length ? chatMessages[chatMessages.length - 1].created_at : new Date().toISOString();
+      localStorage.setItem(chatSeenKey(), newest);
+    }
+    const v = document.getElementById('view-chat');
+    const viewing = !!v && v.style.display !== 'none' && !document.hidden;
+
+    // pop-up when someone tags you (new tags as they arrive; on opening the app, the latest one you have not seen)
+    if (!viewing) {
+      const seen = localStorage.getItem(chatSeenKey()) || '';
+      let fresh;
+      if (chatFirstSnapshot) fresh = chatMessages.filter(m => chatMentionsMe(m) && (m.created_at || '') > seen).pop();
+      else fresh = snapshot.docChanges().filter(c => c.type === 'added').map(c => ({ ...c.doc.data(), id: c.doc.id })).filter(chatMentionsMe).pop();
+      if (fresh) showChatMentionBanner(fresh);
+    }
+    chatFirstSnapshot = false;
+
+    if (v && v.style.display !== 'none') renderChatView(false); else updateChatBadge();
+  }, err => console.warn('Firestore group_chat error:', err));
+}
+
+function stopChatSync() {
+  if (chatUnsub) chatUnsub();
+  chatUnsub = null;
+  chatMessages = [];
+  const b = document.getElementById('chatMentionBanner');
+  if (b) b.remove();
+  updateChatBadge();
+}
+
+/** Red dot on the Team Chat button while there is anything new (an @ when you have been tagged) */
+function updateChatBadge() {
+  const btn = document.getElementById('navChatBtn');
+  if (!btn) return;
+  const seen = currentUser ? (localStorage.getItem(chatSeenKey()) || '') : '';
+  const unread = currentUser ? chatMessages.filter(m => String(m.sender_id) !== String(currentUser.id) && (m.created_at || '') > seen) : [];
+  btn.classList.toggle('has-unread-chat', unread.length > 0);
+  btn.classList.toggle('has-unread-mention', unread.some(chatMentionsMe));
+  btn.title = unread.length ? `${unread.length} new message${unread.length === 1 ? '' : 's'}` : '';
+}
+
+function showChatMentionBanner(m) {
+  let b = document.getElementById('chatMentionBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'chatMentionBanner';
+    b.className = 'chat-mention-banner';
+    document.body.appendChild(b);
+  }
+  b.innerHTML = `
+    <div class="cm-title">💬 ${diaryEsc(m.sender_name)} ${m.mention_all ? 'tagged everyone' : 'tagged you'} in Team Chat</div>
+    <div class="cm-text">${diaryEsc(m.text)}</div>
+    <div class="cm-actions"><button type="button" class="cm-open">Open chat</button><button type="button" class="cm-close">Dismiss</button></div>`;
+  b.querySelector('.cm-open').onclick = () => { b.remove(); showView('view-chat'); };
+  b.querySelector('.cm-close').onclick = () => b.remove();
+  if (navigator.vibrate) { try { navigator.vibrate(120); } catch (e) {} }
+}
+
+function chatDayLabel(iso) {
+  const d = new Date(iso);
+  const key = x => diaryDateKey(x);
+  const today = new Date();
+  const yest = new Date(); yest.setDate(today.getDate() - 1);
+  if (key(d) === key(today)) return 'Today';
+  if (key(d) === key(yest)) return 'Yesterday';
+  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function chatInitials(name) {
+  return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(x => x[0].toUpperCase()).join('');
+}
+
+function renderChatView(forceBottom) {
+  if (!currentUser) return;
+  const box = document.getElementById('chatMessages');
+  if (!box) return;
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const canAnnounce = isOwnerOrAdminUser(currentUser);
+  const isAdmin = canAnnounce;
+  document.getElementById('chatAnnounceRow').style.display = canAnnounce ? '' : 'none';
+
+  // pinned: the most recent announcement from the last 7 days
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const latest = chatMessages.filter(m => m.kind === 'announcement' && (m.created_at || '') > weekAgo).pop();
+  document.getElementById('chatPinned').innerHTML = latest
+    ? `<div class="chat-pinned">📌 <b>Announcement</b> from <b>${diaryEsc(latest.sender_name)}</b> · ${diaryEsc(chatDayLabel(latest.created_at))}<div style="margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;">${chatFormatText(latest.text)}</div></div>`
+    : '';
+
+  if (chatMessages.length === 0) {
+    box.innerHTML = '<div class="chat-empty">No messages yet.<br>Say hello to the team 👋</div>';
+  } else {
+    let lastDay = '';
+    box.innerHTML = chatMessages.map(m => {
+      const day = diaryDateKey(new Date(m.created_at));
+      const sep = day !== lastDay ? `<div class="chat-day">${diaryEsc(chatDayLabel(m.created_at))}</div>` : '';
+      lastDay = day;
+      const mine = String(m.sender_id) === String(currentUser.id);
+      const time = new Date(m.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const del = (mine || isAdmin) ? `<button type="button" data-chat-delete="${diaryEsc(m.id)}">Delete</button>` : '';
+      const role = ['Owner', 'Admin', 'Manager'].includes(m.sender_role) ? `<span class="chat-role">${diaryEsc(m.sender_role)}</span>` : '';
+      if (m.kind === 'announcement') {
+        return `${sep}<div class="chat-announce"><div class="chat-tag">📢 Announcement from ${diaryEsc(m.sender_name)}${role}</div><div class="chat-text">${chatFormatText(m.text)}</div><div class="chat-meta"><span>${diaryEsc(m.sender_name)} · ${time}</span>${del}</div></div>`;
+      }
+      return `${sep}
+        <div class="chat-row ${mine ? 'mine' : ''} ${chatMentionsMe(m) ? 'tagged' : ''}">
+          ${mine ? '' : `<div class="chat-avatar" style="background: ${userColor(m.sender_id)};">${diaryEsc(chatInitials(m.sender_name))}</div>`}
+          <div class="chat-bubble">
+            <div class="chat-name" style="color: ${userColor(m.sender_id)};">${diaryEsc(m.sender_name)}${role}</div>
+            <div class="chat-text">${chatFormatText(m.text)}</div>
+            <div class="chat-meta"><span>${time}</span>${del}</div>
+          </div>
+        </div>`;
     }).join('');
   }
+  if (forceBottom || nearBottom) box.scrollTop = box.scrollHeight;
+
+  // looking at the chat marks everything as read
+  const v = document.getElementById('view-chat');
+  if (v && v.style.display !== 'none' && chatMessages.length) {
+    localStorage.setItem(chatSeenKey(), chatMessages[chatMessages.length - 1].created_at);
+    const banner = document.getElementById('chatMentionBanner');
+    if (banner) banner.remove();
+  }
+  updateChatBadge();
+}
+
+async function sendChatMessage() {
+  if (!currentUser || !db) return;
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  closeChatMentionMenu();
+  const announce = isOwnerOrAdminUser(currentUser) && document.getElementById('chatAnnounce').checked;
+  const tags = chatFindMentions(text, currentUser.id);
+  const btn = document.getElementById('chatSend');
+  btn.disabled = true;
+  try {
+    await db.collection('group_chat').add({
+      text: text.slice(0, 2000),
+      sender_id: String(currentUser.id),
+      sender_name: currentUser.full_name,
+      sender_role: currentUser.role,
+      kind: announce ? 'announcement' : 'message',
+      mentions: tags.ids,
+      mention_all: tags.all,
+      created_at: new Date().toISOString()
+    });
+    input.value = '';
+    input.style.height = 'auto';
+    document.getElementById('chatAnnounce').checked = false;
+
+    // phone alerts (delivered by the existing notification service, even to phones that are asleep):
+    // announcements go to everyone; otherwise only the people tagged, or everyone for @all
+    const others = chatActiveUsers().filter(u => String(u.id) !== String(currentUser.id));
+    const push = (users, title) => Promise.all(users.map(u => db.collection('notifications').add({
+      target_user_id: String(u.id), title, body: text.slice(0, 300), created_at: new Date().toISOString()
+    }).catch(err => console.warn('Chat alert failed:', err))));
+    if (announce) await push(others, `📢 Announcement from ${currentUser.full_name}`);
+    else if (tags.all) await push(others, `💬 ${currentUser.full_name} tagged everyone in Team Chat`);
+    else if (tags.ids.length) await push(others.filter(u => tags.ids.includes(String(u.id))), `💬 ${currentUser.full_name} tagged you in Team Chat`);
+    renderChatView(true);
+  } catch (e) {
+    console.warn('Chat send failed', e);
+    alert('Sorry, that message did not send. Please check your connection and try again.');
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+async function deleteChatMessage(id) {
+  const m = chatMessages.find(x => x.id === id);
+  if (!m || !currentUser) return;
+  if (!(String(m.sender_id) === String(currentUser.id) || isOwnerOrAdminUser(currentUser))) return;
+  if (!confirm('Delete this message for everyone?')) return;
+  try { await db.collection('group_chat').doc(id).delete(); } catch (e) { alert('Could not delete that message.'); }
+}
+
+// ---- @ suggestions ----
+function closeChatMentionMenu() {
+  const menu = document.getElementById('chatMentionMenu');
+  if (menu) menu.style.display = 'none';
+  chatMentionMatches = [];
+}
+
+function updateChatMentionMenu() {
+  const input = document.getElementById('chatInput');
+  const menu = document.getElementById('chatMentionMenu');
+  if (!input || !menu || !currentUser) return;
+  const before = input.value.slice(0, input.selectionStart);
+  const m = /(^|\s)@([^\s@]{0,30})$/.exec(before);
+  if (!m) { closeChatMentionMenu(); return; }
+  const q = m[2].toLowerCase();
+  const items = [];
+  if ('all'.startsWith(q) || 'everyone'.startsWith(q)) items.push({ label: '@all', sub: 'Notify everyone', insert: '@all ' });
+  chatActiveUsers()
+    .filter(u => String(u.id) !== String(currentUser.id) && String(u.full_name).toLowerCase().split(/\s+/).some(w => w.startsWith(q)))
+    .slice(0, 6)
+    .forEach(u => items.push({ label: '@' + u.full_name, sub: u.role, insert: '@' + u.full_name + ' ' }));
+  if (!items.length) { closeChatMentionMenu(); return; }
+  chatMentionMatches = items.map(i => ({ ...i, start: before.length - m[2].length - 1 }));
+  chatMentionIndex = 0;
+  drawChatMentionMenu();
+}
+
+function drawChatMentionMenu() {
+  const menu = document.getElementById('chatMentionMenu');
+  menu.innerHTML = chatMentionMatches.map((i, n) =>
+    `<button type="button" class="chat-mention-item ${n === chatMentionIndex ? 'active' : ''}" data-mention-pick="${n}"><span>${diaryEsc(i.label)}</span><small>${diaryEsc(i.sub)}</small></button>`).join('');
+  menu.style.display = '';
+}
+
+function pickChatMention(n) {
+  const item = chatMentionMatches[n];
+  const input = document.getElementById('chatInput');
+  if (!item || !input) return;
+  const caret = input.selectionStart;
+  input.value = input.value.slice(0, item.start) + item.insert + input.value.slice(caret);
+  const pos = item.start + item.insert.length;
+  input.setSelectionRange(pos, pos);
+  closeChatMentionMenu();
+  input.focus();
+}
+
+function setupChatListeners() {
+  const input = document.getElementById('chatInput');
+  if (!input) return;
+  document.getElementById('chatSend').addEventListener('click', sendChatMessage);
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    updateChatMentionMenu();
+  });
+  input.addEventListener('keydown', e => {
+    if (chatMentionMatches.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); chatMentionIndex = (chatMentionIndex + 1) % chatMentionMatches.length; drawChatMentionMenu(); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); chatMentionIndex = (chatMentionIndex - 1 + chatMentionMatches.length) % chatMentionMatches.length; drawChatMentionMenu(); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pickChatMention(chatMentionIndex); return; }
+      if (e.key === 'Escape') { closeChatMentionMenu(); return; }
+    }
+    // On a computer Enter sends (Shift+Enter for a new line); on a phone Enter starts a new line and the Send button sends
+    if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(pointer: fine)').matches) { e.preventDefault(); sendChatMessage(); }
+  });
+  // pick with the mouse or a tap without the box losing focus
+  document.getElementById('chatMentionMenu').addEventListener('mousedown', e => {
+    const b = e.target.closest('[data-mention-pick]');
+    if (b) { e.preventDefault(); pickChatMention(parseInt(b.dataset.mentionPick)); }
+  });
+  document.getElementById('chatMentionMenu').addEventListener('touchend', e => {
+    const b = e.target.closest('[data-mention-pick]');
+    if (b) { e.preventDefault(); pickChatMention(parseInt(b.dataset.mentionPick)); }
+  });
+  document.getElementById('chatMessages').addEventListener('click', e => {
+    const b = e.target.closest('[data-chat-delete]');
+    if (b) deleteChatMessage(b.dataset.chatDelete);
+  });
 }
 
 // -------------------------------------------------------------------
@@ -2767,6 +4005,12 @@ function setupEventListeners() {
       showView(btn.dataset.target);
     });
   });
+
+  document.getElementById('btnAssignUnassignedSites').addEventListener('click', assignUnassignedToMe);
+  if (typeof setupReportsListeners === 'function') setupReportsListeners();
+  refreshJobScopeSelects();
+  document.querySelectorAll('.job-scope-select').forEach(sel => sel.addEventListener('change', () => setJobScope(sel.value)));
+  document.querySelectorAll('.fin-subtab').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
 
   document.getElementById('linkRegister').addEventListener('click', (e) => { e.preventDefault(); showView('view-register'); });
   document.getElementById('linkBackToLogin').addEventListener('click', (e) => { e.preventDefault(); showView('view-login'); });
@@ -2840,7 +4084,7 @@ function setupEventListeners() {
     inputDays.addEventListener('input', () => {
       const val = parseInt(inputDays.value) || 2;
       if (labelDays) {
-        labelDays.textContent = `${val} consecutive days`;
+        labelDays.textContent = `${val} working days`;
       }
     });
   }
@@ -3098,7 +4342,10 @@ async function handleLogout() {
   }
   stopDiarySync();
   stopPOSync();
+  stopFeedbackSync();
+  stopChatSync();
   stopFinanceSync();
+  if (typeof stopMyInvoiceSync === 'function') stopMyInvoiceSync();
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
   localStorage.removeItem('gvd_push_subscribed');
@@ -3423,6 +4670,7 @@ async function handleCreateSite(e) {
       address,
       construction_type,
       customer_token,
+      manager_id: isManagementUser(currentUser) ? String(currentUser.id) : null,
       created_at: new Date().toISOString()
     };
 
@@ -3471,7 +4719,8 @@ function openCreateShiftModal(siteId, opId = null, dateStr = null) {
   if (chkDuplicate) chkDuplicate.checked = false;
   if (containerDuplicate) containerDuplicate.style.display = 'none';
   if (inputDays) inputDays.value = 2;
-  if (labelDays) labelDays.textContent = '2 consecutive days';
+  if (labelDays) labelDays.textContent = '2 working days';
+  const wkChk = document.getElementById('shiftDuplicateWeekends'); if (wkChk) wkChk.checked = false;
 
   openModal('modalShift');
 }
@@ -3534,8 +4783,19 @@ function populateShiftSelects(selectedSiteId, selectedOpId) {
   opSelect.innerHTML = availableOps.map(op => `<option value="${op.id}" ${String(op.id) === String(selectedOpId) ? 'selected' : ''}>${op.full_name} (${op.role})</option>`).join('');
 }
 
+let shiftSaving = false;
 async function handleSaveShift(e) {
   e.preventDefault();
+  // A double tap on a phone used to run this twice and create the shift twice
+  if (shiftSaving) return;
+  shiftSaving = true;
+  const submitBtn = document.querySelector('#shiftForm button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  try { await saveShiftFromForm(); }
+  finally { shiftSaving = false; if (submitBtn) submitBtn.disabled = false; }
+}
+
+async function saveShiftFromForm() {
   const shiftId = document.getElementById('shiftIdInput').value;
   const site_id = parseInt(document.getElementById('shiftSiteSelect').value);
   const operative_id = document.getElementById('shiftOpSelect').value;
@@ -3579,13 +4839,19 @@ async function handleSaveShift(e) {
     const numDays = isDuplicate ? Math.max(1, parseInt(document.getElementById('shiftDuplicateDaysInput')?.value) || 1) : 1;
 
     const [year, month, day] = shift_date.split('-').map(Number);
-    let createdCount = 0;
+    let createdCount = 0, skippedDuplicates = 0;
     const notifyShifts = [];
 
+    const includeWeekends = !!document.getElementById('shiftDuplicateWeekends')?.checked;
+    let dayOffset = -1;
     for (let i = 0; i < numDays; i++) {
-      const d = new Date(year, month - 1, day + i);
+      // working days only (Mon-Fri) unless weekends are ticked; a single shift always goes on the chosen date
+      let d;
+      do { dayOffset++; d = new Date(year, month - 1, day + dayOffset); } while (isDuplicate && !includeWeekends && isWeekendDay(d));
       const currentDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       
+      // never create the same person / job / day / period twice
+      if (allShifts.some(s => String(s.operative_id) === String(operative_id) && parseInt(s.site_id) === site_id && s.shift_date === currentDateStr && (s.shift_period || 'all_day') === shift_period && !s.is_drying_day)) { skippedDuplicates++; continue; }
       const nextShiftId = allShifts.length > 0 ? Math.max(...allShifts.map(s => parseInt(s.id) || 0)) + 1 : 1;
       const newShift = {
         id: nextShiftId,
@@ -3611,8 +4877,10 @@ async function handleSaveShift(e) {
     closeModal('modalShift');
     renderActiveView();
 
-    if (createdCount > 1) {
-      showGreenToast(`✅ ${createdCount} consecutive shifts saved${notifyShifts.length ? ' & operative notified' : ''}`);
+    if (skippedDuplicates && !createdCount) {
+      showGreenToast('That shift already exists - nothing added');
+    } else if (createdCount > 1) {
+      showGreenToast(`✅ ${createdCount} shifts saved${includeWeekends ? '' : ' (Mon–Fri)'}${notifyShifts.length ? ' & operative notified' : ''}`);
     } else if (isDraftPlanningMode) {
       showGreenToast('✅ Draft shift saved (silent)');
     } else if (notifyShifts.length) {
@@ -3907,15 +5175,45 @@ function stopDiarySync() {
   allDiary = [];
 }
 
+// Diary is filtered by people: tick whose entries to show (admin level and above), any combination
+let diaryHidden = [];      // people unticked
+let diaryShowOthers = false; // entries that only involve operatives, or nobody
+try { diaryHidden = JSON.parse(localStorage.getItem('gvd_diary_hidden') || '[]'); diaryShowOthers = localStorage.getItem('gvd_diary_others') === '1'; } catch (e) {}
+function diaryFilterMatches(e) {
+  const mgmtIds = managerUsers().map(u => String(u.id));
+  const ids = (e.assignee_ids || []).map(String);
+  const involved = ids.filter(id => mgmtIds.includes(id));
+  if (!involved.length) return diaryShowOthers;
+  return involved.some(id => !diaryHidden.includes(id));
+}
+function refreshDiaryFilterSelect() {
+  const box = document.getElementById('diaryFilter');
+  if (!box) return;
+  const people = managerUsers().filter(u => u.status === 'Active' || allDiary.some(e => (e.assignee_ids || []).map(String).includes(String(u.id))));
+  const chip = (key, label, on, color) => `<label style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; cursor: pointer; font-size: 0.85rem; font-weight: 700; border: 2px solid ${color}; background: ${on ? color : 'transparent'}; color: ${on ? '#fff' : 'var(--text-main, inherit)'};"><input type="checkbox" data-diary-who="${diaryEsc(key)}"${on ? ' checked' : ''} style="accent-color: ${color};"> ${diaryEsc(label)}</label>`;
+  box.innerHTML = '<span style="font-size: 0.8rem; color: var(--text-muted);">Show:</span>' +
+    people.map(u => chip(String(u.id), u.full_name, !diaryHidden.includes(String(u.id)), userColor(String(u.id)))).join('') +
+    chip('__others__', 'Others', diaryShowOthers, '#64748b');
+  box.querySelectorAll('input[data-diary-who]').forEach(inp => inp.addEventListener('change', () => {
+    const k = inp.dataset.diaryWho;
+    if (k === '__others__') diaryShowOthers = inp.checked;
+    else diaryHidden = inp.checked ? diaryHidden.filter(x => x !== k) : diaryHidden.concat(k);
+    try { localStorage.setItem('gvd_diary_hidden', JSON.stringify(diaryHidden)); localStorage.setItem('gvd_diary_others', diaryShowOthers ? '1' : '0'); } catch (e) {}
+    renderDiaryView();
+  }));
+}
+
 function renderDiaryView() {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  refreshDiaryFilterSelect();
   const year = diaryMonth.getFullYear();
   const month = diaryMonth.getMonth();
   document.getElementById('diaryMonthLabel').textContent = diaryMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
   const todayKey = diaryDateKey(new Date());
   const byDate = {};
-  allDiary.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const diaryEntries = allDiary.filter(diaryFilterMatches);
+  diaryEntries.forEach(e => { (byDate[e.date] = byDate[e.date] || []).push(e); });
   Object.values(byDate).forEach(list => list.sort((a, b) => (a.time || '').localeCompare(b.time || '')));
 
   const first = new Date(year, month, 1);
@@ -3938,12 +5236,11 @@ function renderDiaryView() {
     });
   });
 
-  const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`;
-  const monthEntries = allDiary.filter(e => (e.date || '').startsWith(prefix))
+  const monthEntries = diaryEntries.filter(e => (e.date || '') >= todayKey)
     .sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
   const agenda = document.getElementById('diaryAgenda');
   if (monthEntries.length === 0) {
-    agenda.innerHTML = '<p style="color: var(--text-muted);">Nothing in the diary this month.</p>';
+    agenda.innerHTML = '<p style="color: var(--text-muted);">No upcoming diary entries.</p>';
     return;
   }
   agenda.innerHTML = monthEntries.map(e => {
@@ -4082,7 +5379,11 @@ function openUserModal(userId) {
   const rateGroup = document.getElementById('userModalRateGroup');
   rateGroup.style.display = isOwnerOrAdminUser(currentUser) ? '' : 'none';
   document.getElementById('userModalDayRate').value = financeRates[String(user.id)] != null ? financeRates[String(user.id)] : '';
-  document.getElementById('userModalPayType').value = financePay[String(user.id)] === 'price' ? 'price' : 'day';
+  document.getElementById('userModalPayType').value = financePay[String(user.id)] || 'day';
+  const hh0 = financeHourly[String(user.id)] || {};
+  if (financePay[String(user.id)] === 'hourly') document.getElementById('userModalDayRate').value = hh0.rate != null ? hh0.rate : '';
+  document.getElementById('userModalHours').value = hh0.hpd || 8;
+  updateUserModalPayUi();
 
   // Login sharing is only offered for people who have never used the app
   const loginBox = document.getElementById('userModalLoginBox');
@@ -4117,9 +5418,11 @@ async function handleSaveUserModal() {
   if (db && isOwnerOrAdminUser(currentUser)) {
     const rateRaw = document.getElementById('userModalDayRate').value;
     const rate = rateRaw === '' ? null : parseFloat(rateRaw);
-    await db.collection('finance_rates').doc(String(user.id)).set({
-      user_id: String(user.id), day_rate: isNaN(rate) ? null : rate, pay_type: document.getElementById('userModalPayType').value
-    }, { merge: true }).catch(console.warn);
+    const pt = document.getElementById('userModalPayType').value;
+    const rec = { user_id: String(user.id), pay_type: pt };
+    if (pt === 'hourly') { rec.hourly_rate = isNaN(rate) ? null : rate; rec.hours_per_day = parseFloat(document.getElementById('userModalHours').value) || 8; }
+    else rec.day_rate = isNaN(rate) ? null : rate;
+    await db.collection('finance_rates').doc(String(user.id)).set(rec, { merge: true }).catch(console.warn);
   }
   saveLocalStorageData();
   closeModal('modalUser');
@@ -4601,6 +5904,18 @@ async function extractPdfLines(file) {
       const row = rows.find(r => Math.abs(r.y - it.y) <= 3);
       if (row) row.items.push(it); else rows.push({ y: it.y, items: [it] });
     });
+    // typed-in form fields (our operative invoice template) are not part of the page text: read them and put them on the line of their label
+    try {
+      const annots = await page.getAnnotations();
+      annots.forEach(a => {
+        if (a.subtype !== 'Widget' || typeof a.fieldValue !== 'string' || !a.fieldValue.trim() || !a.rect) return;
+        let v = a.fieldValue.trim();
+        if (/^(rate|amount|net_total|total_vat|invoice_total)/.test(a.fieldName || '') && /^[£\s]*\d[\d,]*(\.\d{1,2})?$/.test(v)) v = '£' + parseFloat(v.replace(/[£,\s]/g, '')).toFixed(2);
+        const y = a.rect[1] + 4;
+        const row = rows.find(r => Math.abs(r.y - y) <= 3);
+        if (row) row.items.push({ x: a.rect[0], y, str: v }); else rows.push({ y, items: [{ x: a.rect[0], y, str: v }] });
+      });
+    } catch (e) { /* plain PDF */ }
     rows.sort((p, q) => q.y - p.y).forEach(r => {
       const text = r.items.sort((p, q) => p.x - q.x).map(x => x.str).join(' ').replace(/\s+/g, ' ').trim();
       if (text) lines.push(text);
@@ -4690,7 +6005,7 @@ function parseInvoiceText(lines) {
   const deliverIdx = lines.findIndex(l => /deliver(y)?\s*to/i.test(l));
   const deliverText = deliverIdx >= 0 ? lines.slice(deliverIdx, deliverIdx + 8).join(' ') : text;
 
-  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, hasText: text.length > 40 };
+  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, rawText: text, lines, hasText: text.length > 40 };
 }
 
 function matchSiteByAddress(text, sites) {
@@ -4706,12 +6021,92 @@ function matchSiteByAddress(text, sites) {
   return best ? best.site : null;
 }
 
+// Suggest jobs from partial addresses: "Meaford" on an invoice should point at "18 Meaford Road, ...".
+// Words that most jobs share (road, town, county) count for little; a street name that only a few jobs share counts a lot.
+const ADDRESS_STOPWORDS = new Set(['road', 'rd', 'street', 'st', 'lane', 'ln', 'avenue', 'ave', 'close', 'drive', 'dr', 'way', 'court', 'crescent', 'grove', 'place', 'the', 'and', 'on', 'of', 'flat', 'unit', 'house', 'farm']);
+function addressWords(str) {
+  return String(str || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+}
+function wordsClose(a, b) {
+  if (a === b) return true;
+  if (a.length < 6 || b.length < 6 || Math.abs(a.length - b.length) > 1) return false;
+  // one letter out (typo / OCR slip)
+  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i);
+}
+function suggestSites(text, sites, limit = 3) {
+  const textWords = addressWords(text);
+  if (!textWords.length || !sites.length) return [];
+  const textSet = new Set(textWords);
+  const siteWords = sites.map(site => ({
+    site,
+    words: Array.from(new Set(addressWords(site.address).filter(w => w.length > 2 && !/^\d+$/.test(w) && !ADDRESS_STOPWORDS.has(w) && !/^[a-z]{1,2}\d{1,2}[a-z]?$|^\d[a-z]{2}$/.test(w)))),
+    numbers: addressWords(site.address).filter(w => /^\d{1,4}[a-z]?$/.test(w))
+  }));
+  const df = {};
+  siteWords.forEach(sw => sw.words.forEach(w => { df[w] = (df[w] || 0) + 1; }));
+  const out = [];
+  siteWords.forEach(sw => {
+    let score = 0; const hits = [];
+    sw.words.forEach(w => {
+      const weight = Math.log(1 + sites.length / df[w]) - Math.log(2);
+      if (weight <= 0.3) return;
+      const found = textSet.has(w) || (w.length >= 6 && textWords.some(t => wordsClose(t, w)));
+      if (found) { score += weight; hits.push(w); }
+    });
+    if (!hits.length) return;
+    // "18 meaford" beats a bare "meaford"
+    const numberNextToStreet = sw.numbers.some(n => hits.some(h => textWords.some((t, i) => t === n && (textWords[i + 1] === h || textWords[i - 1] === h))));
+    if (numberNextToStreet) score += 2;
+    out.push({ site: sw.site, score, hits, exactNumber: numberNextToStreet });
+  });
+  return out.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+// An operative's weekly invoice often lists several jobs. Pull out "address ... £amount" lines and group them by job.
+function parseAllocations(parsed) {
+  const sites = allSites.filter(s => !s.is_archived);
+  const bySite = new Map();
+  (parsed.lines || []).forEach(line => {
+    if (/total|vat|sub\s*-?total|balance|amount due|retention|cis|deduct/i.test(line)) return;
+    const amts = [...line.matchAll(/(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g)];
+    if (!amts.length) return;
+    const amount = parseFloat(amts[amts.length - 1][1].replace(/,/g, ''));
+    if (!(amount > 0)) return;
+    const g = suggestSites(line, sites, 1)[0];
+    if (!g || g.score < 1) return;
+    bySite.set(String(g.site.id), Math.round(((bySite.get(String(g.site.id)) || 0) + amount) * 100) / 100);
+  });
+  return Array.from(bySite.entries()).map(([siteId, net]) => ({ siteId, net }));
+}
+
+function mondayOfISO(iso) {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return diaryDateKey(d);
+}
+// Week the invoice covers: "week ending 18/10/2026" if it says so, otherwise the week before the invoice date
+function guessInvoiceWeek(parsed) {
+  const m = String(parsed.rawText || '').match(/(?:week\s*ending|w\/e|w\.e\.?|week\s*commencing|w\/c)\s*:?\s*(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/i);
+  if (m) {
+    const y = m[3].length === 2 ? '20' + m[3] : m[3];
+    const iso = `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    if (!isNaN(new Date(iso))) return /commenc|w\/c/i.test(m[0]) ? mondayOfISO(iso) : mondayOfISO(addDaysISO(iso, -6));
+  }
+  const base = parsed.date || diaryDateKey(new Date());
+  return addDaysISO(mondayOfISO(base), -7);
+}
+
 // ---- Batch import ----
 let invBatch = [];
 
-function invSiteOptions(selectedId) {
-  return `<option value="">Choose job...</option>` + allSites.filter(x => !x.is_archived || String(x.id) === String(selectedId))
-    .map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(selectedId) ? ' selected' : ''}>${diaryEsc(x.address)}</option>`).join('');
+const OVERHEAD_SITE = { id: 'overhead', address: 'Overhead / general (no job)' };
+function invSiteById(id) { return String(id) === OVERHEAD_SITE.id ? OVERHEAD_SITE : allSites.find(s => String(s.id) === String(id)); }
+
+function invSiteOptions(selectedId, includeArchived = false) {
+  return `<option value="">Choose job...</option><option value="${OVERHEAD_SITE.id}"${String(selectedId) === OVERHEAD_SITE.id ? ' selected' : ''}>🏢 ${OVERHEAD_SITE.address}</option>` + allSites.filter(x => includeArchived || !x.is_archived || String(x.id) === String(selectedId))
+    .map(x => `<option value="${diaryEsc(x.id)}"${String(x.id) === String(selectedId) ? ' selected' : ''}>${diaryEsc(x.address)}${x.is_archived ? ' (archived)' : ''}</option>`).join('');
 }
 
 function invPoOptions(siteId, selectedPo) {
@@ -4742,7 +6137,11 @@ function analyseInvoice(parsed) {
     site = matchSiteByAddress(parsed.deliverText, allSites.filter(s => !s.is_archived));
     if (site) how = `📍 No PO number found - matched from the delivery address`;
   }
-  if (!site) how = parsed.po ? `⚠️ ${parsed.po} is on the invoice but not in the app - choose the job` : '⚠️ No PO number or matching address found - choose the job';
+  if (!site) {
+    const guess = suggestSites((parsed.deliverText || '') + ' ' + (parsed.rawText || ''), allSites.filter(s => !s.is_archived), 1)[0];
+    how = parsed.po ? `⚠️ ${parsed.po} is on the invoice but not in the app - choose the job` : '⚠️ No PO number or matching address found - choose the job';
+    if (guess) { site = guess.site; how = `🤔 Could be ${guess.site.address} (invoice mentions "${guess.hits.join(', ')}") - check it`; return { matchedPo, site, how, duplicate: false, confident: false }; }
+  }
   const duplicate = false; // worked out by invDuplicateReason() so it also catches repeats inside the same batch
   const priceOk = parsed.net != null && parsed.hasText;
   const confident = !!site && priceOk && parsed.totalsAgree && !parsed.netEstimated;
@@ -4771,10 +6170,15 @@ async function handleInvoiceBatchPicked(e) {
         net: parsed.net, vat: parsed.vat, gross: parsed.gross, invNo: parsed.invNo || '',
         merchant: parsed.merchant || (a.matchedPo ? a.matchedPo.merchant : '') || '', date: parsed.date || '',
         selected: false,
+        contractorId: suggestContractor((parsed.merchant || '') + ' ' + ((String(parsed.rawText || '').match(/Operative:\s*([^\n]+)/i) || [])[1] || '')),
+        week: guessInvoiceWeek(parsed),
+        splits: (() => { const al = parseAllocations(parsed); return al.length >= 2 ? al : null; })(),
+        _single: (() => { const al = parseAllocations(parsed); return al.length === 1 ? al[0].siteId : ''; })(),
         priceNote: !parsed.hasText ? 'Looks like a scan/photo - type the price in.' : parsed.net == null ? 'Price not found - type it in.'
           : parsed.netEstimated ? 'Net price estimated from the total - check it.' : parsed.totalsAgree ? '' : 'Check the amounts.'
       });
     }
+    if (!item.siteId && item._single && !item.splits) item.siteId = item._single;
     invBatch.push(item);
   }
   document.getElementById('invBatchReading').style.display = 'none';
@@ -4785,6 +6189,23 @@ async function handleInvoiceBatchPicked(e) {
     it.selected = it.confident && !it.duplicateReason;
   });
   renderInvBatch();
+}
+
+function invSplitSum(it) { return Math.round((it.splits || []).reduce((t, x) => t + (parseFloat(x.net) || 0), 0) * 100) / 100; }
+function invSplitStatus(it) {
+  const diff = Math.round(((it.net || 0) - invSplitSum(it)) * 100) / 100;
+  return Math.abs(diff) < 0.02 ? `<span style="color: var(--success);">✅ Adds up to the invoice net ${formatPounds(it.net)}</span>`
+    : `<span style="color: var(--warning);">⚠️ Allocated ${formatPounds(invSplitSum(it))} of ${formatPounds(it.net) || 'the net price'} - ${diff > 0 ? formatPounds(diff) + ' still to allocate' : formatPounds(-diff) + ' too much'}</span>`;
+}
+function invSplitTotals(row, it) { const el = row.querySelector('.inv-sp-status'); if (el) el.innerHTML = invSplitStatus(it); }
+function invSplitHtml(it) {
+  return `<div style="border: 1px dashed var(--border-color); border-radius: var(--radius-sm); padding: 8px;">
+    <div style="font-weight: 700; font-size: 0.85rem; margin-bottom: 6px;">✂️ Split across jobs <span style="font-weight: 400; color: var(--text-muted);">- each job gets its share of the net price as a cost</span></div>
+    ${it.splits.map((sp, i) => `<div style="display: grid; grid-template-columns: 1fr 130px auto; gap: 6px; margin-bottom: 6px;">
+      <select class="form-control inv-sp-site" data-i="${i}" style="min-height: 34px; padding: 4px 8px;">${invSiteOptions(sp.siteId, true)}</select>
+      <input type="text" inputmode="decimal" autocomplete="off" class="form-control inv-sp-net" data-i="${i}" placeholder="Net £" value="${sp.net != null ? Number(sp.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+      <button type="button" class="btn btn-danger btn-sm inv-sp-del" data-i="${i}">✕</button></div>`).join('')}
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"><button type="button" class="btn btn-outline btn-sm inv-sp-add">+ Add job</button><button type="button" class="btn btn-outline btn-sm inv-sp-off">Back to one job</button><span class="inv-sp-status" style="font-size: 0.8rem;">${invSplitStatus(it)}</span></div></div>`;
 }
 
 function renderInvBatch() {
@@ -4805,11 +6226,16 @@ function renderInvBatch() {
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px;">
         <select class="form-control inv-site" style="min-height: 34px; padding: 4px 8px;">${invSiteOptions(it.siteId)}</select>
         <select class="form-control inv-po" style="min-height: 34px; padding: 4px 8px;">${invPoOptions(it.siteId, it.poNumber)}</select>
+        <select class="form-control inv-contractor" style="min-height: 34px; padding: 4px 8px;">${contractorOptionsHtml(it.contractorId)}</select>
         <input class="form-control inv-merchant" placeholder="Merchant" value="${diaryEsc(it.merchant)}" style="min-height: 34px; padding: 4px 8px;">
         <input class="form-control inv-no" placeholder="Invoice no." value="${diaryEsc(it.invNo)}" style="min-height: 34px; padding: 4px 8px;">
         <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-net" placeholder="Net £ ex VAT" value="${it.net != null ? Number(it.net).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
         <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-vat" placeholder="VAT £" value="${it.vat != null ? Number(it.vat).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
         <input type="text" inputmode="decimal" autocomplete="off" step="0.01" min="0" class="form-control inv-gross" placeholder="Total £" value="${it.gross != null ? Number(it.gross).toFixed(2) : ''}" style="min-height: 34px; padding: 4px 8px;">
+      </div>
+      ${it.contractorId ? `<div style="margin-top: 8px; font-size: 0.8rem;"><label>👷 Labour invoice for the week starting <input type="date" class="form-control inv-week" value="${diaryEsc(it.week || '')}" style="display: inline-block; width: auto; min-height: 32px; padding: 2px 8px;"></label> <span style="color: var(--text-muted);">- counted as labour on the job, not materials</span></div>` : ''}
+      <div style="margin-top: 8px;">
+        ${it.splits ? invSplitHtml(it) : `<button type="button" class="btn btn-outline btn-sm inv-split-on">✂️ Split across several jobs</button>`}
       </div>
     </div>`;
   }).join('');
@@ -4826,12 +6252,38 @@ function renderInvBatch() {
     bind('.inv-select', ev => { it.selected = ev.target.checked; renderInvBatch(); });
     bind('.inv-site', ev => { it.siteId = ev.target.value; it.poNumber = ''; renderInvBatch(); });
     bind('.inv-po', ev => { it.poNumber = ev.target.value; });
+    bind('.inv-contractor', ev => { it.contractorId = ev.target.value; if (it.contractorId && !it.week) it.week = guessInvoiceWeek(it.parsed || {}); renderInvBatch(); });
     bind('.inv-merchant', ev => { it.merchant = ev.target.value.trim(); });
     bind('.inv-no', ev => { it.invNo = ev.target.value.trim(); renderInvBatch(); });
     bind('.inv-net', ev => { it.net = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-vat', ev => { it.vat = ev.target.value === '' ? null : parseFloat(ev.target.value); });
     bind('.inv-gross', ev => { it.gross = ev.target.value === '' ? null : parseFloat(ev.target.value); });
+    const wk = row.querySelector('.inv-week'); if (wk) wk.addEventListener('change', ev => { it.week = ev.target.value; });
+    const splitOn = row.querySelector('.inv-split-on'); if (splitOn) splitOn.addEventListener('click', () => { it.splits = [{ siteId: it.siteId || '', net: it.net }, { siteId: '', net: null }]; renderInvBatch(); });
+    row.querySelectorAll('.inv-sp-site').forEach(el => el.addEventListener('change', ev => { it.splits[+el.dataset.i].siteId = ev.target.value; invSplitTotals(row, it); }));
+    row.querySelectorAll('.inv-sp-net').forEach(el => el.addEventListener('change', ev => { const v = ev.target.value.replace(/[£,\s]/g, ''); it.splits[+el.dataset.i].net = v === '' ? null : parseFloat(v); invSplitTotals(row, it); }));
+    row.querySelectorAll('.inv-sp-del').forEach(el => el.addEventListener('click', () => { it.splits.splice(+el.dataset.i, 1); if (it.splits.length < 2) { it.siteId = (it.splits[0] || {}).siteId || it.siteId; it.splits = null; } renderInvBatch(); }));
+    const spAdd = row.querySelector('.inv-sp-add'); if (spAdd) spAdd.addEventListener('click', () => { const left = Math.round(((it.net || 0) - it.splits.reduce((t, x) => t + (x.net || 0), 0)) * 100) / 100; it.splits.push({ siteId: '', net: left > 0 ? left : null }); renderInvBatch(); });
+    const spOff = row.querySelector('.inv-sp-off'); if (spOff) spOff.addEventListener('click', () => { it.siteId = (it.splits[0] || {}).siteId || it.siteId; it.splits = null; renderInvBatch(); });
   });
+}
+
+function priceWorkUsersForImport() { return typeof priceWorkUsers === 'function' ? priceWorkUsers() : []; }
+
+// Labour invoices are tied to the operative they came from (so the cost lands in that week's labour, not materials)
+function suggestContractor(merchant) {
+  const m = String(merchant || '').toLowerCase();
+  if (!m) return '';
+  const hit = priceWorkUsersForImport().find(u => {
+    const tokens = String(u.full_name).toLowerCase().split(/\s+/).filter(t => t.length > 2);
+    return tokens.length && tokens.every(t => m.includes(t));
+  });
+  return hit ? String(hit.id) : '';
+}
+
+function contractorOptionsHtml(selected) {
+  return '<option value="">Materials / other (not a labour invoice)</option>' + priceWorkUsersForImport()
+    .map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(selected) ? ' selected' : ''}>👷 Labour invoice - ${diaryEsc(u.full_name)}</option>`).join('');
 }
 
 async function recalcPoFromInvoices(poNumber, extraFiles = []) {
@@ -4845,42 +6297,83 @@ async function recalcPoFromInvoices(poNumber, extraFiles = []) {
   };
 }
 
-// Adds (or re-adds) the invoice's cost to a job's purchase order record
-async function applyInvoiceToJob(record, site, asNewPo, poNumber, merchant, invNo) {
-  const fields = await recalcPoFromInvoices(poNumber, [record]);
-  if (!asNewPo) {
-    await db.collection('purchase_orders').doc(poNumber).update(fields);
-  } else {
-    await db.collection('purchase_orders').doc(poNumber).set({
-      po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
-      requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
-      merchant: merchant || 'Unknown merchant', description: `Invoice ${invNo || ''} (no PO)`.trim(), est_value: null,
-      created_at: new Date().toISOString(), ...fields
-    });
-  }
-}
-
-async function importInvoiceItem(it) {
-  const site = allSites.find(s => String(s.id) === String(it.siteId)) || null; // no job yet is allowed - it is imported as unattributed
+// No job picked: still imported (kept out of every job's costs) and shown amber in the register until it is attached
+async function importUnassignedInvoice(it) {
   if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
   const fileId = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
   const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const path = `site_files/${site ? site.id : 'unassigned'}/${fileId}_${safeName}`;
+  const path = `site_files/unassigned/${fileId}_${safeName}`;
   const up = await uploadSiteFile(path, it.file);
   const net = Math.round(it.net * 100) / 100;
-  const poNumber = it.poNumber || `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
+  const isLabour = !!it.contractorId;
   const record = {
-    id: fileId, site_id: site ? String(site.id) : '', uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+    id: fileId, site_id: '', uploader_id: currentUser.id, uploader_name: currentUser.full_name,
     filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
-    po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '',
+    po_number: `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '',
+    contractor_id: it.contractorId || null, cost_type: isLabour ? 'labour' : 'materials', week_start: isLabour ? (it.week || '') : '',
     invoice_net: net, invoice_vat: it.vat == null || isNaN(it.vat) ? null : it.vat, invoice_gross: it.gross == null || isNaN(it.gross) ? null : it.gross,
     created_at: new Date().toISOString()
   };
   await db.collection('pdfs').doc(fileId).set(record);
   if (!allPdfs.some(f => String(f.id) === fileId)) allPdfs.push(record);
-  if (!site) return `${formatPounds(net)} ex VAT imported - no job yet (shown in amber in the register)`;
-  await applyInvoiceToJob(record, site, !it.poNumber, poNumber, it.merchant, it.invNo);
-  return `${formatPounds(net)} ex VAT added to ${site.address}`;
+  return `${formatPounds(net)} ex VAT imported - no job yet (shown in amber in the register)`;
+}
+
+async function importInvoiceItem(it) {
+  if (!it.siteId && !(it.splits && it.splits.length > 1)) return importUnassignedInvoice(it);
+  const splits = it.splits && it.splits.length > 1 ? it.splits : [{ siteId: it.siteId, net: it.net }];
+  const sites = splits.map(sp => invSiteById(sp.siteId));
+  if (sites.some(x => !x)) throw new Error(splits.length > 1 ? 'Choose a job for every line of the split' : 'Choose the job');
+  if (it.net == null || isNaN(it.net)) throw new Error('Enter the net price');
+  if (splits.length > 1) {
+    if (splits.some(sp => !(parseFloat(sp.net) > 0))) throw new Error('Enter an amount for every job in the split');
+    if (Math.abs(invSplitSum({ splits }) - it.net) >= 0.02) throw new Error(`The split (${formatPounds(invSplitSum({ splits }))}) does not add up to the invoice net (${formatPounds(it.net)})`);
+    if (new Set(splits.map(sp => String(sp.siteId))).size !== splits.length) throw new Error('The same job is in the split twice');
+  }
+  const base = 'pdf_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+  const safeName = it.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `site_files/${sites[0].id}/${base}_${safeName}`;
+  const up = await uploadSiteFile(path, it.file);   // one copy of the PDF, shared by every part of a split
+  const total = Math.round(it.net * 100) / 100;
+  const isLabour = !!it.contractorId;
+  const msgs = [];
+  let vatLeft = it.vat == null || isNaN(it.vat) ? null : it.vat, grossLeft = it.gross == null || isNaN(it.gross) ? null : it.gross;
+  for (let i = 0; i < splits.length; i++) {
+    const site = sites[i];
+    const last = i === splits.length - 1;
+    const net = Math.round(parseFloat(splits[i].net) * 100) / 100;
+    const ratio = total ? net / total : 1;
+    const vat = vatLeft == null ? null : last ? Math.round(vatLeft * 100) / 100 : Math.round((it.vat * ratio) * 100) / 100;
+    const gross = grossLeft == null ? null : last ? Math.round(grossLeft * 100) / 100 : Math.round((it.gross * ratio) * 100) / 100;
+    if (vatLeft != null) vatLeft -= vat;
+    if (grossLeft != null) grossLeft -= gross;
+    const fileId = splits.length > 1 ? `${base}_${i + 1}` : base;
+    const single = splits.length === 1;
+    const poNumber = single && it.poNumber ? it.poNumber : `INV-${String(it.invNo || Date.now()).replace(/[^A-Za-z0-9]/g, '')}${single ? '' : '-' + (i + 1)}`;
+    const record = {
+      id: fileId, site_id: String(site.id), uploader_id: currentUser.id, uploader_name: currentUser.full_name,
+      filename: it.file.name, file_type: 'invoice', file_url: up.url, storage_bucket: up.bucket, storage_path: path,
+      po_number: poNumber, invoice_no: it.invNo || '', merchant: it.merchant || '', invoice_date: it.date || '', contractor_id: it.contractorId || null,
+      cost_type: isLabour ? 'labour' : 'materials', week_start: isLabour ? (it.week || '') : '',
+      split_group: single ? '' : base, split_total_net: single ? null : total,
+      invoice_net: net, invoice_vat: vat, invoice_gross: gross,
+      created_at: new Date().toISOString()
+    };
+    await db.collection('pdfs').doc(fileId).set(record);
+    const fields = await recalcPoFromInvoices(poNumber, [record]);
+    if (single && it.poNumber) {
+      await db.collection('purchase_orders').doc(poNumber).update(fields);
+    } else {
+      await db.collection('purchase_orders').doc(poNumber).set({
+        po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
+        requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
+        merchant: it.merchant || 'Unknown merchant', description: `${isLabour ? 'Labour invoice' : 'Invoice'} ${it.invNo || ''} (no PO)`.trim(), est_value: null,
+        created_at: new Date().toISOString(), ...fields
+      });
+    }
+    msgs.push(`${formatPounds(net)} to ${site.address}`);
+  }
+  return isLabour ? `Labour ${msgs.join(' · ')}` : `${msgs.join(' · ')} ex VAT added`;
 }
 
 async function runInvoiceImport(todo) {
@@ -4920,15 +6413,60 @@ function handleImportAllInvoices() {
 // ---- Register ----
 function renderInvoicesView() {
   if (!currentUser || !isManagementUser(currentUser)) return;
+  if (typeof renderInvoiceInbox === 'function') renderInvoiceInbox();
+  renderLabourCheck();
   const siteSel = document.getElementById('invFilterSite');
   const merchSel = document.getElementById('invFilterMerchant');
   const invoices = allPdfs.filter(f => f.file_type === 'invoice');
   const prevSite = siteSel.value, prevMerch = merchSel.value;
-  siteSel.innerHTML = '<option value="">All jobs</option>' + allSites.map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
+  siteSel.innerHTML = '<option value="">All jobs</option><option value="overhead">🏢 Overhead / general</option>' + allSites.filter(siteInScope).map(s => `<option value="${diaryEsc(s.id)}">${diaryEsc(s.address)}</option>`).join('');
   const merchants = Array.from(new Set(invoices.map(f => invMerchantOf(f)).filter(Boolean))).sort();
   merchSel.innerHTML = '<option value="">All merchants</option>' + merchants.map(m => `<option value="${diaryEsc(m)}">${diaryEsc(m)}</option>`).join('');
   siteSel.value = prevSite; merchSel.value = prevMerch;
   renderInvoiceRegister();
+}
+
+// Who has worked, and has their weekly invoice arrived? Weeks run Monday to Sunday.
+function renderLabourCheck() {
+  const host = document.getElementById('invLabourCheck');
+  if (!host) return;
+  if (!labourFromInvoices()) { host.style.display = 'none'; return; }
+  const today = diaryDateKey(new Date());
+  const thisMon = mondayOfISO(today);
+  const weeks = [0, 1, 2, 3, 4, 5].map(i => addDaysISO(thisMon, -7 * i)).filter(w => w >= labourCutoff());
+  const oldest = weeks[weeks.length - 1] || thisMon;
+  const alloc = allocateShiftCosts();
+  const days = {};
+  allShifts.forEach(sh => {
+    if (!sh.operative_id || sh.is_drying_day || !sh.shift_date || sh.shift_date < oldest || sh.shift_date > today || isDirectPay(sh.operative_id)) return;
+    const a = alloc.get(sh); if (!a) return;
+    const k = `${sh.operative_id}|${mondayOfISO(sh.shift_date)}`;
+    days[k] = (days[k] || 0) + a.frac;
+  });
+  const got = {};
+  allPdfs.filter(f => isLabourInvoice(f) && f.contractor_id).forEach(f => {
+    const wk = f.week_start || addDaysISO(mondayOfISO(f.invoice_date || String(f.created_at).slice(0, 10)), -7);
+    const k = `${f.contractor_id}|${wk}`;
+    got[k] = (got[k] || 0) + (parseFloat(f.invoice_net) || 0);
+  });
+  const ids = Array.from(new Set(Object.keys(days).concat(Object.keys(got)).map(k => k.split('|')[0])));
+  const people = ids.map(id => ({ id, name: (allUsers.find(u => String(u.id) === id) || {}).full_name || 'Unknown' })).sort((a, b) => a.name.localeCompare(b.name));
+  let missing = 0;
+  const cell = (id, wk) => {
+    const d = Math.round((days[`${id}|${wk}`] || 0) * 10) / 10, g = got[`${id}|${wk}`];
+    if (g != null) return `<td style="color: var(--success);">${d ? d + 'd · ' : ''}${money(g)} ✅</td>`;
+    const sub = (typeof operativeInvoices !== 'undefined' ? operativeInvoices : []).find(x => x.status === 'submitted' && String(x.user_id) === String(id) && x.week_start === wk);
+    if (sub) return `<td style="color: #60a5fa;">${d ? d + 'd · ' : ''}📨 submitted ${money(sub.net)}</td>`;
+    if (!d) return '<td style="color: var(--text-muted);">-</td>';
+    if (wk === thisMon) return `<td style="color: var(--text-muted);">${d}d · in progress</td>`;
+    missing++;
+    return `<td style="color: var(--warning); font-weight: 700;">${d}d · no invoice yet</td>`;
+  };
+  const rows = people.map(p => `<tr><td><strong>${diaryEsc(p.name)}</strong></td>${weeks.map(w => cell(p.id, w)).join('')}</tr>`).join('');
+  host.style.display = '';
+  host.innerHTML = `<h3 style="margin-bottom: 4px;">👷 Weekly labour invoices</h3>
+    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">Days booked in the planner against the invoice received for that week. ${missing ? `<strong style="color: var(--warning);">${missing} week${missing > 1 ? 's' : ''} still waiting for an invoice.</strong>` : 'Nothing outstanding.'} Labour only counts as a cost once its invoice is imported below.</p>
+    ${people.length ? `<div style="overflow-x: auto;"><table class="rep-table"><thead><tr><th>Operative</th>${weeks.map(w => `<th>w/c ${diaryEsc(formatUKDate(w).slice(0, 5))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '<p style="color: var(--text-muted);">No shifts booked since the start date.</p>'}`;
 }
 
 function invMerchantOf(f) {
@@ -4945,6 +6483,7 @@ function renderInvoiceRegister() {
   const merchF = document.getElementById('invFilterMerchant').value;
   const rows = allPdfs.filter(f => f.file_type === 'invoice')
     .filter(f => !siteF || String(f.site_id) === siteF)
+    .filter(f => !siteF && jobScope === 'mine' ? (!invSiteById(f.site_id) || f.site_id === OVERHEAD_SITE.id || siteInScope(invSiteById(f.site_id))) : true)
     .filter(f => !merchF || invMerchantOf(f) === merchF)
     .filter(f => !q || [f.invoice_no, f.po_number, invMerchantOf(f), f.filename].join(' ').toLowerCase().includes(q))
     .sort((a, b) => String(b.invoice_date || b.created_at).localeCompare(String(a.invoice_date || a.created_at)));
@@ -4964,26 +6503,25 @@ function renderInvoiceRegister() {
   };
   const dupMatch = f => f.dup_dismissed ? null : allInv.find(o => String(o.id) !== String(f.id) && !o.dup_dismissed && sameInvoice(f, o)) || null;
   body.innerHTML = rows.map(f => {
-    const site = allSites.find(s => String(s.id) === String(f.site_id));
+    const site = invSiteById(f.site_id);
     const unassigned = !site;
     const match = dupMatch(f);
     const dup = !!match;
-    const matchSite = match ? allSites.find(x => String(x.id) === String(match.site_id)) : null;
+    const matchSite = match ? invSiteById(match.site_id) : null;
     const rowStyle = dup ? DUP_ROW_STYLE : unassigned ? 'background: rgba(245, 158, 11, 0.18); box-shadow: inset 4px 0 0 var(--warning);' : '';
     return `<tr${rowStyle ? ` style="${rowStyle}"` : ''}>
       <td>${diaryEsc(formatUKDate(f.invoice_date || f.created_at))}</td>
       <td data-label="Invoice">${diaryEsc(f.invoice_no || '-')}${dup ? DUP_BADGE + `<div style="font-size: 0.72rem; color: #fca5a5;">Matches ${diaryEsc(match.invoice_no ? 'invoice ' + match.invoice_no : match.filename)} on ${diaryEsc(matchSite ? matchSite.address : 'no job yet')}</div>` : ''}${f.source === 'email' ? `<div style="font-size: 0.72rem; color: var(--text-muted);">📧 Emailed${f.needs_review && f.review_reason ? ' - ' + diaryEsc(f.review_reason) : ''}</div>` : ''}</td>
-      <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}</td>
+      <td data-label="Merchant">${diaryEsc(invMerchantOf(f) || '-')}${isLabourInvoice(f) ? `<div style="font-size: 0.72rem; color: var(--text-muted);">👷 Labour${f.contractor_id ? ' - ' + diaryEsc((allUsers.find(u => String(u.id) === String(f.contractor_id)) || {}).full_name || '') : ''}${f.week_start ? ' - w/c ' + diaryEsc(formatUKDate(f.week_start)) : ''}</div>` : ''}${f.split_group ? `<div style="font-size: 0.72rem; color: var(--text-muted);">✂️ part of ${formatPounds(f.split_total_net)} invoice</div>` : ''}</td>
       <td data-label="PO">${diaryEsc(String(f.po_number || '').startsWith('INV-') ? 'No PO' : f.po_number)}</td>
-      <td data-label="Job">${unassigned
-        ? `<div style="color: var(--warning); font-weight: 700; font-size: 0.8rem; margin-bottom: 4px;">⚠️ Not attributed to a job</div><select class="form-control inv-assign-site" data-id="${diaryEsc(f.id)}" style="min-height: 32px; padding: 2px 8px;">${invSiteOptions('')}</select>`
-        : diaryEsc(site.address)}</td>
+      <td data-label="Job">${unassigned ? '<div style="color: var(--warning); font-weight: 700; font-size: 0.8rem;">⚠️ Not attributed to a job</div>' : diaryEsc(site.address)}</td>
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
       <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
       <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
-      <td style="white-space: nowrap;">${dup ? `<button type="button" class="btn btn-outline btn-sm inv-keep" data-id="${diaryEsc(f.id)}" title="This is a different invoice - keep it">Not a duplicate</button> ` : ''}${unassigned ? `<button type="button" class="btn btn-primary btn-sm inv-assign" data-id="${diaryEsc(f.id)}">Assign job</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+      <td style="white-space: nowrap;">${dup ? `<button type="button" class="btn btn-outline btn-sm inv-keep" data-id="${diaryEsc(f.id)}" title="This is a different invoice - keep it">Not a duplicate</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${!site || site === OVERHEAD_SITE ? ` <button type="button" class="btn ${site ? 'btn-outline' : 'btn-primary'} btn-sm inv-assign" data-id="${diaryEsc(f.id)}">${site ? 'Change job' : 'Attach to job'}</button>` : ''}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
+  body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => openAssignInvoice(b.dataset.id)));
   body.querySelectorAll('.inv-delete').forEach(b => b.addEventListener('click', () => deleteInvoice(b.dataset.id)));
   body.querySelectorAll('.inv-keep').forEach(b => b.addEventListener('click', async () => {
     const f = allPdfs.find(x => String(x.id) === String(b.dataset.id));
@@ -4993,35 +6531,80 @@ function renderInvoiceRegister() {
     renderInvoiceRegister();
     showGreenToast('✅ Kept - marked as not a duplicate');
   }));
-  body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => {
-    const sel = body.querySelector(`.inv-assign-site[data-id="${b.dataset.id}"]`);
-    assignInvoiceToJob(b.dataset.id, sel ? sel.value : '');
-  }));
 }
 
-// Attribute an unattributed invoice to a job: moves it onto the job and adds its cost there
-async function assignInvoiceToJob(fileId, siteId) {
+// ---- Attach an unassigned invoice to a job ----
+async function openAssignInvoice(fileId) {
   const f = allPdfs.find(x => String(x.id) === String(fileId));
-  const site = allSites.find(x => String(x.id) === String(siteId));
-  if (!f || !db || !isManagementUser(currentUser)) return;
-  if (!site) { alert('Choose the job first.'); return; }
+  if (!f) return;
+  document.getElementById('invAssignOverlay')?.remove();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay active';
+  overlay.id = 'invAssignOverlay';
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  overlay.innerHTML = `<div class="modal-card"><div class="modal-header"><h3>Attach invoice to a job</h3></div>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">${diaryEsc(invMerchantOf(f) || f.filename)} · ${diaryEsc(f.invoice_no || 'no invoice no.')} · ${diaryEsc(formatPounds(f.invoice_net) || '-')} net</p>
+    <div id="invAssignSuggest" style="margin-bottom: 12px;">⏳ Reading the invoice for an address...</div>
+    <select id="invAssignSite" class="form-control">${invSiteOptions('', true)}</select>
+    <div style="display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end;">
+      <button type="button" class="btn btn-outline" id="invAssignCancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="invAssignSave">Attach</button>
+    </div></div>`;
+  document.body.appendChild(overlay);
+  const sel = overlay.querySelector('#invAssignSite');
+  overlay.querySelector('#invAssignCancel').addEventListener('click', close);
+  overlay.querySelector('#invAssignSave').addEventListener('click', async ev => {
+    if (!sel.value) { alert('Choose the job.'); return; }
+    ev.target.disabled = true;
+    try { await assignInvoiceToSite(f, sel.value); close(); showGreenToast('🧾 Invoice attached to the job'); }
+    catch (err) { alert('Could not attach: ' + err.message); ev.target.disabled = false; }
+  });
+  // suggestions: read the PDF text, plus the merchant and file name
+  let text = [invMerchantOf(f), f.filename].join(' ');
   try {
-    if (f.invoice_net == null || isNaN(parseFloat(f.invoice_net))) {
-      const typed = prompt('The price was not found on this invoice. Enter the net price (ex VAT):');
-      const net = parseFloat(String(typed || '').replace(/[£,\s]/g, ''));
-      if (isNaN(net)) return;
-      f.invoice_net = Math.round(net * 100) / 100;
-      await db.collection('pdfs').doc(String(f.id)).update({ invoice_net: f.invoice_net });
-    }
-    const poNumber = f.po_number || `INV-${String(f.invoice_no || Date.now()).replace(/[^A-Za-z0-9]/g, '')}`;
-    const existingPo = allPOs.find(po => po.po_number === poNumber && String(po.site_id) === String(site.id));
-    const updated = { ...f, site_id: String(site.id), po_number: poNumber };
-    await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id), po_number: poNumber, needs_review: false });
-    Object.assign(f, updated);
-    await applyInvoiceToJob(f, site, !existingPo, poNumber, f.merchant, f.invoice_no);
-    showGreenToast(`🧾 Invoice costed to ${site.address}`);
-  } catch (err) {
-    alert('Could not assign the invoice: ' + err.message);
+    const res = await fetch('/files/' + encodeURIComponent(f.id));
+    const blob = await res.blob();
+    const lines = await extractPdfLines(new File([blob], f.filename || 'invoice.pdf', { type: 'application/pdf' }));
+    text += ' ' + lines.join(' ');
+  } catch (err) { console.warn('Could not read invoice text', err); }
+  const box = overlay.querySelector('#invAssignSuggest');
+  if (!box) return;
+  const guesses = suggestSites(text, allSites, 3);
+  if (!guesses.length) { box.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No address found on the invoice - choose the job below.</span>'; return; }
+  box.innerHTML = `<div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">Could be:</div>` + guesses.map(g =>
+    `<button type="button" class="btn btn-outline inv-guess" data-id="${diaryEsc(g.site.id)}" style="display: block; width: 100%; text-align: left; margin-bottom: 6px;">${diaryEsc(g.site.address)}${g.site.is_archived ? ' (archived)' : ''} <small style="color: var(--text-muted);">- invoice mentions "${diaryEsc(g.hits.join(', '))}"</small></button>`).join('');
+  box.querySelectorAll('.inv-guess').forEach(b => b.addEventListener('click', () => { sel.value = b.dataset.id; }));
+  if (guesses.length === 1 || guesses[0].score > guesses[1].score * 1.5) sel.value = String(guesses[0].site.id);
+}
+
+async function assignInvoiceToSite(f, siteId) {
+  const site = invSiteById(siteId);
+  if (!site) throw new Error('Job not found');
+  // an invoice imported with no job (or an emailed one with no price found) has no cost on any job yet
+  if (f.invoice_net == null || isNaN(parseFloat(f.invoice_net))) {
+    const typed = prompt('The price was not found on this invoice. Enter the net price (ex VAT):');
+    const net = parseFloat(String(typed || '').replace(/[£,\s]/g, ''));
+    if (isNaN(net)) throw new Error('A net price is needed to cost the invoice');
+    f.invoice_net = Math.round(net * 100) / 100;
+    await db.collection('pdfs').doc(String(f.id)).update({ invoice_net: f.invoice_net });
+  }
+  await db.collection('pdfs').doc(String(f.id)).update({ site_id: String(site.id), needs_review: false });
+  f.site_id = String(site.id); f.needs_review = false;
+  const po = allPOs.find(p => p.po_number === f.po_number);
+  if (po) {
+    await db.collection('purchase_orders').doc(po.po_number).update({ site_id: String(site.id), site_address: site.address });
+    po.site_id = String(site.id); po.site_address = site.address;
+  } else {
+    const poNumber = f.po_number || `INV-${String(f.invoice_no || f.id).replace(/[^A-Za-z0-9]/g, '')}`;
+    const fields = await recalcPoFromInvoices(poNumber, [f]);
+    await db.collection('purchase_orders').doc(poNumber).set({
+      po_number: poNumber, seq: null, site_id: String(site.id), site_address: site.address,
+      requested_by_id: String(currentUser.id), requested_by_name: currentUser.full_name,
+      merchant: f.merchant || 'Unknown merchant', description: `${isLabourInvoice(f) ? 'Labour invoice' : 'Invoice'} ${f.invoice_no || ''} (no PO)`.trim(), est_value: null,
+      created_at: new Date().toISOString(), ...fields
+    });
+    if (f.po_number !== poNumber) { await db.collection('pdfs').doc(String(f.id)).update({ po_number: poNumber }); f.po_number = poNumber; }
   }
   renderInvoiceRegister();
 }
@@ -5029,7 +6612,8 @@ async function assignInvoiceToJob(fileId, siteId) {
 async function deleteInvoice(fileId) {
   const f = allPdfs.find(x => String(x.id) === String(fileId));
   if (!f || !isOwnerOrAdminUser(currentUser) || !confirm('Delete this invoice and take its cost off the job?')) return;
-  if (f.storage_path && typeof firebase.storage === 'function') {
+  const sharedFile = f.storage_path && allPdfs.some(x => x.id !== f.id && x.storage_path === f.storage_path);
+  if (f.storage_path && !sharedFile && typeof firebase.storage === 'function') {
     await getStorageForBucket(f.storage_bucket || STORAGE_BUCKETS[0]).ref(f.storage_path).delete().catch(console.warn);
   }
   await db.collection('pdfs').doc(String(f.id)).delete();
@@ -5067,8 +6651,11 @@ function setupInvoiceListeners() {
 // -------------------------------------------------------------------
 let financeJobs = {};
 let financeCosts = [];
+let financeVariations = [];
 let financeRates = {};
 let financePay = {};
+let financeHourly = {};   // direct employees on an hourly rate: { rate, hpd }
+function isDirectPay(opId) { const p = financePay[String(opId)]; return p === 'hourly' || p === 'direct'; }
 let financeUnsubs = [];
 
 function startFinanceSync() {
@@ -5083,13 +6670,31 @@ function startFinanceSync() {
     financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
   }, warn('finance_costs')));
+  financeUnsubs.push(db.collection('finance_variations').onSnapshot(snap => {
+    financeVariations = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    refreshFinanceViews();
+  }, warn('finance_variations')));
+  financeUnsubs.push(db.collection('customer_invoices').onSnapshot(snap => {
+    customerInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+    refreshFinanceViews();
+  }, warn('customer_invoices')));
   financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
     financePay = {};
+    financeHourly = {};
     snap.docs.forEach(d => {
-      const v = parseFloat(d.data().day_rate);
-      if (!isNaN(v)) financeRates[d.id] = v;
-      financePay[d.id] = d.data().pay_type === 'price' ? 'price' : 'day';
+      const data = d.data();
+      const pt = ['price', 'hourly', 'direct'].includes(data.pay_type) ? data.pay_type : 'day';
+      financePay[d.id] = pt;
+      if (pt === 'hourly') {
+        // an hourly rate is turned into a cost per full day (hours per day, 8 unless set); AM or PM shifts are half
+        const hr = parseFloat(data.hourly_rate), hpd = parseFloat(data.hours_per_day) || 8;
+        financeHourly[d.id] = { rate: isNaN(hr) ? null : hr, hpd };
+        if (!isNaN(hr)) financeRates[d.id] = Math.round(hr * hpd * 100) / 100;
+      } else {
+        const v = parseFloat(data.day_rate);
+        if (!isNaN(v)) financeRates[d.id] = v;
+      }
     });
     refreshFinanceViews();
   }, warn('finance_rates')));
@@ -5100,8 +6705,11 @@ function stopFinanceSync() {
   financeUnsubs = [];
   financeJobs = {};
   financeCosts = [];
+  financeVariations = [];
   financeRates = {};
   financePay = {};
+  financeHourly = {};
+  customerInvoices = [];
 }
 
 let uiRefreshPending = false;
@@ -5128,10 +6736,58 @@ function money(v) {
   return (n < 0 ? '-£' : '£') + Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/**
+ * Cost every booked shift so that a person's cost on any one day can NEVER exceed their day rate, however many jobs
+ * they are booked on. The day is two halves (AM, PM). An AM shift uses the morning, a PM shift the afternoon, an
+ * all-day shift both. Each half is worth half the day rate and is shared equally between the shifts using it:
+ *   4 AM jobs on £200        -> £100 for the morning, £25 each
+ *   2 all-day jobs on £200   -> £200 for the day, £100 each
+ *   all-day + AM on £200     -> £200 for the day: £150 and £50
+ * Worked in whole pence (largest remainder), so the shares add up to exactly the person's cost for the day.
+ * Returns a Map of shift -> { frac (share of a day), pence, overlap (booked on more than one job in the same half) }.
+ */
+function allocateShiftCosts() {
+  const groups = {};
+  allShifts.forEach(sh => {
+    if (!sh.operative_id || sh.is_drying_day) return;
+    const k = `${sh.operative_id}|${sh.shift_date}`;
+    (groups[k] = groups[k] || []).push(sh);
+  });
+  const out = new Map();
+  Object.keys(groups).forEach(k => {
+    const shifts = groups[k].slice().sort((x, y) => String(x.site_id).localeCompare(String(y.site_id)) || String(x.id).localeCompare(String(y.id)));
+    const usesAm = sh => sh.shift_period !== 'pm';
+    const usesPm = sh => sh.shift_period !== 'am';
+    const am = shifts.filter(usesAm).length;
+    const pm = shifts.filter(usesPm).length;
+    const dayFrac = (am > 0 ? 0.5 : 0) + (pm > 0 ? 0.5 : 0);
+    const opId = String(shifts[0].operative_id);
+    const rate = financeRates[opId];
+    const paid = financePay[opId] !== 'price' && rate != null;
+    const totalPence = paid ? Math.round(rate * 100 * dayFrac) : 0;
+    const weights = shifts.map(sh => (usesAm(sh) ? 0.5 / am : 0) + (usesPm(sh) ? 0.5 / pm : 0));
+    const raw = weights.map(w => (dayFrac ? totalPence * w / dayFrac : 0));
+    const pence = raw.map(Math.floor);
+    let left = totalPence - pence.reduce((t, v) => t + v, 0);
+    raw.map((v, i) => ({ i, r: v - Math.floor(v) })).sort((x, y) => y.r - x.r || x.i - y.i).forEach(o => { if (left > 0) { pence[o.i]++; left--; } });
+    shifts.forEach((sh, i) => out.set(sh, {
+      frac: weights[i],
+      pence: pence[i],
+      overlap: (usesAm(sh) && am > 1) || (usesPm(sh) && pm > 1),
+    }));
+  });
+  return out;
+}
+
 function computeSiteFinance(site) {
   const sid = String(site.id);
   const pos = allPOs.filter(po => String(po.site_id) === sid && po.status !== 'Cancelled');
-  const invoiced = pos.filter(po => po.invoice_value != null).reduce((t, po) => t + (parseFloat(po.invoice_value) || 0), 0);
+  const invoicedAll = pos.filter(po => po.invoice_value != null).reduce((t, po) => t + (parseFloat(po.invoice_value) || 0), 0);
+  // Operatives' invoices are labour, not materials
+  const labourDocs = allPdfs.filter(f => isLabourInvoice(f) && String(f.site_id) === sid);
+  const labourAllNet = labourDocs.reduce((t, f) => t + (parseFloat(f.invoice_net) || 0), 0);
+  const labourInvoiced = Math.round(labourDocs.filter(labourInvoiceCounts).reduce((t, f) => t + (parseFloat(f.invoice_net) || 0), 0) * 100) / 100;
+  const invoiced = Math.max(0, Math.round((invoicedAll - labourAllNet) * 100) / 100);
   const onOrder = pos.filter(po => po.invoice_value == null && po.est_value != null).reduce((t, po) => t + (parseFloat(po.est_value) || 0), 0);
   const extrasList = financeCosts.filter(c => String(c.site_id) === sid);
   const extras = extrasList.reduce((t, c) => t + (parseFloat(c.amount) || 0), 0);
@@ -5141,27 +6797,61 @@ function computeSiteFinance(site) {
   const byOp = {};
   let labour = 0, labourPlanned = 0;
   const noRate = new Set();
+  // One person's cost on one day can never exceed their day rate: the day is worked out once per person across ALL sites
+  // and shared out between the jobs (see allocateShiftCosts).
+  const alloc = allocateShiftCosts();
+  const cutoff = labourCutoff();
+  let labourEstimate = 0;
+  const doubleBooked = new Set();
   allShifts.filter(sh => String(sh.site_id) === sid && sh.operative_id && !sh.is_drying_day).forEach(sh => {
-    const frac = sh.shift_period === 'am' || sh.shift_period === 'pm' ? 0.5 : 1;
+    const a = alloc.get(sh) || { frac: 0, pence: 0, overlap: false };
+    const frac = a.frac;
+    if ((sh.shift_date || '') >= cutoff && !isDirectPay(sh.operative_id)) {
+      // from the cutoff, labour comes from invoices; the day-rate figure is only an estimate
+      const r0 = financeRates[String(sh.operative_id)];
+      if (financePay[String(sh.operative_id)] !== 'price' && r0 != null && (sh.shift_date || '') <= todayKey) labourEstimate += a.pence / 100;
+      return;
+    }
+    if (a.overlap) {
+      const u0 = allUsers.find(x => String(x.id) === String(sh.operative_id));
+      doubleBooked.add(`${u0 ? u0.full_name : 'Unknown'} on ${sh.shift_date}`);
+    }
     const rate = financeRates[String(sh.operative_id)];
     const priceWork = financePay[String(sh.operative_id)] === 'price';
     const isFuture = (sh.shift_date || '') > todayKey;
-    const cost = priceWork ? 0 : (rate || 0) * frac;
+    const cost = priceWork || rate == null ? 0 : a.pence / 100;
     if (isFuture) { labourPlanned += cost; return; }
     const u = allUsers.find(x => String(x.id) === String(sh.operative_id));
     const name = u ? u.full_name : 'Unknown';
     if (rate == null && !priceWork) noRate.add(name);
     const row = byOp[sh.operative_id] = byOp[sh.operative_id] || { name, days: 0, cost: 0, priceWork };
-    row.days += frac;
-    row.cost += cost;
-    labour += cost;
+    row.days = Math.round((row.days + frac) * 1000) / 1000;
+    row.cost = Math.round((row.cost + cost) * 100) / 100;
+    labour = Math.round((labour + cost) * 100) / 100;
   });
 
-  const value = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
-  const totalCost = invoiced + onOrder + labour + extras;
+  // Job value = original quote + approved variations (omissions are negative). Pending ones are shown but not counted.
+  const baseValue = financeJobs[sid] && financeJobs[sid].job_value != null ? parseFloat(financeJobs[sid].job_value) : null;
+  const variations = financeVariations.filter(v => String(v.site_id) === sid).sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  const variationsApproved = Math.round(variations.filter(v => v.status === 'approved').reduce((t, v) => t + (parseFloat(v.amount) || 0), 0) * 100) / 100;
+  const variationsPending = Math.round(variations.filter(v => v.status === 'pending').reduce((t, v) => t + (parseFloat(v.amount) || 0), 0) * 100) / 100;
+  const value = baseValue != null ? Math.round((baseValue + variationsApproved) * 100) / 100 : null;
+  const totalCost = invoiced + labourInvoiced + onOrder + labour + extras;
   const profit = value != null ? value - totalCost : null;
   const margin = value ? (profit / value) * 100 : null;
-  return { value, invoiced, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), totalCost, profit, margin };
+  // Price-work people: what has been invoiced or logged against them on this job (already inside the totals above)
+  const contractorTotals = {};
+  allPdfs.filter(f => f.file_type === 'invoice' && String(f.site_id) === sid && f.contractor_id).forEach(f => {
+    contractorTotals[f.contractor_id] = (contractorTotals[f.contractor_id] || 0) + (parseFloat(f.invoice_net) || 0);
+  });
+  extrasList.filter(c => c.contractor_id).forEach(c => {
+    contractorTotals[c.contractor_id] = (contractorTotals[c.contractor_id] || 0) + (parseFloat(c.amount) || 0);
+  });
+  const contractors = Object.keys(contractorTotals).map(id => {
+    const u = allUsers.find(x => String(x.id) === String(id));
+    return { name: u ? u.full_name : 'Unknown', total: contractorTotals[id] };
+  });
+  return { contractors, value, baseValue, variations, variationsApproved, variationsPending, invoiced, labourInvoiced, labourEstimate, onOrder, labour, labourPlanned, extras, extrasList, byOp: Object.values(byOp), noRate: Array.from(noRate), doubleBooked: Array.from(doubleBooked), totalCost, profit, margin };
 }
 
 function profitColor(v) {
@@ -5188,14 +6878,55 @@ function renderSiteFinance(site) {
       <td style="text-align: right;">${money(c.amount)}</td>
       <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-edit-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-del-cost" data-id="${diaryEsc(c.id)}" style="padding: 2px 8px;">Delete</button></td></tr>`).join('');
 
+  const fjT = financeJobs[String(site.id)] || {};
+  const trackerInput = (key, label, type, ph) => `<label style="font-size: 0.75rem; color: var(--text-muted); display: block;">${label}<input type="${type}" class="form-control fin-track" data-key="${key}" value="${diaryEsc(fjT[key] || '')}"${ph ? ` placeholder="${ph}"` : ''} style="margin-top: 2px;"></label>`;
   host.innerHTML = `
     <div class="site-card" style="margin-bottom: 16px;">
+      <h4 style="margin-bottom: 8px;">Job tracker <span style="font-weight: 400; font-size: 0.8rem; color: var(--text-muted);">- used by the finance reports. Install and completion dates come from the planner; only fill in dates here to override them.</span></h4>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px;">
+        ${trackerInput('client', 'Client', 'text', 'e.g. Stoke City Council')}
+        ${trackerInput('client_po', 'Client PO', 'text', '')}
+        ${trackerInput('handover_date', 'Handover docs sent', 'date')}
+        ${trackerInput('paid_date', 'Date paid', 'date')}
+        ${trackerInput('install_override', 'Install date (override)', 'date')}
+        ${trackerInput('completion_override', 'Completion date (override)', 'date')}
+      </div>
+      <label style="display: flex; gap: 8px; align-items: center; margin-top: 10px; cursor: pointer;"><input type="checkbox" id="finTrackIssues"${fjT.flag_issues ? ' checked' : ''}> <strong>Flag as ISSUES</strong></label>
+      <input type="text" class="form-control fin-track" data-key="issue_note" value="${diaryEsc(fjT.issue_note || '')}" placeholder="What is the issue? (shows in the reports)" style="margin-top: 6px;">
+    </div>
+    <div class="site-card" style="margin-bottom: 16px;">
       <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-        <label for="finJobValue" style="font-weight: 700;">Job value (quote) £ ex VAT</label>
+        <label for="finJobValue" style="font-weight: 700;">Original quote £ ex VAT</label>
         <input type="text" inputmode="decimal" autocomplete="off" id="finJobValue" class="form-control" step="0.01" min="0" value="${f.value != null ? f.value : ''}" placeholder="e.g. 10000" style="width: 180px;">
       </div>
-      ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the job value to see profit and margin.</p>' : ''}
+      ${f.value == null ? '<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">Enter the original quote to see profit and margin.</p>' : ''}
+      ${f.baseValue != null && f.variations.length ? `<p style="margin-top: 8px; font-size: 0.9rem;">Quote ${money(f.baseValue)} ${f.variationsApproved < 0 ? '−' : '+'} variations ${money(Math.abs(f.variationsApproved))} = <strong>current job value ${money(f.value)}</strong>${f.variationsPending ? ` <span style="color: var(--warning);">(${money(f.variationsPending)} of pending variations not included)</span>` : ''}</p>` : ''}
+      ${isOwnerOrAdminUser(currentUser) ? `<div style="margin-top: 12px;"><button type="button" class="btn btn-primary" id="finCreateInvoice" style="width: auto;">🧾 Create invoice for ${f.value != null ? money(f.value) : 'the job'}</button></div>` : ''}
     </div>
+    <div class="site-card" style="margin-bottom: 16px;">
+      <h4 style="margin-bottom: 4px;">Variations</h4>
+      <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 8px;">Extra or omitted works agreed after the quote. Approved variations change the job value, and so profit, margin and the invoice. Use a minus for omissions.</p>
+      ${f.variations.length ? `<div style="overflow-x: auto; margin-bottom: 10px;"><table class="rep-table"><thead><tr><th>Ref</th><th>Date</th><th>Description of works</th><th style="text-align: right;">Amount</th><th>Status</th><th></th></tr></thead><tbody>${f.variations.map((v, i) => `<tr>
+        <td><strong>${diaryEsc(v.ref || 'VO' + (i + 1))}</strong></td><td>${diaryEsc(formatUKDate(v.date))}</td><td style="white-space: normal;">${diaryEsc(v.description)}</td>
+        <td style="text-align: right; white-space: nowrap; ${parseFloat(v.amount) < 0 ? 'color: #ef4444;' : ''}">${money(v.amount)}</td>
+        <td><select class="form-control fin-var-status" data-id="${diaryEsc(v.id)}" style="min-height: 30px; padding: 2px 6px; width: auto;"><option value="approved"${v.status === 'approved' ? ' selected' : ''}>Approved</option><option value="pending"${v.status === 'pending' ? ' selected' : ''}>Pending</option><option value="rejected"${v.status === 'rejected' ? ' selected' : ''}>Rejected</option></select></td>
+        <td style="white-space: nowrap;"><button type="button" class="btn btn-outline btn-sm fin-var-edit" data-id="${diaryEsc(v.id)}" style="padding: 2px 8px;">Edit</button> <button type="button" class="btn btn-danger btn-sm fin-var-del" data-id="${diaryEsc(v.id)}" style="padding: 2px 8px;">✕</button></td></tr>`).join('')}</tbody></table></div>` : ''}
+      <form id="finVarForm" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px;">
+        <input type="text" id="finVarDesc" class="form-control" placeholder="Description of the works" required style="grid-column: span 2;">
+        <input type="text" inputmode="decimal" autocomplete="off" id="finVarAmount" class="form-control" placeholder="£ ex VAT (minus to omit)" required>
+        <input type="date" id="finVarDate" class="form-control" value="${diaryDateKey(new Date())}" required>
+        <select id="finVarStatus" class="form-control"><option value="approved">Approved</option><option value="pending">Pending</option></select>
+        <button type="submit" class="btn btn-primary">+ Add variation</button>
+      </form>
+    </div>
+    ${(() => {
+      const invs = customerInvoices.filter(i => String(i.site_id) === String(site.id)).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      if (!invs.length) return '';
+      return `<div class="site-card" style="margin-bottom: 16px;"><h4 style="margin-bottom: 8px;">Invoices raised</h4><table class="planner-table" style="min-width: 0;"><tbody>${invs.map(i => `<tr>
+        <td><strong>${diaryEsc(i.number)}</strong><div style="font-size: 0.75rem; color: var(--text-muted);">${diaryEsc(formatUKDate(i.invoice_date))} · ${diaryEsc(i.customer_name)}</div></td>
+        <td style="text-align: right; white-space: nowrap;">${money((i.total_pence || 0) / 100)}${i.cis_applied ? `<div style="font-size: 0.7rem; color: var(--text-muted);">CIS ${i.cis_rate}% · payable ${money((i.payable_pence || 0) / 100)}</div>` : ''}</td>
+        <td style="text-align: right;"><button type="button" class="btn btn-outline btn-sm ci-download" data-id="${diaryEsc(i.id)}" style="padding: 2px 10px;">PDF</button></td></tr>`).join('')}</tbody></table></div>`;
+    })()}
 
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px;">
       <div class="site-card"><div style="font-size: 0.75rem; color: var(--text-muted);">JOB VALUE</div><div style="font-size: 1.3rem; font-weight: 800;">${f.value != null ? money(f.value) : '-'}</div></div>
@@ -5209,10 +6940,12 @@ function renderSiteFinance(site) {
       <table class="planner-table" style="min-width: 0;"><tbody>
         ${row('Materials invoiced', money(f.invoiced), 'From imported invoices (ex VAT)')}
         ${row('Materials on order', money(f.onOrder), 'POs raised but not yet invoiced (estimates)')}
-        ${row('Labour', money(f.labour), f.labourPlanned > 0 ? `Shifts up to today only. ${money(f.labourPlanned)} of future shifts not counted yet` : 'Shifts up to and including today')}
+        ${row('Labour (day rates)', money(f.labour), labourFromInvoices() ? `Shifts before ${formatUKDate(labourCutoff())} only` : (f.labourPlanned > 0 ? `Shifts up to today only. ${money(f.labourPlanned)} of future shifts not counted yet` : 'Shifts up to and including today'))}
+        ${labourFromInvoices() ? row('Labour invoiced', money(f.labourInvoiced), `From operatives' weekly invoices (ex VAT) for weeks from ${formatUKDate(labourCutoff())}.${f.labourEstimate ? ` For reference only, days booked since then at day rates would be about ${money(f.labourEstimate)} - not counted` : ''}`) : ''}
         ${row('Extra costs', money(f.extras))}
         ${row('<strong>Total cost</strong>', '<strong>' + money(f.totalCost) + '</strong>')}
       </tbody></table>
+      ${f.doubleBooked && f.doubleBooked.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ Booked on more than one job at the same time: ${diaryEsc(f.doubleBooked.join('; '))}. Their day rate is shared between those jobs, never charged twice.</p>` : ''}
       ${f.noRate.length ? `<p style="color: var(--warning); font-size: 0.85rem; margin-top: 8px;">⚠️ No day rate set for: ${diaryEsc(f.noRate.join(', '))}. Their shifts cost £0 until a rate is added (Admin Settings, or the Finance page).</p>` : ''}
     </div>
 
@@ -5234,6 +6967,22 @@ function renderSiteFinance(site) {
     </div>`;
 
   host.querySelector('#finJobValue').addEventListener('change', ev => saveJobValue(site.id, ev.target.value));
+  const saveTrack = (patch) => db.collection('finance_jobs').doc(String(site.id)).set({ site_id: String(site.id), ...patch, updated_at: new Date().toISOString() }, { merge: true }).catch(err => alert('Could not save: ' + err.message));
+  host.querySelectorAll('.fin-track').forEach(inp => inp.addEventListener('change', () => saveTrack({ [inp.dataset.key]: inp.value.trim() || null })));
+  host.querySelector('#finTrackIssues').addEventListener('change', ev => saveTrack({ flag_issues: ev.target.checked }));
+  host.querySelector('#finVarForm').addEventListener('submit', ev => {
+    ev.preventDefault();
+    addVariation(site.id, host.querySelector('#finVarDesc').value, host.querySelector('#finVarAmount').value, host.querySelector('#finVarDate').value, host.querySelector('#finVarStatus').value);
+  });
+  host.querySelectorAll('.fin-var-status').forEach(sel => sel.addEventListener('change', () => db.collection('finance_variations').doc(sel.dataset.id).update({ status: sel.value, updated_by: currentUser.full_name, updated_at: new Date().toISOString() }).catch(err => alert('Could not save: ' + err.message))));
+  host.querySelectorAll('.fin-var-edit').forEach(b => b.addEventListener('click', () => editVariation(b.dataset.id)));
+  host.querySelectorAll('.fin-var-del').forEach(b => b.addEventListener('click', () => deleteVariation(b.dataset.id)));
+  const ciBtn = host.querySelector('#finCreateInvoice');
+  if (ciBtn) ciBtn.addEventListener('click', () => openCustomerInvoiceModal(site.id));
+  host.querySelectorAll('.ci-download').forEach(b => b.addEventListener('click', () => {
+    const rec = customerInvoices.find(x => x.id === b.dataset.id);
+    if (rec) ciDownloadPdf(rec).catch(e => alert('Could not create the PDF: ' + e.message));
+  }));
   host.querySelector('#finSiteCostForm').addEventListener('submit', ev => {
     ev.preventDefault();
     addFinanceCost(site.id, host.querySelector('#finSiteCostDesc').value, host.querySelector('#finSiteCostCategory').value,
@@ -5250,8 +6999,21 @@ async function saveJobValue(siteId, raw) {
     .catch(err => alert('Could not save: ' + err.message));
 }
 
+// Labour is costed from the operatives' weekly invoices (default). 'day_rate' puts the old automatic day-rate costing back.
+function labourFromInvoices() { return appSettings.labour_costing !== 'day_rate'; }
+// Invoice-based labour starts on this date (a Monday). Earlier shifts keep costing at day rates, exactly as before.
+function labourCutoff() { return labourFromInvoices() ? (appSettings.labour_invoices_from || '2026-10-19') : '9999-12-31'; }
+// A labour invoice counts if it covers a week from the cutoff on, or is for a price-work person (always counted), or has no week recorded (older invoices).
+// An invoice for an earlier week from someone on day rates would double count shifts already costed, so it is left out.
+function labourInvoiceCounts(f) {
+  if (!isLabourInvoice(f)) return false;
+  if (!f.week_start || f.week_start >= labourCutoff()) return true;
+  return financePay[String(f.contractor_id)] === 'price';
+}
+function isLabourInvoice(f) { return f.file_type === 'invoice' && (f.cost_type === 'labour' || !!f.contractor_id); }
+
 function priceWorkUsers() {
-  return allUsers.filter(u => u.status === 'Active' && financePay[String(u.id)] === 'price')
+  return allUsers.filter(u => u.status === 'Active' && !isDirectPay(u.id) && (labourFromInvoices() || financePay[String(u.id)] === 'price'))
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
 }
 
@@ -5293,6 +7055,7 @@ function renderFinanceView(force) {
   const statusF = document.getElementById('finFilterStatus').value;
   const q = (document.getElementById('finSearch').value || '').toLowerCase();
   const sites = allSites
+    .filter(siteInScope)
     .filter(s => statusF === 'all' || (statusF === 'archived' ? s.is_archived : !s.is_archived))
     .filter(s => !q || String(s.address).toLowerCase().includes(q))
     .sort((a, b) => String(a.address).localeCompare(String(b.address)));
@@ -5312,8 +7075,8 @@ function renderFinanceView(force) {
 
   document.getElementById('finJobsBody').innerHTML = data.length ? data.map(({ site, f }) => `<tr class="fin-job-row" data-site="${diaryEsc(site.id)}" style="cursor: pointer;">
       <td><strong>${diaryEsc(site.address)}</strong>${site.is_archived ? ' <small>(archived)</small>' : ''}</td>
-      <td data-label="Job value">${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}</td>
-      <td data-label="Materials invoiced">${money(f.invoiced)}</td><td data-label="On order">${money(f.onOrder)}</td><td data-label="Labour">${money(f.labour)}</td><td data-label="Extra costs">${money(f.extras)}</td>
+      <td data-label="Job value">${f.value != null ? money(f.value) : '<span style="color: var(--warning);">not set</span>'}${f.variations.some(v => v.status === 'approved') ? `<div style="font-size: 0.7rem; color: var(--text-muted);">incl. ${money(f.variationsApproved)} variations</div>` : ''}</td>
+      <td data-label="Materials invoiced">${money(f.invoiced)}</td><td data-label="On order">${money(f.onOrder)}</td><td data-label="Labour">${money(f.labour + f.labourInvoiced)}</td><td data-label="Extra costs">${money(f.extras)}</td>
       <td data-label="Total cost"><strong>${money(f.totalCost)}</strong></td>
       <td data-label="Profit / loss" style="color: ${profitColor(f.profit)}; font-weight: 700;">${f.profit != null ? money(f.profit) : '-'}</td>
       <td data-label="Margin" style="color: ${profitColor(f.profit)}; font-weight: 700;">${marginText(f.margin)}</td></tr>`).join('')
@@ -5347,19 +7110,28 @@ function renderFinanceView(force) {
   document.querySelectorAll('#finCostsBody .fin-del-cost').forEach(b => b.addEventListener('click', () => deleteFinanceCost(b.dataset.id)));
   document.querySelectorAll('#finCostsBody .fin-edit-cost').forEach(b => b.addEventListener('click', () => openCostEdit(b.dataset.id)));
 
+  updateLabourModeUi();
   // Day rates (Owner / Admin can edit)
   const canEditRates = isOwnerOrAdminUser(currentUser);
   document.getElementById('finRatesCard').style.display = '';
   document.getElementById('finRatesBody').innerHTML = allUsers.filter(u => u.status === 'Active')
     .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name))).map(u => {
-      const price = financePay[String(u.id)] === 'price';
+      const pt = financePay[String(u.id)] || 'day';
+      const price = pt === 'price';
+      const hourly = pt === 'hourly';
       const rate = financeRates[String(u.id)];
+      const hh = financeHourly[String(u.id)] || {};
+      const ptLabel = { day: 'Day rate', price: 'Price work', hourly: 'Hourly - direct employee', direct: 'Day rate - direct employee' };
       return `<tr>
         <td>${diaryEsc(u.full_name)}</td><td data-label="Role">${diaryEsc(u.role)}</td>
         <td data-label="Paid by">${canEditRates
-          ? `<select class="form-control fin-paytype" data-user="${diaryEsc(u.id)}" style="min-height: 32px; padding: 2px 8px; width: auto;"><option value="day"${price ? '' : ' selected'}>Day rate</option><option value="price"${price ? ' selected' : ''}>Price work</option></select>`
-          : (price ? 'Price work' : 'Day rate')}</td>
-        <td data-label="Day rate £">${price ? '<span style="color: var(--text-muted);">invoiced</span>' : canEditRates
+          ? `<select class="form-control fin-paytype" data-user="${diaryEsc(u.id)}" style="min-height: 32px; padding: 2px 8px; width: auto;">${Object.keys(ptLabel).map(k => `<option value="${k}"${pt === k ? ' selected' : ''}>${ptLabel[k]}</option>`).join('')}</select>`
+          : ptLabel[pt]}</td>
+        <td data-label="Rate">${price ? '<span style="color: var(--text-muted);">invoiced</span>' : hourly
+          ? (canEditRates
+            ? `<input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-hourly" data-user="${diaryEsc(u.id)}" value="${hh.rate != null ? hh.rate : ''}" placeholder="£ per hour" style="width: 110px; min-height: 32px; padding: 2px 8px; display: inline-block;"> × <input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-hpd" data-user="${diaryEsc(u.id)}" value="${hh.hpd || 8}" style="width: 60px; min-height: 32px; padding: 2px 8px; display: inline-block;"> h/day <span style="color: var(--text-muted); font-size: 0.75rem;">${rate != null ? '= ' + money(rate) + ' a day' : ''}</span>`
+            : (hh.rate != null ? `${money(hh.rate)}/h × ${hh.hpd || 8}h` : 'not set'))
+          : canEditRates
           ? `<input type="text" inputmode="decimal" autocomplete="off" class="form-control fin-rate" data-user="${diaryEsc(u.id)}" value="${rate != null ? rate : ''}" placeholder="not set" style="width: 140px; min-height: 32px; padding: 2px 8px;">`
           : (rate != null ? money(rate) : 'not set')}</td></tr>`;
     }).join('');
@@ -5367,6 +7139,13 @@ function renderFinanceView(force) {
     const v = inp.value === '' ? null : parseFloat(inp.value);
     if (v == null || !isNaN(v)) db.collection('finance_rates').doc(String(inp.dataset.user)).set({ user_id: String(inp.dataset.user), day_rate: v }, { merge: true }).catch(console.warn);
   }));
+  const saveHourly = user => {
+    const r = document.querySelector(`.fin-hourly[data-user="${user}"]`), h = document.querySelector(`.fin-hpd[data-user="${user}"]`);
+    const rate = r && r.value !== '' ? parseFloat(r.value) : null, hpd = h && h.value !== '' ? parseFloat(h.value) : 8;
+    if ((rate != null && isNaN(rate)) || isNaN(hpd)) return;
+    db.collection('finance_rates').doc(String(user)).set({ user_id: String(user), hourly_rate: rate, hours_per_day: hpd }, { merge: true }).catch(console.warn);
+  };
+  document.querySelectorAll('.fin-hourly, .fin-hpd').forEach(inp => inp.addEventListener('change', () => saveHourly(inp.dataset.user)));
   document.querySelectorAll('.fin-paytype').forEach(sel => sel.addEventListener('change', () => {
     db.collection('finance_rates').doc(String(sel.dataset.user)).set({ user_id: String(sel.dataset.user), pay_type: sel.value }, { merge: true }).catch(console.warn);
   }));
@@ -5410,7 +7189,78 @@ async function handleSaveCostEdit(e) {
   showGreenToast('Cost updated');
 }
 
+function updateLabourModeUi() {
+  const sel = document.getElementById('finLabourMode');
+  if (!sel) return;
+  sel.value = labourFromInvoices() ? 'invoices' : 'day_rate';
+  sel.disabled = !isOwnerOrAdminUser(currentUser);
+  const fromEl = document.getElementById('finLabourFrom');
+  if (fromEl) { fromEl.value = appSettings.labour_invoices_from || '2026-10-19'; fromEl.style.display = labourFromInvoices() ? '' : 'none'; fromEl.disabled = !isOwnerOrAdminUser(currentUser); }
+  document.getElementById('finLabourModeHelp').textContent = labourFromInvoices()
+    ? "Shifts from the start date below no longer cost anything by themselves: each operative's weekly invoice is imported on the Invoices tab and its amounts are added to the jobs it covers. Earlier shifts keep their day-rate cost, so past jobs are unchanged. Direct employees (set to Hourly or Direct below) are always costed from their shifts."
+    : 'Every booked shift (up to today) costs the person\'s day rate against the job, automatically. Operatives set to price work are costed from their invoices.';
+  const rates = document.getElementById('finRatesCard');
+  if (rates) rates.style.opacity = '';
+}
+
+async function addVariation(siteId, description, amountRaw, date, status) {
+  if (!db || !isManagementUser(currentUser)) return;
+  const amt = parseFloat(String(amountRaw).replace(/[£,\s]/g, ''));
+  if (isNaN(amt) || amt === 0) { alert('Enter the variation amount (use a minus for an omission).'); return; }
+  if (!String(description).trim()) { alert('Describe the works.'); return; }
+  const sid = String(siteId);
+  const n = financeVariations.filter(v => String(v.site_id) === sid).reduce((m, v) => Math.max(m, parseInt(String(v.ref || '').replace(/\D/g, '')) || 0), 0) + 1;
+  const id = 'var_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  await db.collection('finance_variations').doc(id).set({
+    id, site_id: sid, ref: 'VO' + n, description: String(description).trim(), amount: Math.round(amt * 100) / 100,
+    date: date || diaryDateKey(new Date()), status: status === 'pending' ? 'pending' : 'approved',
+    created_by: currentUser.full_name, created_at: new Date().toISOString()
+  }).catch(err => alert('Could not save: ' + err.message));
+  showGreenToast(`Variation VO${n} added`);
+}
+function editVariation(id) {
+  const v = financeVariations.find(x => x.id === id);
+  if (!v) return;
+  const desc = prompt('Description of the works:', v.description || '');
+  if (desc === null) return;
+  const amtRaw = prompt('Amount £ ex VAT (minus for an omission):', v.amount);
+  if (amtRaw === null) return;
+  const amt = parseFloat(String(amtRaw).replace(/[£,\s]/g, ''));
+  if (isNaN(amt) || !desc.trim()) { alert('Description and a valid amount are needed.'); return; }
+  db.collection('finance_variations').doc(id).update({ description: desc.trim(), amount: Math.round(amt * 100) / 100, updated_by: currentUser.full_name, updated_at: new Date().toISOString() }).catch(err => alert('Could not save: ' + err.message));
+}
+function deleteVariation(id) {
+  const v = financeVariations.find(x => x.id === id);
+  if (!v || !confirm(`Delete variation ${v.ref || ''} (${money(v.amount)})? The job value will change.`)) return;
+  db.collection('finance_variations').doc(id).delete().catch(err => alert('Could not delete: ' + err.message));
+}
+
+function updateUserModalPayUi() {
+  const pt = document.getElementById('userModalPayType').value;
+  document.getElementById('userModalRateLabel').textContent = pt === 'hourly' ? 'Hourly rate £' : 'Day rate £';
+  document.getElementById('userModalHoursWrap').style.display = pt === 'hourly' ? '' : 'none';
+}
+
 function setupFinanceListeners() {
+  document.getElementById('userModalPayType').addEventListener('change', updateUserModalPayUi);
+  document.getElementById('finLabourFrom').addEventListener('change', async ev => {
+    if (!isOwnerOrAdminUser(currentUser)) return;
+    const v = ev.target.value;
+    if (!v || new Date(v + 'T12:00:00').getDay() !== 1) { alert('Pick a Monday so whole weeks switch over together.'); updateLabourModeUi(); return; }
+    if (!confirm(`Invoice-based labour will apply to shifts from ${formatUKDate(v)}. Shifts before that cost day rates. Continue?`)) { updateLabourModeUi(); return; }
+    appSettings.labour_invoices_from = v;
+    try { await db.collection('settings').doc('app').set({ labour_invoices_from: v }, { merge: true }); showGreenToast('Start date updated'); } catch (err) { alert('Could not save: ' + err.message); }
+    refreshFinanceViews(); renderActiveView(); updateLabourModeUi();
+  });
+  document.getElementById('finLabourMode').addEventListener('change', async ev => {
+    if (!isOwnerOrAdminUser(currentUser)) return;
+    const v = ev.target.value === 'day_rate' ? 'day_rate' : 'invoices';
+    if (!confirm(v === 'invoices' ? 'Cost labour from weekly invoices from the start date? Shifts from that date will stop costing day rates.' : 'Go back to automatic day-rate labour costing? Shift costs will be counted again in every job and report.')) { updateLabourModeUi(); return; }
+    appSettings.labour_costing = v;
+    try { await db.collection('settings').doc('app').set({ labour_costing: v }, { merge: true }); showGreenToast('Labour costing updated'); }
+    catch (err) { alert('Could not save: ' + err.message); }
+    refreshFinanceViews(); renderActiveView(); updateLabourModeUi();
+  });
   document.getElementById('finCostFilterSite').addEventListener('change', renderFinanceView);
   document.getElementById('costEditForm').addEventListener('submit', handleSaveCostEdit);
   document.getElementById('btnCostEditDelete').addEventListener('click', async () => {
