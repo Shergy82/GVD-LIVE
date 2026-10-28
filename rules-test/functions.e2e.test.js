@@ -123,3 +123,15 @@ test('password reset request is silent for unknown emails and notifies managemen
   assert.deepStrictEqual(await call('requestPasswordReset', { email: 'ollie@x.com' }), { ok: true });
   assert.strictEqual((await db.collection('password_reset_requests').get()).size, 1);
 });
+
+test('refreshSession gives fresh claims, e.g. after a Pending user is approved', async () => {
+  assert.strictEqual((await call('refreshSession', {})).error.status, 'UNAUTHENTICATED');
+  const r = await call('login', { email: 'new@x.com', password: 'newpass1' });
+  const idt = await idTokenFrom(r.token);
+  assert.strictEqual(claims(idt).active, false);
+  await db.doc('users/' + r.user.id).update({ status: 'Active' });
+  const fresh = await call('refreshSession', {}, idt);
+  assert.strictEqual(claims(await idTokenFrom(fresh.token)).active, true);
+  await db.doc('users/' + r.user.id).update({ status: 'Restricted' });
+  assert.strictEqual((await call('refreshSession', {}, idt)).error.status, 'PERMISSION_DENIED');
+});

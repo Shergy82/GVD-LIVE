@@ -1,10 +1,17 @@
 // GVD LIVE Works Planner - Pure Firebase Firestore Real-Time Engine
 
 const firebaseConfig = {
+  // Public web identifiers (they ship in every web app); access is controlled by security rules, not by hiding this
+  apiKey: "AIzaSyC2nnP8nXrFKw-4JWswddXLfroDD2lBcg0",
+  appId: "1:440817107816:web:a000c5685aaf7604a84cdd",
   projectId: "gvd-live",
   authDomain: "gvd-live.firebaseapp.com",
   storageBucket: "gvd-live.appspot.com"
 };
+
+// Local testing only: ?emulator=1 on localhost uses the demo-gvd emulator project, so it can never touch production data.
+const USE_EMULATOR = location.hostname === 'localhost' && new URLSearchParams(location.search).get('emulator') === '1';
+if (USE_EMULATOR) firebaseConfig.projectId = 'demo-gvd';
 
 let db = null;
 if (typeof firebase !== 'undefined' && firebase.apps) {
@@ -12,6 +19,61 @@ if (typeof firebase !== 'undefined' && firebase.apps) {
     firebase.initializeApp(firebaseConfig);
   }
   db = firebase.firestore();
+}
+
+// Sign-in is done by the `login` Cloud Function, which returns a Firebase custom token (role claims inside).
+let auth = null;
+let fns = null;
+if (db) {
+  auth = firebase.auth();
+  fns = firebase.app().functions('us-central1');
+  if (USE_EMULATOR) {
+    db.useEmulator('127.0.0.1', 8080);
+    auth.useEmulator('http://127.0.0.1:9099');
+    fns.useEmulator('127.0.0.1', 5001);
+  }
+}
+let syncStarted = false;
+function startSyncOnce() {
+  if (syncStarted) return;
+  syncStarted = true;
+  initFirestoreSync();
+}
+
+async function callFn(name, data) {
+  try {
+    return (await fns.httpsCallable(name)(data || {})).data;
+  } catch (err) {
+    const known = ['invalid-argument', 'permission-denied', 'not-found', 'already-exists', 'resource-exhausted', 'unauthenticated'];
+    const e = new Error(known.includes(String(err.code).replace('functions/', '')) ? err.message : 'Could not reach the server. Please check your connection and try again.');
+    e.code = String(err.code || '').replace('functions/', '');
+    throw e;
+  }
+}
+
+// Signs in with a token from login / register / refreshSession and returns the user record
+async function signInWithServerSession(res) {
+  await auth.signInWithCustomToken(res.token);
+  currentUser = res.user;
+  localStorage.setItem('gvd_current_user_id', res.user.id);
+  return res.user;
+}
+
+// Pending accounts wait here; when an administrator approves them we fetch fresh claims and let them in
+let approvalUnsub = null;
+function watchApproval(userId) {
+  if (approvalUnsub) approvalUnsub();
+  approvalUnsub = db.collection('users').doc(String(userId)).onSnapshot(async docSnap => {
+    if (!docSnap.exists || docSnap.data().status !== 'Active') return;
+    try {
+      const res = await callFn('refreshSession');
+      if (approvalUnsub) { approvalUnsub(); approvalUnsub = null; }
+      await signInWithServerSession(res);
+      startSyncOnce();
+      onUserAuthenticated();
+      showGreenToast('🎉 Account Approved! Welcome to Works Planner.');
+    } catch (e) { console.warn('Approval refresh failed', e); }
+  }, err => console.warn('Approval watch error:', err));
 }
 
 const REST_FALLBACK_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a0dea5e03e1f14';
@@ -217,7 +279,7 @@ function deduplicatePhotos() {
 
 function loadLocalStorageData() {
   try {
-    allUsers = JSON.parse(localStorage.getItem('gvd_users')) || [];
+    allUsers = (JSON.parse(localStorage.getItem('gvd_users')) || []).map(u => { const c = { ...u }; delete c.password_hash; delete c.temp_password; return c; });
     allSites = JSON.parse(localStorage.getItem('gvd_sites')) || [];
     allShifts = JSON.parse(localStorage.getItem('gvd_shifts')) || [];
     allPhotos = JSON.parse(localStorage.getItem('gvd_photos')) || [];
@@ -257,6 +319,7 @@ function initFirestoreSync() {
   db.collection('users').onSnapshot(snapshot => {
     allUsers = snapshot.docs.map(doc => {
       const d = doc.data();
+      delete d.password_hash; delete d.temp_password; // never keep credentials in memory or the local cache
       return { ...d, id: d.id || doc.id };
     });
 
@@ -414,16 +477,6 @@ async function fetchRestFallback() {
   }
 }
 
-// Simple hash for password check
-function hashSimple(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return hash.toString(16);
-}
-
 // -------------------------------------------------------------------
 // INITIALIZATION & ROUTING
 // -------------------------------------------------------------------
@@ -435,9 +488,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupCustomerInvoiceListeners();
   registerServiceWorker();
 
-  initFirestoreSync();
-
-  // Check URL query for customer token (e.g. ?customer=TOKEN)
+  // Check URL query for customer token (e.g. ?customer=TOKEN). Customers never sign in and never touch the database directly.
   const urlParams = new URLSearchParams(window.location.search);
   const custToken = urlParams.get('customer');
   if (custToken) {
@@ -445,15 +496,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  // Check logged-in session
+  if (!auth) { showView('view-login'); return; }
+
+  // Restore a signed-in session: Firebase keeps the sign-in, and we ask the server for fresh role claims.
+  const fbUser = await new Promise(resolve => { const off = auth.onAuthStateChanged(u => { off(); resolve(u); }); });
   const storedUserId = localStorage.getItem('gvd_current_user_id');
-  if (storedUserId) {
-    const user = allUsers.find(u => String(u.id) === String(storedUserId));
-    if (user && user.status === 'Active') {
-      currentUser = user;
-      onUserAuthenticated();
+  if (fbUser && storedUserId && fbUser.uid === storedUserId) {
+    try {
+      const res = await callFn('refreshSession');
+      await signInWithServerSession(res);
+      if (res.user.status === 'Active') {
+        startSyncOnce();
+        onUserAuthenticated();
+      } else {
+        showView('view-awaiting-approval');
+        watchApproval(res.user.id);
+      }
       return;
+    } catch (err) {
+      console.warn('Session refresh failed:', err);
+      if (err.code === 'unauthenticated' || err.code === 'permission-denied') {
+        await auth.signOut().catch(() => {});
+        localStorage.removeItem('gvd_current_user_id');
+      } else {
+        // offline: carry on with the cached record; the data listeners resume when the connection returns
+        const cached = allUsers.find(u => String(u.id) === String(storedUserId));
+        if (cached && cached.status === 'Active') {
+          currentUser = cached;
+          startSyncOnce();
+          onUserAuthenticated();
+          return;
+        }
+      }
     }
+  } else if (storedUserId) {
+    localStorage.removeItem('gvd_current_user_id'); // saved before sign-in moved to the server: sign in once more
   }
 
   showView('view-login');
@@ -2976,7 +3053,10 @@ async function renderAdminUserPushMonitor() {
 // -------------------------------------------------------------------
 // PUBLIC CUSTOMER SCHEDULE VIEW (NO ACCOUNT REQUIRED)
 // -------------------------------------------------------------------
-function loadCustomerPublicView(token) {
+let custData = null;
+let custPollTimer = null;
+
+async function loadCustomerPublicView(token) {
   if (!token) return;
   currentCustomerToken = token;
   document.getElementById('appHeader').style.display = 'none';
@@ -2984,16 +3064,19 @@ function loadCustomerPublicView(token) {
 
   const customerView = document.getElementById('view-customer-public');
   customerView.style.display = 'block';
+  if (!custData) customerView.innerHTML = `<div style="text-align: center; margin-top: 60px; color: #64748b; font-size: 1.1rem;">⏳ Loading live project schedule...</div>`;
 
-  const site = allSites.find(s => s.customer_token === token);
-  if (!site) {
-    if (allSites.length === 0) {
-      customerView.innerHTML = `<div style="text-align: center; margin-top: 60px; color: #64748b; font-size: 1.1rem;">⏳ Loading live project schedule...</div>`;
-    } else {
-      customerView.innerHTML = `<div class="alert-box alert-error" style="text-align: center; margin-top: 40px;">Invalid or expired customer schedule link.</div>`;
+  try {
+    custData = await callFn('customerView', { token });
+  } catch (err) {
+    if (!custData) {
+      customerView.innerHTML = `<div class="alert-box alert-error" style="text-align: center; margin-top: 40px;">${err.code === 'not-found' ? 'Invalid or expired customer schedule link.' : 'Sorry, the schedule could not be loaded. Please try again shortly.'}</div>`;
     }
     return;
   }
+  if (!custPollTimer) custPollTimer = setInterval(() => { if (!document.hidden) loadCustomerPublicView(currentCustomerToken); }, 60000);
+  const site = custData.site;
+  appSettings = { ...appSettings, ...custData.settings };
 
   // Restore public view HTML structure if it was replaced by loading placeholder
   if (!document.getElementById('custPubAppName')) {
@@ -3043,7 +3126,7 @@ function renderCustomerSchedule(site) {
   if (!container) return;
   const todayKey = diaryDateKey(new Date());
   const rank = { am: 0, all_day: 1, pm: 2 };
-  const siteShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id));
+  const siteShifts = (custData && custData.shifts) || [];
   const byDate = (a, b) => (a.shift_date || '').localeCompare(b.shift_date || '') || (rank[a.shift_period] ?? 1) - (rank[b.shift_period] ?? 1);
   const current = siteShifts.filter(s => (s.shift_date || '') >= todayKey).sort(byDate);
   const completed = siteShifts.filter(s => (s.shift_date || '') < todayKey).sort((a, b) => byDate(b, a));
@@ -3058,8 +3141,7 @@ function renderCustomerSchedule(site) {
       const b = e.target.closest('[data-cust-tab]');
       if (!b) return;
       custScheduleTab = b.dataset.custTab;
-      const st = allSites.find(x => x.customer_token === currentCustomerToken);
-      if (st) renderCustomerSchedule(st);
+      if (custData) renderCustomerSchedule(custData.site);
     });
   }
   tabs.innerHTML = `
@@ -3073,7 +3155,6 @@ function renderCustomerSchedule(site) {
   }
   const done = custScheduleTab === 'completed';
   container.innerHTML = list.map(s => {
-    const op = allUsers.find(u => String(u.id) === String(s.operative_id));
     const periodBadge = s.shift_period === 'am' ? 'AM' : (s.shift_period === 'pm' ? 'PM' : 'All Day');
     const dim = done ? 'opacity: 0.8;' : '';
     if (s.is_drying_day) {
@@ -3082,7 +3163,7 @@ function renderCustomerSchedule(site) {
     return `
       <div class="site-card" style="background-color: #f8fafc; border-color: #e2e8f0; color: #0f172a; ${dim}">
         <strong style="color: ${done ? '#15803d' : '#2563eb'}; font-size: 1rem;">${done ? '✅' : '📅'} ${formatUKDate(s.shift_date)} (${periodBadge})</strong>
-        <div style="margin-top: 6px; font-weight: 600;">Operative: ${op ? diaryEsc(op.full_name) : 'Operative'}</div>
+        <div style="margin-top: 6px; font-weight: 600;">Operative: ${s.operative_name ? diaryEsc(s.operative_name) : 'Operative'}</div>
         <div style="margin-top: 4px; color: #475569;">Task: ${diaryEsc(s.task)}</div>
       </div>
     `;
@@ -3543,20 +3624,15 @@ function drawCustomerFeedbackForm(site, card) {
     btn.disabled = true;
     btn.textContent = 'Sending...';
     try {
-      await db.collection('feedback').add({
-        site_id: String(site.id),
-        site_ref: formatSiteId(site.id),
-        site_address: site.address,
+      await callFn('customerFeedback', {
+        token: currentCustomerToken,
         rating,
-        sentiment: fbSentiment(rating),
         comment: val('fbComment').slice(0, 2000),
         customer_name: val('fbName').slice(0, 80),
         customer_address: val('fbAddress').slice(0, 200),
         customer_email: val('fbEmail').slice(0, 120),
         customer_phone: val('fbPhone').slice(0, 30),
-        consent: true,
-        source: 'customer_qr',
-        created_at: new Date().toISOString()
+        consent: true
       });
       localStorage.setItem('gvd_fb_last', String(Date.now()));
       card.innerHTML = `
@@ -4024,21 +4100,15 @@ function setupEventListeners() {
   document.getElementById('logoutBtn').addEventListener('click', handleLogout);
 
   document.getElementById('btnCheckApproval').addEventListener('click', async () => {
-    if (db) {
-      try {
-        const snap = await db.collection('users').get();
-        allUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      } catch (e) {}
-    }
-    const storedUserId = localStorage.getItem('gvd_current_user_id');
-    if (storedUserId) {
-      const user = allUsers.find(u => String(u.id) === String(storedUserId));
-      if (user && user.status === 'Active') {
-        currentUser = user;
+    try {
+      const res = await callFn('refreshSession');
+      if (res.user.status === 'Active') {
+        await signInWithServerSession(res);
+        startSyncOnce();
         onUserAuthenticated();
         return;
       }
-    }
+    } catch (e) {}
     alert('Your account is still awaiting approval by an administrator.');
   });
 
@@ -4194,59 +4264,24 @@ async function handleRegister(e) {
     return;
   }
 
-  if (db) {
-    try {
-      const snap = await db.collection('users').get();
-      allUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (err) {
-      console.warn('Firestore fetch error, using local/REST state:', err);
+  const btn = e.submitter || document.querySelector('#registerForm button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await callFn('register', { full_name, email, phone, role: regRoleSelect, password });
+    await signInWithServerSession(res);
+    if (res.user.status === 'Active') {
+      alert('Registration successful! Your account has been registered and activated as the Owner.');
+      startSyncOnce();
+      onUserAuthenticated();
+    } else {
+      showView('view-awaiting-approval');
+      watchApproval(res.user.id);
     }
-  }
-
-  const existing = allUsers.find(u => u.email === email);
-  if (existing) {
-    alertEl.textContent = 'An account with this email address already exists.';
+  } catch (err) {
+    alertEl.textContent = err.message;
     alertEl.style.display = 'block';
-    return;
-  }
-
-  const isOwnerEmail = email === 'phil@gvdcontracts.com';
-  const isFirstUser = allUsers.length === 0;
-  const isOwner = isFirstUser || isOwnerEmail;
-
-  const role = isOwner ? 'Owner' : regRoleSelect;
-  const status = isOwner ? 'Active' : 'Pending';
-
-  const newUserId = 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-
-  const newUser = {
-    id: newUserId,
-    full_name,
-    email,
-    phone,
-    password_hash: hashSimple(password),
-    role,
-    status,
-    created_at: new Date().toISOString()
-  };
-
-  if (db) {
-    try {
-      await db.collection('users').doc(newUserId).set(newUser);
-    } catch (err) {
-      console.warn('Firestore write error:', err);
-    }
-  }
-  allUsers.push(newUser);
-  saveLocalStorageData();
-
-  if (isOwner) {
-    currentUser = newUser;
-    alert('Registration successful! Your account has been registered and activated as the Owner.');
-    onUserAuthenticated();
-  } else {
-    localStorage.setItem('gvd_current_user_id', newUserId);
-    showView('view-awaiting-approval');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -4259,52 +4294,24 @@ async function handleLogin(e) {
   const email = document.getElementById('loginEmail').value.trim().toLowerCase();
   const password = document.getElementById('loginPassword').value;
 
-  if (db) {
-    try {
-      const snap = await db.collection('users').get();
-      allUsers = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (err) {
-      console.warn('Firestore login fetch warning:', err);
+  const btn = e.submitter || document.querySelector('#loginForm button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await callFn('login', { email, password });
+    await signInWithServerSession(res);
+    if (res.user.status === 'Pending' || res.user.status === 'Pending Approval') {
+      showView('view-awaiting-approval');
+      watchApproval(res.user.id);
+      return;
     }
-  }
-
-  const user = allUsers.find(u => u.email === email && u.password_hash === hashSimple(password));
-  if (!user) {
-    alertEl.textContent = 'Invalid email address or password.';
+    startSyncOnce();
+    onUserAuthenticated();
+  } catch (err) {
+    alertEl.textContent = err.message;
     alertEl.style.display = 'block';
-    return;
+  } finally {
+    if (btn) btn.disabled = false;
   }
-
-  if (user.status === 'Pending' || user.status === 'Pending Approval') {
-    currentUser = user;
-    localStorage.setItem('gvd_current_user_id', user.id);
-    showView('view-awaiting-approval');
-
-    if (db) {
-      db.collection('users').doc(String(user.id)).onSnapshot(docSnap => {
-        if (docSnap.exists) {
-          const u = docSnap.data();
-          if (u.status === 'Active') {
-            currentUser = { ...u, id: docSnap.id };
-            onUserAuthenticated(currentUser);
-            showGreenToast('🎉 Account Approved! Welcome to Works Planner.');
-          }
-        }
-      });
-    }
-    return;
-  }
-
-  if (user.status === 'Restricted') {
-    alertEl.textContent = 'Your account access has been restricted by an administrator.';
-    alertEl.style.display = 'block';
-    return;
-  }
-
-  currentUser = user;
-  user.last_login_at = new Date().toISOString();
-  if (db) db.collection('users').doc(String(user.id)).update({ last_login_at: user.last_login_at }).catch(console.warn);
-  onUserAuthenticated();
 }
 
 async function handleSetNewPassword(e) {
@@ -4315,24 +4322,31 @@ async function handleSetNewPassword(e) {
   const pw2 = document.getElementById('resetConfirmPassword').value;
   const problem = pw.length < 6 ? 'Password must be at least 6 characters.'
     : pw !== pw2 ? 'The two passwords do not match.'
-    : hashSimple(pw) === currentUser.password_hash ? 'Please choose a different password to your temporary one.' : '';
+    : '';
   if (problem) {
     alertEl.textContent = problem;
     alertEl.style.display = 'block';
     return;
   }
-  const updates = { password_hash: hashSimple(pw), must_change_password: false };
-  Object.assign(currentUser, updates);
-  if (db) await db.collection('users').doc(String(currentUser.id)).update(updates).catch(err => alert('Could not save: ' + err.message));
+  try {
+    await callFn('setPassword', { newPassword: pw });
+  } catch (err) {
+    alertEl.textContent = err.message;
+    alertEl.style.display = 'block';
+    return;
+  }
+  currentUser.must_change_password = false;
   saveLocalStorageData();
   document.getElementById('resetNewPassword').value = '';
   document.getElementById('resetConfirmPassword').value = '';
   onUserAuthenticated();
 }
 
-function handleForgotPassword(e) {
+async function handleForgotPassword(e) {
   e.preventDefault();
   const alertEl = document.getElementById('forgotAlert');
+  const email = ((document.getElementById('forgotEmail') || {}).value || '').trim().toLowerCase();
+  if (email) await callFn('requestPasswordReset', { email }).catch(() => {});
   alertEl.textContent = 'Password reset request received. If an account exists with that email, instructions have been sent.';
   alertEl.style.display = 'block';
 }
@@ -4353,8 +4367,9 @@ async function handleLogout() {
   currentUser = null;
   localStorage.removeItem('gvd_current_user_id');
   localStorage.removeItem('gvd_push_subscribed');
-  document.getElementById('appHeader').style.display = 'none';
-  showView('view-login');
+  if (auth) await auth.signOut().catch(() => {});
+  // a clean reload drops every data listener, which would otherwise keep running without a signed-in user
+  window.location.reload();
 }
 
 function getLogoBase64() {
@@ -5675,10 +5690,9 @@ function buildLoginMessage(user, tempPw) {
 }
 
 async function applyTempLogin(user, tempPw) {
-  if (user.must_change_password && user.password_hash === hashSimple(tempPw)) return;
-  const updates = { password_hash: hashSimple(tempPw), must_change_password: true };
-  Object.assign(user, updates);
-  if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
+  // The server stores only a hash of the temporary password; it is never kept in the user record
+  await callFn('adminSetTempPassword', { userId: String(user.id), tempPassword: tempPw });
+  user.must_change_password = true;
   saveLocalStorageData();
 }
 
@@ -5689,7 +5703,7 @@ async function userModalShareLogin(mode) {
   if (tempPw.length < 3) { alert('Enter a temporary password (at least 3 characters).'); return; }
   if (hasUsedApp(user)) { alert('This person has already used the app, so their password was not changed.'); return; }
   if (!user.must_change_password && !confirm(`This will set ${user.full_name}'s password to "${tempPw}" and make them choose a new one at first login. Continue?`)) return;
-  await applyTempLogin(user, tempPw);
+  try { await applyTempLogin(user, tempPw); } catch (err) { alert('Could not set the temporary password: ' + err.message); return; }
   document.getElementById('userModalLoginState').textContent = 'Temporary login is set. They will be asked to choose a new password when they first log in.';
   const msg = buildLoginMessage(user, tempPw);
   if (mode === 'email') {

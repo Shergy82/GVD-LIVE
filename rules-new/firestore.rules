@@ -15,7 +15,7 @@ service cloud.firestore {
       allow read: if active() || isMe(id);
       allow create, delete: if mgmt();
       allow update: if mgmt() || (isMe(id) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['last_active_at']));
-      match /subscriptions/{dev} { allow read, write: if isMe(id) || mgmt(); }
+      match /subscriptions/{dev} { allow read: if active(); allow write: if isMe(id) || mgmt(); }
     }
 
     match /sites/{id} { allow read: if active(); allow write: if mgmt(); }

@@ -116,6 +116,18 @@ exports.login = onCall(opts, async (req) => {
 });
 
 // ---------------------------------------------------------------------------
+// refreshSession() -> same shape as login. Fresh claims from the current user record (after approval, role change, or app restart).
+// ---------------------------------------------------------------------------
+exports.refreshSession = onCall(opts, async (req) => {
+  const a = requireAuth(req);
+  const snap = await db().collection('users').doc(a.uid).get();
+  if (!snap.exists) throw new HttpsError('unauthenticated', 'Please log in again.');
+  const user = snap.data();
+  if (user.status === 'Restricted') throw new HttpsError('permission-denied', 'Your account access has been restricted by an administrator.');
+  return { token: await issueToken(snap.id, user), user: publicUser(snap.id, user), must_change_password: !!user.must_change_password };
+});
+
+// ---------------------------------------------------------------------------
 // setPassword(newPassword): the signed-in user chooses their own password (forced change or voluntary)
 // ---------------------------------------------------------------------------
 exports.setPassword = onCall(opts, async (req) => {
