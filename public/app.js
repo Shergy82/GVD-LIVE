@@ -3,7 +3,7 @@
 // Keep the stylesheet in step with this script, even if an older copy of the page is still held by the browser
 (function syncStylesheet() {
   try {
-    const v = '29.0';
+    const v = '31.0';
     const link = document.querySelector('link[rel="stylesheet"][href*="/styles.css"]');
     if (link && !link.href.includes('v=' + v)) link.href = '/styles.css?v=' + v;
   } catch (e) { /* the page still works with whatever styles it has */ }
@@ -2950,9 +2950,9 @@ function renderLabourSheetView() {
       const badgesHtml = opShifts.map(s => {
         const site = allSites.find(st => parseInt(st.id) === parseInt(s.site_id));
         return `
-          <div class="labour-assignment-badge">
-            <strong>Site #${s.site_id}</strong>: ${site ? site.address : ''}<br>
-            <span style="color: var(--text-muted); font-size: 0.72rem;">${s.task}</span>
+          <div class="labour-assignment-badge" style="border-left-color: ${userColor(op)};" title="${String(s.task || '').replace(/"/g, '&quot;')}">
+            <div class="lb-addr">${site ? site.address : 'Site #' + s.site_id}</div>
+            <div class="lb-task">${s.shift_period === 'am' || s.shift_period === 'pm' ? `<span class="sc-per ${s.shift_period}">${s.shift_period.toUpperCase()}</span> ` : ''}${s.task}</div>
           </div>
         `;
       }).join('');
@@ -2965,8 +2965,8 @@ function renderLabourSheetView() {
     }).join('');
 
     return `
-      <tr>
-        <td style="font-weight: 700;">👤 ${op.full_name} <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>${weekDays.some(day => allShifts.some(s => String(s.operative_id) === String(op.id) && s.shift_date === formatDateISO(day))) ? '' : '<span class="no-shifts-note">No shifts this week</span>'}</td>
+      <tr class="labour-row">
+        <td class="labour-name" style="font-weight: 700;">${op.full_name} <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>${weekDays.some(day => allShifts.some(s => String(s.operative_id) === String(op.id) && s.shift_date === formatDateISO(day))) ? '' : '<span class="no-shifts-note">No shifts this week</span>'}</td>
         ${cellsHtml}
       </tr>
     `;
