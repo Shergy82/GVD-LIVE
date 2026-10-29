@@ -1546,7 +1546,7 @@ body {
   #view-planner .op-dock { display: flex; align-items: center; gap: 12px; padding: 6px 10px; margin-bottom: 6px; }
   #view-planner .op-dock h4 { margin: 0; white-space: nowrap; flex: none; font-size: 0.72rem; }
   #view-planner .op-dock .op-dock-hint { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-muted); margin-left: 4px; }
-  #view-planner .op-dock .op-chips { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+  #view-planner .op-dock .op-chips { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; overflow: visible; }
   #view-planner .op-dock .op-chip { flex: none; padding: 2px 10px; font-size: 0.78rem; }
   #view-planner .op-dock .op-dock-toggle { flex: none; }
   #view-planner .op-dock.expanded { align-items: flex-start; }
@@ -1563,11 +1563,14 @@ body {
 }
 
 /* Planner: every site has its own colour band; slim rows; two-line shift cards you click to edit */
-.planner-table tr.site-row > td { border-top: 3px solid var(--site-color); }
-.planner-table tr.site-row > td.site-cell-header { background-color: color-mix(in srgb, var(--site-color) 42%, #0f172a); border-left: 10px solid var(--site-color); }
-.planner-table tr.site-row > td.planner-day-cell { background-color: color-mix(in srgb, var(--site-color) 13%, transparent); }
-.planner-table tr.site-row > td.planner-day-cell.today-day-cell { background-color: color-mix(in srgb, var(--site-color) 13%, rgba(245, 158, 11, 0.07)) !important; }
-.planner-table tr.site-row > td.planner-day-cell.weekend-day-cell { background-color: color-mix(in srgb, var(--site-color) 6%, rgba(88, 28, 135, 0.2)); }
+.planner-table tr.site-row { --row-a: #5b7db1; --row-b: #6f9a8a; }
+.planner-table tr.site-row:nth-child(odd)  { --site-color: var(--row-a); }
+.planner-table tr.site-row:nth-child(even) { --site-color: var(--row-b); }
+.planner-table tr.site-row > td { border-top: 2px solid color-mix(in srgb, var(--site-color) 45%, #0f172a); }
+.planner-table tr.site-row > td.site-cell-header { background-color: color-mix(in srgb, var(--site-color) 20%, #0f172a); border-left: 6px solid color-mix(in srgb, var(--site-color) 70%, #0f172a); }
+.planner-table tr.site-row > td.planner-day-cell { background-color: color-mix(in srgb, var(--site-color) 7%, transparent); }
+.planner-table tr.site-row > td.planner-day-cell.today-day-cell { background-color: color-mix(in srgb, var(--site-color) 7%, rgba(245, 158, 11, 0.07)) !important; }
+.planner-table tr.site-row > td.planner-day-cell.weekend-day-cell { background-color: color-mix(in srgb, var(--site-color) 4%, rgba(88, 28, 135, 0.2)); }
 .planner-table tr.site-row > td.planner-day-cell.drag-over { background-color: rgba(59, 130, 246, 0.25); }
 .planner-table td.planner-day-cell { padding: 4px; }
 
@@ -1583,7 +1586,9 @@ body {
   #view-planner .op-dock h4 { font-size: 0.64rem; }
   #view-planner .op-dock .op-dock-hint { display: none; }
   #view-planner .op-dock .op-chip { padding: 1px 8px; font-size: 0.72rem; }
-  #view-planner .op-dock .op-dock-toggle { padding: 1px 8px; font-size: 0.7rem; height: 24px; }
+  #view-planner .op-dock { align-items: flex-start; }
+  #view-planner .op-dock h4 { padding-top: 4px; }
+  #view-planner .op-dock .op-chips { gap: 4px; }
 
   /* Fixed columns that share the width, so nothing scrolls sideways */
   #desktopPlannerTable { table-layout: fixed; min-width: 0; width: 100%; }

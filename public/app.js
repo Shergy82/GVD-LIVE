@@ -3,7 +3,7 @@
 // Keep the stylesheet in step with this script, even if an older copy of the page is still held by the browser
 (function syncStylesheet() {
   try {
-    const v = '26.0';
+    const v = '28.0';
     const link = document.querySelector('link[rel="stylesheet"][href*="/styles.css"]');
     if (link && !link.href.includes('v=' + v)) link.href = '/styles.css?v=' + v;
   } catch (e) { /* the page still works with whatever styles it has */ }
@@ -515,16 +515,6 @@ function hideSsoSplash() {
   if (d) d.remove();
 }
 // Operatives strip above the planner: one scrolling row by default, "Show all" wraps every name (remembered on this device)
-function setupOpDockToggle() {
-  const dock = document.querySelector('#view-planner .op-dock'), btn = document.getElementById('btnToggleOpDock');
-  if (!dock || !btn) return;
-  const apply = on => { dock.classList.toggle('expanded', on); btn.textContent = on ? 'Show one row ▴' : 'Show all ▾'; };
-  let on = false;
-  try { on = localStorage.getItem('gvd_op_dock') === 'all'; } catch (e) {}
-  apply(on);
-  btn.addEventListener('click', () => { on = !on; apply(on); try { localStorage.setItem('gvd_op_dock', on ? 'all' : 'row'); } catch (e) {} });
-}
-
 function setupHubSso() {
   if (window.parent === window || !auth) return;
   showSsoSplash();
@@ -556,7 +546,6 @@ function setupHubSso() {
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
-  setupOpDockToggle();
   setupHubSso();
   setupFeedbackListeners();
   setupChatListeners();
@@ -1615,15 +1604,6 @@ function getAssignableOperatives() {
   return activeUsers.filter(u => u.role === 'Operative');
 }
 
-// Each site gets its own stable colour so a site's whole row reads as one block
-const SITE_ROW_PALETTE = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16', '#06b6d4', '#a855f7', '#eab308'];
-function siteRowColor(siteId) {
-  const key = String(siteId);
-  let h = 0;
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return SITE_ROW_PALETTE[h % SITE_ROW_PALETTE.length];
-}
-
 function renderPlannerView() {
   if (isTypingIn('plannerTableBody')) { uiRefreshPending = true; return; }
   const weekDays = getRollingDays(currentPlannerWeekOffset);
@@ -1716,7 +1696,7 @@ function renderPlannerView() {
         : `<div class="site-finish-badge">🏁 Finishes ${formatShortUKDayDate(finish.date)}</div>`)
       : '';
     return `
-      <tr class="site-row ${finish && finish.completed ? 'site-completed' : ''}" style="--site-color: ${siteRowColor(site.id)};">
+      <tr class="site-row ${finish && finish.completed ? 'site-completed' : ''}">
         <td class="site-cell-header">
           <span class="site-badge">${formatSiteId(site.id)}</span>
           <strong>${site.address}</strong>
