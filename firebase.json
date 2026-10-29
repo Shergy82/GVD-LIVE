@@ -10,7 +10,7 @@
     "public": "public",
     "headers": [
       {
-        "source": "**/*.js",
+        "source": "**/*.@(js|css)",
         "headers": [
           {
             "key": "Cache-Control",

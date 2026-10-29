@@ -1683,15 +1683,12 @@ function renderPlannerView() {
         if (s.is_drying_day) return dryingCardHtml(s);
         return `
           <div class="shift-card compact" draggable="true" data-shift-id="${s.id}" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
-            <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>👤 ${opName}</span>
-              ${periodBadge}
+            <div class="sc-top">
+              <span class="sc-name">${opName}</span>
+              <span class="sc-seen ${s.seen_at ? 'seen' : 'not-seen'}" title="${seenText}">${s.seen_at ? '✓' : '○'}</span>
             </div>
-            <div class="shift-task-desc">${s.task}</div>
-            <div class="shift-card-foot no-print">
-              <div class="shift-seen-status ${s.seen_at ? 'seen' : 'not-seen'}">${seenText}</div>
-              <button class="btn btn-outline btn-sm edit-shift-btn" data-shift-id="${s.id}" style="padding: 1px 6px; font-size: 0.7rem;">Edit</button>
-            </div>
+            <div class="sc-line">${periodBadge}<button class="edit-shift-btn sc-edit no-print" data-shift-id="${s.id}" title="Edit shift">✎ Edit</button></div>
+            <div class="sc-task" title="${String(s.task || '').replace(/"/g, '&quot;')}">${s.task}</div>
           </div>
         `;
       }).join('');
