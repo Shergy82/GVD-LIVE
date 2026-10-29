@@ -3,7 +3,7 @@
 // Keep the stylesheet in step with this script, even if an older copy of the page is still held by the browser
 (function syncStylesheet() {
   try {
-    const v = '28.0';
+    const v = '29.0';
     const link = document.querySelector('link[rel="stylesheet"][href*="/styles.css"]');
     if (link && !link.href.includes('v=' + v)) link.href = '/styles.css?v=' + v;
   } catch (e) { /* the page still works with whatever styles it has */ }
@@ -1698,11 +1698,13 @@ function renderPlannerView() {
     return `
       <tr class="site-row ${finish && finish.completed ? 'site-completed' : ''}">
         <td class="site-cell-header">
-          <span class="site-badge">${formatSiteId(site.id)}</span>
-          <strong>${site.address}</strong>
-          ${finishHtml}
-          ${siteTypeBadgeHtml(site)}
-          ${siteInfoEditorHtml(site)}
+          <div class="site-cell-inner">
+            <span class="site-badge">${formatSiteId(site.id)}</span>
+            <strong>${site.address}</strong>
+            ${finishHtml}
+            ${siteTypeBadgeHtml(site)}
+            ${siteInfoEditorHtml(site)}
+          </div>
         </td>
         ${cellsHtml}
       </tr>
