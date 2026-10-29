@@ -1,5 +1,14 @@
 // GVD LIVE Works Planner - Pure Firebase Firestore Real-Time Engine
 
+// Keep the stylesheet in step with this script, even if an older copy of the page is still held by the browser
+(function syncStylesheet() {
+  try {
+    const v = '34.0';
+    const link = document.querySelector('link[rel="stylesheet"][href*="/styles.css"]');
+    if (link && !link.href.includes('v=' + v)) link.href = '/styles.css?v=' + v;
+  } catch (e) { /* the page still works with whatever styles it has */ }
+})();
+
 const firebaseConfig = {
   // Public web identifiers (they ship in every web app); access is controlled by security rules, not by hiding this
   apiKey: "AIzaSyC2nnP8nXrFKw-4JWswddXLfroDD2lBcg0",
@@ -505,6 +514,7 @@ function hideSsoSplash() {
   const d = document.getElementById('ssoSplash');
   if (d) d.remove();
 }
+// Operatives strip above the planner: one scrolling row by default, "Show all" wraps every name (remembered on this device)
 function setupHubSso() {
   if (window.parent === window || !auth) return;
   showSsoSplash();
@@ -536,6 +546,7 @@ function setupHubSso() {
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
+  setupFileViewer();
   setupHubSso();
   setupFeedbackListeners();
   setupChatListeners();
@@ -832,10 +843,17 @@ function siteInfoHtml(site) {
 }
 
 // Editable info boxes in the planner's site column (managers/admins)
+let adminOpsOpen = false;
+const siteInfoOpen = new Set();   // sites whose notes boxes are unfolded, so a redraw does not fold them while someone types
+document.addEventListener('toggle', e => {
+  const d = e.target;
+  if (d && d.classList && d.classList.contains('site-info-details')) { d.open ? siteInfoOpen.add(d.dataset.siteId) : siteInfoOpen.delete(d.dataset.siteId); }
+}, true);
 function siteInfoEditorHtml(site) {
-  return `<div class="site-info-editor" style="margin-top: 10px;">${SITE_INFO_FIELDS.map(([key, label, icon]) => `
+  const filled = SITE_INFO_FIELDS.filter(([key]) => (site[key] || '').trim()).length;
+  return `<details class="site-info-details" data-site-id="${site.id}" ${siteInfoOpen.has(String(site.id)) ? 'open' : ''}><summary>Site info${filled ? ` (${filled} set)` : ''}</summary><div class="site-info-editor" style="margin-top: 6px;">${SITE_INFO_FIELDS.map(([key, label, icon]) => `
     <label style="display: block; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); margin-top: 6px;">${icon} ${label.toUpperCase()}</label>
-    <textarea class="form-control site-info-input" data-site-id="${site.id}" data-field="${key}" rows="2" placeholder="Not set" style="font-size: 0.8rem; padding: 4px 6px; min-height: 0; resize: vertical;">${diaryEsc(site[key] || '')}</textarea>`).join('')}</div>`;
+    <textarea class="form-control site-info-input" data-site-id="${site.id}" data-field="${key}" rows="2" placeholder="Not set" style="font-size: 0.8rem; padding: 4px 6px; min-height: 0; resize: vertical;">${diaryEsc(site[key] || '')}</textarea>`).join('')}</div></details>`;
 }
 
 async function saveSiteInfo(siteId, field, value) {
@@ -1655,16 +1673,13 @@ function renderPlannerView() {
         const periodBadge = formatShiftPeriodBadge(s.shift_period);
         if (s.is_drying_day) return dryingCardHtml(s);
         return `
-          <div class="shift-card" draggable="true" data-shift-id="${s.id}" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
-            <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
-              <span>👤 ${opName}</span>
-              ${periodBadge}
+          <div class="shift-card compact" draggable="true" data-shift-id="${s.id}" title="Click to edit" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
+            <div class="sc-top">
+              <span class="sc-name">${opName}</span>
+              ${s.shift_period === 'am' || s.shift_period === 'pm' ? `<span class="sc-per ${s.shift_period}">${s.shift_period.toUpperCase()}</span>` : ''}
+              <span class="sc-seen ${s.seen_at ? 'seen' : 'not-seen'}" title="${seenText}">${s.seen_at ? '✓' : '○'}</span>
             </div>
-            <div class="shift-task-desc">${s.task}</div>
-            <div class="shift-seen-status ${s.seen_at ? 'seen' : 'not-seen'}">${seenText}</div>
-            <div class="shift-card-actions no-print">
-              <button class="btn btn-outline btn-sm edit-shift-btn" data-shift-id="${s.id}" style="padding: 2px 6px; font-size: 0.7rem;">Edit</button>
-            </div>
+            <div class="sc-task">${s.task}</div>
           </div>
         `;
       }).join('');
@@ -1683,13 +1698,15 @@ function renderPlannerView() {
         : `<div class="site-finish-badge">🏁 Finishes ${formatShortUKDayDate(finish.date)}</div>`)
       : '';
     return `
-      <tr class="${finish && finish.completed ? 'site-completed' : ''}">
+      <tr class="site-row ${finish && finish.completed ? 'site-completed' : ''}">
         <td class="site-cell-header">
-          <span class="site-badge">${formatSiteId(site.id)}</span>
-          <strong>${site.address}</strong>
-          ${finishHtml}
-          ${siteTypeBadgeHtml(site)}
-          ${siteInfoEditorHtml(site)}
+          <div class="site-cell-inner">
+            <span class="site-badge">${formatSiteId(site.id)}</span>
+            <strong>${site.address}</strong>
+            ${finishHtml}
+            ${siteTypeBadgeHtml(site)}
+            ${siteInfoEditorHtml(site)}
+          </div>
         </td>
         ${cellsHtml}
       </tr>
@@ -1855,6 +1872,11 @@ function setupPlannerClickHandlers() {
       e.stopPropagation();
       openEditShiftModal(parseInt(btn.dataset.shiftId));
     });
+  });
+
+  // Click (or tap) anywhere on a shift to edit it
+  document.querySelectorAll('#plannerTableBody .shift-card.compact').forEach(card => {
+    card.addEventListener('click', () => openEditShiftModal(parseInt(card.dataset.shiftId)));
   });
 }
 
@@ -2791,13 +2813,16 @@ function openPhotoLightbox(photo) {
         const pdf = allPdfs.find(p => String(p.id) === pdfId);
         if (pdf && pdf.storage_path) {
           // Served from our own domain via the siteFile function so phones download it normally
-          const link = document.createElement('a');
-          link.href = `/files/${encodeURIComponent(pdf.id)}`;
-          if (!/\.pdf$/i.test(pdf.filename || '')) link.download = pdf.filename || 'file';
-          else link.target = '_blank';
-          document.body.appendChild(link);
-          link.click();
-          setTimeout(() => link.remove(), 1000);
+          if (fileViewerKind(pdf.filename) === 'pdf') {
+            openFileViewer(`/files/${encodeURIComponent(pdf.id)}`, pdf.filename);
+          } else {
+            const link = document.createElement('a');
+            link.href = `/files/${encodeURIComponent(pdf.id)}`;
+            link.download = pdf.filename || 'file';
+            document.body.appendChild(link);
+            link.click();
+            setTimeout(() => link.remove(), 1000);
+          }
         } else if (pdf && pdf.file_url) {
           const win = window.open(pdf.file_url, '_blank');
           if (!win) window.location.href = pdf.file_url;
@@ -2930,9 +2955,9 @@ function renderLabourSheetView() {
       const badgesHtml = opShifts.map(s => {
         const site = allSites.find(st => parseInt(st.id) === parseInt(s.site_id));
         return `
-          <div class="labour-assignment-badge">
-            <strong>Site #${s.site_id}</strong>: ${site ? site.address : ''}<br>
-            <span style="color: var(--text-muted); font-size: 0.72rem;">${s.task}</span>
+          <div class="labour-assignment-badge" style="border-left-color: ${userColor(op)};" title="${String(s.task || '').replace(/"/g, '&quot;')}">
+            <div class="lb-addr">${site ? site.address : 'Site #' + s.site_id}</div>
+            <div class="lb-task">${s.shift_period === 'am' || s.shift_period === 'pm' ? `<span class="sc-per ${s.shift_period}">${s.shift_period.toUpperCase()}</span> ` : ''}${s.task}</div>
           </div>
         `;
       }).join('');
@@ -2945,8 +2970,8 @@ function renderLabourSheetView() {
     }).join('');
 
     return `
-      <tr>
-        <td style="font-weight: 700;">👤 ${op.full_name} <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>${weekDays.some(day => allShifts.some(s => String(s.operative_id) === String(op.id) && s.shift_date === formatDateISO(day))) ? '' : '<span class="no-shifts-note">No shifts this week</span>'}</td>
+      <tr class="labour-row">
+        <td class="labour-name" style="font-weight: 700;">${op.full_name} <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>${weekDays.some(day => allShifts.some(s => String(s.operative_id) === String(op.id) && s.shift_date === formatDateISO(day))) ? '' : '<span class="no-shifts-note">No shifts this week</span>'}</td>
         ${cellsHtml}
       </tr>
     `;
@@ -3028,9 +3053,16 @@ function renderAdminSettingsView() {
   chipsEl.innerHTML = groups.map(([title, test]) => {
     const list = allUsers.filter(test).sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
     if (list.length === 0) return '';
-    return `<div class="user-group-title">${title} (${list.length})</div><div class="user-chip-row">${list.map(u =>
+    const rows = `<div class="user-chip-row">${list.map(u =>
       `<button type="button" class="user-chip${u.status === 'Pending' ? ' pending' : ''}${u.status === 'Restricted' ? ' restricted' : ''}" data-user-id="${diaryEsc(u.id)}"><span style="width: 14px; height: 14px; border-radius: 50%; background: ${userColor(u)}; display: inline-block;"></span> ${diaryEsc(u.full_name)}${!hasUsedApp(u) && u.status === 'Active' ? ' <small style="color: var(--warning);">· not logged in yet</small>' : ''}</button>`).join('')}</div>`;
+    // Contractors are set up in Onboarding, so their list stays folded away until it is needed
+    if (title === 'Operatives') {
+      return `<details class="user-ops-details"${adminOpsOpen ? ' open' : ''}><summary class="user-group-title">Operatives and contractors (${list.length})</summary><p class="user-ops-note">New contractors are set up in Onboarding. Open this list only to change a planner colour or pay type, or to reset a password.</p>${rows}</details>`;
+    }
+    return `<div class="user-group-title">${title} (${list.length})</div>${rows}`;
   }).join('');
+  const opsDetails = chipsEl.querySelector('details.user-ops-details');
+  if (opsDetails) opsDetails.addEventListener('toggle', () => { adminOpsOpen = opsDetails.open; });
   chipsEl.querySelectorAll('.user-chip').forEach(chip => {
     chip.addEventListener('click', () => openUserModal(chip.dataset.userId));
   });
@@ -5956,6 +5988,150 @@ function copyPONumber() {
 
 
 // -------------------------------------------------------------------
+// IN-APP FILE VIEWER: PDFs and images open inside the app with a Back button (also the phone's back gesture),
+// so nobody is left in a document with no way out. Falls back to opening the file normally if it cannot be shown here.
+// -------------------------------------------------------------------
+let fvState = null;   // { zoom, pdf, token }
+
+function fileViewerKind(name) {
+  if (/\.pdf$/i.test(name || '')) return 'pdf';
+  if (/\.(png|jpe?g|gif|webp|heic)$/i.test(name || '')) return 'image';
+  return '';
+}
+
+function ensureFileViewer() {
+  let v = document.getElementById('fileViewer');
+  if (v) return v;
+  v = document.createElement('div');
+  v.id = 'fileViewer';
+  v.className = 'file-viewer';
+  v.style.display = 'none';
+  v.setAttribute('role', 'dialog');
+  v.setAttribute('aria-modal', 'true');
+  v.innerHTML = `<div class="fv-bar">
+      <button type="button" id="fvBack" class="fv-back" aria-label="Back">&#8249; Back</button>
+      <div id="fvTitle" class="fv-title"></div>
+      <button type="button" id="fvZoomOut" class="fv-act" aria-label="Zoom out">&minus;</button>
+      <button type="button" id="fvZoomIn" class="fv-act" aria-label="Zoom in">+</button>
+      <a id="fvOpen" class="fv-act" target="_blank" rel="noopener">Open</a>
+    </div>
+    <div id="fvBody" class="fv-body"></div>`;
+  document.body.appendChild(v);
+  document.getElementById('fvBack').addEventListener('click', () => closeFileViewer(false));
+  document.getElementById('fvZoomIn').addEventListener('click', () => { if (fvState) { fvState.zoom = Math.min(3, +(fvState.zoom + 0.5).toFixed(1)); applyFileViewerZoom(); } });
+  document.getElementById('fvZoomOut').addEventListener('click', () => { if (fvState) { fvState.zoom = Math.max(1, +(fvState.zoom - 0.5).toFixed(1)); applyFileViewerZoom(); } });
+  return v;
+}
+
+function closeFileViewer(fromPop) {
+  const v = document.getElementById('fileViewer');
+  if (!v || v.style.display === 'none') return;
+  v.style.display = 'none';
+  document.body.classList.remove('fv-open');
+  document.getElementById('fvBody').innerHTML = '';
+  if (fvState && fvState.pdf && fvState.pdf.destroy) fvState.pdf.destroy().catch(() => {});
+  fvState = null;
+  if (!fromPop && history.state && history.state.fileViewer) history.back();
+}
+
+async function openFileViewer(url, filename) {
+  const kind = fileViewerKind(filename);
+  if (!kind) { window.open(url, '_blank'); return; }
+  const v = ensureFileViewer();
+  const body = document.getElementById('fvBody');
+  document.getElementById('fvTitle').textContent = filename || 'File';
+  const openLink = document.getElementById('fvOpen');
+  openLink.href = url;
+  v.style.display = 'flex';
+  document.body.classList.add('fv-open');
+  body.innerHTML = '<div class="fv-msg">Loading…</div>';
+  body.scrollTop = 0;
+  try { history.pushState({ fileViewer: true }, ''); } catch (e) { /* the Back button still works */ }
+  const token = {};
+  fvState = { zoom: 1, pdf: null, token };
+  const fail = () => { if (fvState && fvState.token === token) body.innerHTML = `<div class="fv-msg">This file could not be shown here.<br><br><a href="${url}" target="_blank" rel="noopener">Open it in the browser</a></div>`; };
+  try {
+    if (kind === 'image') {
+      body.innerHTML = `<img class="fv-img" alt="" src="${url}">`;
+      applyFileViewerZoom();
+      return;
+    }
+    const pdfjs = await loadPdfJs();
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await res.arrayBuffer()) }).promise;
+    if (!fvState || fvState.token !== token) { doc.destroy().catch(() => {}); return; }
+    fvState.pdf = doc;
+    body.innerHTML = '<div class="fv-pages" id="fvPages"></div>';
+    const pages = document.getElementById('fvPages');
+    for (let i = 1; i <= doc.numPages; i++) {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'fv-page';
+      canvas.dataset.page = String(i);
+      pages.appendChild(canvas);
+    }
+    applyFileViewerZoom();
+  } catch (e) {
+    console.warn('File viewer:', e && e.message);
+    fail();
+  }
+}
+
+// Sizes every page to the screen width times the zoom, and draws the pages near the screen
+let fvObserver = null;
+async function applyFileViewerZoom() {
+  if (!fvState) return;
+  const body = document.getElementById('fvBody');
+  const z = fvState.zoom;
+  const img = body.querySelector('img.fv-img');
+  if (img) { img.style.width = (z * 100) + '%'; return; }
+  const doc = fvState.pdf, pages = document.getElementById('fvPages');
+  if (!doc || !pages) return;
+  const token = fvState.token;
+  const width = Math.max(200, (body.clientWidth - 16) * z);
+  pages.style.width = width + 'px';
+  if (fvObserver) fvObserver.disconnect();
+  const first = await doc.getPage(1);
+  const base = first.getViewport({ scale: 1 });
+  const ratio = base.height / base.width;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  pages.querySelectorAll('canvas').forEach(cv => {
+    cv.dataset.done = '';
+    cv.style.width = width + 'px';
+    cv.style.height = Math.round(width * ratio) + 'px';
+  });
+  fvObserver = new IntersectionObserver(entries => {
+    entries.forEach(async en => {
+      const cv = en.target;
+      if (!en.isIntersecting || cv.dataset.done === '1' || !fvState || fvState.token !== token) return;
+      cv.dataset.done = '1';
+      try {
+        const page = await doc.getPage(parseInt(cv.dataset.page));
+        const vp0 = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: (width / vp0.width) * dpr });
+        cv.width = Math.floor(vp.width);
+        cv.height = Math.floor(vp.height);
+        cv.style.height = Math.round(width * (vp0.height / vp0.width)) + 'px';
+        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+      } catch (e) { cv.dataset.done = ''; }
+    });
+  }, { root: body, rootMargin: '600px 0px' });
+  pages.querySelectorAll('canvas').forEach(cv => fvObserver.observe(cv));
+}
+
+function setupFileViewer() {
+  window.addEventListener('popstate', () => closeFileViewer(true));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeFileViewer(false); });
+  // Any link marked data-fileview opens here instead of leaving the app
+  document.addEventListener('click', e => {
+    const a = e.target.closest && e.target.closest('a[data-fileview]');
+    if (!a || e.metaKey || e.ctrlKey) return;
+    e.preventDefault();
+    openFileViewer(a.getAttribute('href'), a.dataset.name || '');
+  });
+}
+
+// -------------------------------------------------------------------
 // INVOICE IMPORT (Owner / Admin / Manager). Reads a text PDF in the browser (pdf.js, free),
 // finds the PO reference or delivery address, and the price excluding VAT, then the person confirms.
 // -------------------------------------------------------------------
@@ -6608,7 +6784,7 @@ function renderInvoiceRegister() {
       <td data-label="Net £"><strong>${diaryEsc(formatPounds(f.invoice_net) || '-')}</strong></td>
       <td data-label="VAT £">${diaryEsc(formatPounds(f.invoice_vat) || '-')}</td>
       <td data-label="Total £">${diaryEsc(formatPounds(f.invoice_gross) || '-')}</td>
-      <td style="white-space: nowrap;">${dup ? `<button type="button" class="btn btn-outline btn-sm inv-keep" data-id="${diaryEsc(f.id)}" title="This is a different invoice - keep it">Not a duplicate</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank">Open</a>${!site || site === OVERHEAD_SITE ? ` <button type="button" class="btn ${site ? 'btn-outline' : 'btn-primary'} btn-sm inv-assign" data-id="${diaryEsc(f.id)}">${site ? 'Change job' : 'Attach to job'}</button>` : ''}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
+      <td style="white-space: nowrap;">${dup ? `<button type="button" class="btn btn-outline btn-sm inv-keep" data-id="${diaryEsc(f.id)}" title="This is a different invoice - keep it">Not a duplicate</button> ` : ''}<a class="btn btn-outline btn-sm" href="/files/${encodeURIComponent(f.id)}" target="_blank" data-fileview="1" data-name="${diaryEsc(f.filename || 'invoice.pdf')}">Open</a>${!site || site === OVERHEAD_SITE ? ` <button type="button" class="btn ${site ? 'btn-outline' : 'btn-primary'} btn-sm inv-assign" data-id="${diaryEsc(f.id)}">${site ? 'Change job' : 'Attach to job'}</button>` : ''}${canDelete ? ` <button type="button" class="btn btn-danger btn-sm inv-delete" data-id="${diaryEsc(f.id)}">Delete</button>` : ''}</td>
     </tr>`;
   }).join('');
   body.querySelectorAll('.inv-assign').forEach(b => b.addEventListener('click', () => openAssignInvoice(b.dataset.id)));
