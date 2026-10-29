@@ -1,5 +1,14 @@
 // GVD LIVE Works Planner - Pure Firebase Firestore Real-Time Engine
 
+// Keep the stylesheet in step with this script, even if an older copy of the page is still held by the browser
+(function syncStylesheet() {
+  try {
+    const v = '26.0';
+    const link = document.querySelector('link[rel="stylesheet"][href*="/styles.css"]');
+    if (link && !link.href.includes('v=' + v)) link.href = '/styles.css?v=' + v;
+  } catch (e) { /* the page still works with whatever styles it has */ }
+})();
+
 const firebaseConfig = {
   // Public web identifiers (they ship in every web app); access is controlled by security rules, not by hiding this
   apiKey: "AIzaSyC2nnP8nXrFKw-4JWswddXLfroDD2lBcg0",
@@ -1682,13 +1691,13 @@ function renderPlannerView() {
         const periodBadge = formatShiftPeriodBadge(s.shift_period);
         if (s.is_drying_day) return dryingCardHtml(s);
         return `
-          <div class="shift-card compact" draggable="true" data-shift-id="${s.id}" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
+          <div class="shift-card compact" draggable="true" data-shift-id="${s.id}" title="Click to edit" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
             <div class="sc-top">
               <span class="sc-name">${opName}</span>
+              ${s.shift_period === 'am' || s.shift_period === 'pm' ? `<span class="sc-per ${s.shift_period}">${s.shift_period.toUpperCase()}</span>` : ''}
               <span class="sc-seen ${s.seen_at ? 'seen' : 'not-seen'}" title="${seenText}">${s.seen_at ? '✓' : '○'}</span>
             </div>
-            <div class="sc-line">${periodBadge}<button class="edit-shift-btn sc-edit no-print" data-shift-id="${s.id}" title="Edit shift">✎ Edit</button></div>
-            <div class="sc-task" title="${String(s.task || '').replace(/"/g, '&quot;')}">${s.task}</div>
+            <div class="sc-task">${s.task}</div>
           </div>
         `;
       }).join('');
@@ -1879,6 +1888,11 @@ function setupPlannerClickHandlers() {
       e.stopPropagation();
       openEditShiftModal(parseInt(btn.dataset.shiftId));
     });
+  });
+
+  // Click (or tap) anywhere on a shift to edit it
+  document.querySelectorAll('#plannerTableBody .shift-card.compact').forEach(card => {
+    card.addEventListener('click', () => openEditShiftModal(parseInt(card.dataset.shiftId)));
   });
 }
 

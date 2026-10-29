@@ -1562,40 +1562,60 @@ body {
   details.site-info-details[open] > summary::before { content: "▾ "; }
 }
 
-/* Planner: each site row has its own colour; shift cards are compact */
-.planner-table tr.site-row > td.site-cell-header { background-color: color-mix(in srgb, var(--site-color) 24%, #0f172a); border-left: 8px solid var(--site-color); }
-.planner-table tr.site-row > td.planner-day-cell { background-color: color-mix(in srgb, var(--site-color) 8%, transparent); }
-.planner-table tr.site-row > td.planner-day-cell.today-day-cell { background-color: color-mix(in srgb, var(--site-color) 8%, rgba(245, 158, 11, 0.07)) !important; }
-.planner-table tr.site-row > td.planner-day-cell.weekend-day-cell { background-color: rgba(88, 28, 135, 0.18); }
-.planner-table tr.site-row > td.planner-day-cell.drag-over { background-color: rgba(59, 130, 246, 0.2); }
-.planner-table td.planner-day-cell { padding: 6px; }
-/* Compact planner: slim site rows, two-line shift cards, so many sites fit on screen */
-@media (min-width: 769px) {
-  .planner-table td.planner-day-cell { padding: 4px; }
-  .planner-table td.site-cell-header { padding: 6px 10px; gap: 2px; }
-  .planner-table td.site-cell-header strong { font-size: 0.85rem; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .planner-table td.site-cell-header .site-badge { font-size: 0.68rem; padding: 1px 6px; align-self: flex-start; }
-  .shift-card.compact { padding: 3px 6px; margin-bottom: 3px; border-left-width: 5px; border-top: 0; box-shadow: none; }
-  .shift-card.compact:hover { transform: none; filter: brightness(1.2); }
+/* Planner: every site has its own colour band; slim rows; two-line shift cards you click to edit */
+.planner-table tr.site-row > td { border-top: 3px solid var(--site-color); }
+.planner-table tr.site-row > td.site-cell-header { background-color: color-mix(in srgb, var(--site-color) 42%, #0f172a); border-left: 10px solid var(--site-color); }
+.planner-table tr.site-row > td.planner-day-cell { background-color: color-mix(in srgb, var(--site-color) 13%, transparent); }
+.planner-table tr.site-row > td.planner-day-cell.today-day-cell { background-color: color-mix(in srgb, var(--site-color) 13%, rgba(245, 158, 11, 0.07)) !important; }
+.planner-table tr.site-row > td.planner-day-cell.weekend-day-cell { background-color: color-mix(in srgb, var(--site-color) 6%, rgba(88, 28, 135, 0.2)); }
+.planner-table tr.site-row > td.planner-day-cell.drag-over { background-color: rgba(59, 130, 246, 0.25); }
+.planner-table td.planner-day-cell { padding: 4px; }
+
+@media screen and (min-width: 769px) {
+  /* Everything above the grid on one slim line */
+  #view-planner { height: calc(100vh - 118px); height: calc(100dvh - 118px); }
+  #view-planner .section-header { flex-wrap: nowrap; gap: 8px; margin-bottom: 4px; }
+  #view-planner .section-title-group { display: none; }
+  #view-planner .date-controls { flex-wrap: wrap; gap: 6px !important; }
+  #view-planner .date-controls .btn, #view-planner .date-controls select { padding: 3px 9px; font-size: 0.76rem; min-height: 0; height: 28px; }
+  #view-planner .current-week-label { font-size: 0.82rem; font-weight: 700; white-space: nowrap; }
+  #view-planner .op-dock { padding: 3px 8px; margin-bottom: 4px; gap: 8px; }
+  #view-planner .op-dock h4 { font-size: 0.64rem; }
+  #view-planner .op-dock .op-dock-hint { display: none; }
+  #view-planner .op-dock .op-chip { padding: 1px 8px; font-size: 0.72rem; }
+  #view-planner .op-dock .op-dock-toggle { padding: 1px 8px; font-size: 0.7rem; height: 24px; }
+
+  /* Fixed columns that share the width, so nothing scrolls sideways */
+  #desktopPlannerTable { table-layout: fixed; min-width: 0; width: 100%; }
+  #desktopPlannerTable th { padding: 5px 4px; font-size: 0.72rem; text-align: center; }
+  #desktopPlannerTable th.site-col { width: 190px; min-width: 190px; text-align: left; padding-left: 10px; }
+  #desktopPlannerTable th.date-col { width: auto; min-width: 0; }
+  #desktopPlannerTable th.date-col.weekend-narrow { width: 40px; }
+  #desktopPlannerTable td.planner-day-cell { overflow: hidden; }
+
+  /* Site cell: one slim block */
+  .planner-table td.site-cell-header { padding: 4px 8px; display: flex; flex-flow: row wrap; align-items: center; gap: 2px 6px; }
+  .planner-table td.site-cell-header .site-badge { order: 1; font-size: 0.62rem; padding: 0 5px; }
+  .planner-table td.site-cell-header .site-type-badge, .planner-table td.site-cell-header .job-status-badge { order: 2; font-size: 0.6rem; padding: 0 5px; }
+  .planner-table td.site-cell-header details.site-info-details { order: 3; margin: 0 0 0 auto; }
+  .planner-table td.site-cell-header details.site-info-details[open] { flex: 1 0 100%; order: 5; margin: 2px 0 0; }
+  .planner-table td.site-cell-header strong { order: 4; flex: 1 0 100%; font-size: 0.8rem; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .planner-table td.site-cell-header .site-finish-badge, .planner-table td.site-cell-header .site-completed-badge { order: 3; font-size: 0.62rem; padding: 0 4px; }
+
+  /* Shift cards: name + AM/PM + seen, then the task. Click to edit. */
+  .shift-card.compact { padding: 2px 6px; margin-bottom: 3px; border-left-width: 5px; border-top: 0; box-shadow: none; cursor: pointer; }
+  .shift-card.compact:hover { transform: none; filter: brightness(1.25); }
   .shift-card.compact .sc-top { display: flex; align-items: center; gap: 4px; min-width: 0; }
-  .shift-card.compact .sc-name { flex: 1 1 auto; min-width: 0; font-weight: 700; font-size: 0.78rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .shift-card.compact .badge-period { margin: 0 !important; font-size: 0.62rem !important; padding: 0 4px !important; white-space: nowrap; flex: none; }
-  .shift-card.compact .sc-seen { flex: none; font-size: 0.62rem; font-weight: 800; white-space: nowrap; }
+  .shift-card.compact .sc-name { flex: 1 1 auto; min-width: 0; font-weight: 700; font-size: 0.76rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shift-card.compact .sc-per { flex: none; font-size: 0.58rem; font-weight: 800; padding: 0 4px; border-radius: 3px; color: #fff; }
+  .shift-card.compact .sc-per.am { background: #f59e0b; }
+  .shift-card.compact .sc-per.pm { background: #8b5cf6; }
+  .shift-card.compact .sc-seen { flex: none; font-size: 0.72rem; font-weight: 800; }
   .shift-card.compact .sc-seen.seen { color: #34d399; }
   .shift-card.compact .sc-seen.not-seen { color: #fbbf24; }
-  .shift-card.compact .sc-edit { flex: none; background: rgba(255,255,255,0.12); border: 0; color: #e2e8f0; border-radius: 4px; height: 18px; padding: 0 6px; line-height: 1; cursor: pointer; font-size: 0.66rem; font-weight: 700; }
-  .shift-card.compact .sc-edit:hover { background: rgba(255,255,255,0.28); }
-  .shift-card.compact .sc-line { display: flex; align-items: center; justify-content: space-between; gap: 4px; min-width: 0; margin: 1px 0; }
-  .shift-card.compact .sc-task { font-size: 0.74rem; line-height: 1.2; color: #e2e8f0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+  .shift-card.compact .sc-task { font-size: 0.72rem; line-height: 1.15; color: #e2e8f0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
 }
 .planner-day-cell.today-day-cell { background-color: rgba(245, 158, 11, 0.07) !important; }
-@media (min-width: 769px) {
-  #desktopPlannerTable { table-layout: fixed; min-width: 0; width: 100%; }
-  #desktopPlannerTable th.site-col { width: 240px; min-width: 240px; }
-  #desktopPlannerTable th.date-col { width: auto; min-width: 0; }
-  #desktopPlannerTable th.date-col.weekend-narrow { width: 46px; }
-  #desktopPlannerTable td.planner-day-cell { overflow: hidden; }
-}
-@media (min-width: 1400px) {
-  #desktopPlannerTable th.site-col { width: 280px; min-width: 280px; }
+@media screen and (min-width: 1300px) {
+  #desktopPlannerTable th.site-col { width: 250px; min-width: 250px; }
 }
