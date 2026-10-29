@@ -1665,3 +1665,24 @@ details.user-ops-details > summary.user-group-title::-webkit-details-marker { di
 details.user-ops-details > summary.user-group-title::before { content: "▸ "; }
 details.user-ops-details[open] > summary.user-group-title::before { content: "▾ "; }
 .user-ops-note { margin: 0 0 8px; font-size: 0.78rem; color: var(--text-muted); }
+
+/* App-like phone behaviour: the page never moves sideways. Anything wider than the screen scrolls inside its own box. */
+html, body { overflow-x: hidden; overflow-x: clip; overscroll-behavior-x: none; }
+body, .main-content, .app-view { min-width: 0; max-width: 100%; }
+img, video, canvas, svg { max-width: 100%; }
+select, input, textarea { max-width: 100%; }
+select.fin-paytype { width: 100% !important; max-width: 100%; }
+
+/* In-app file viewer */
+body.fv-open { overflow: hidden; }
+.file-viewer { position: fixed; inset: 0; z-index: 4000; display: flex; flex-direction: column; background: #0b1220; }
+.file-viewer .fv-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: calc(8px + env(safe-area-inset-top)) 10px 8px; background: #1e293b; border-bottom: 1px solid var(--border-color); }
+.file-viewer .fv-back { flex: none; background: var(--primary); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 700; font-size: 0.95rem; cursor: pointer; }
+.file-viewer .fv-title { flex: 1 1 auto; min-width: 0; font-weight: 700; font-size: 0.85rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-viewer .fv-act { flex: none; background: rgba(255,255,255,0.12); color: #fff; border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 700; font-size: 0.85rem; text-decoration: none; cursor: pointer; }
+.file-viewer .fv-body { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 8px; text-align: center; }
+.file-viewer .fv-pages { margin: 0 auto; }
+.file-viewer .fv-page { display: block; margin: 0 auto 8px; background: #fff; max-width: none; }
+.file-viewer .fv-msg { color: #cbd5e1; padding: 30px 16px; font-size: 0.95rem; }
+.file-viewer .fv-msg a { color: #fff; }
+.file-viewer img.fv-img { display: block; margin: 0 auto; max-width: none; height: auto; }
