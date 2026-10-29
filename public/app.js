@@ -1606,6 +1606,71 @@ function getAssignableOperatives() {
   return activeUsers.filter(u => u.role === 'Operative');
 }
 
+// Job colour coding: the trade is worked out from the task wording, so cards for different jobs read at a glance.
+// The operative keeps their own colour as the stripe on the left edge.
+const TRADE_RULES = [
+  ['Strip out', '#ef4444', /\b(rip|strip|demo|demolit|clear|clearance|remov|dismantl|soft ?strip)/i],
+  ['Plumbing', '#3b82f6', /(plumb|pipe|boiler|heating|radiator|bathroom suite|wet ?room|drain)/i],
+  ['Electrics', '#eab308', /(electric|wiring|rewire|socket|lighting|consumer unit|cable|fire alarm)/i],
+  ['Tiling', '#14b8a6', /(tile|tiling|grout)/i],
+  ['Plastering', '#ec4899', /(plaster|skim|render|dry ?line|board)/i],
+  ['Flooring', '#f97316', /(floor|carpet|vinyl|laminate|lvt|screed)/i],
+  ['Joinery', '#b45309', /(joiner|carpent|timber|door|skirting|architrave|kitchen|fit ?out|install)/i],
+  ['Decorating', '#a855f7', /(paint|decorat|mist|prep|caulk|wallpaper)/i],
+  ['Building', '#94a3b8', /(brick|block|build|concrete|groundwork|roof|scaffold|structur)/i],
+  ['Clean / snag', '#10b981', /(clean|snag|handover|final|inspect|survey)/i]
+];
+const TRADE_OTHER = ['Other', '#64748b'];
+
+function tradeOf(task) {
+  const t = String(task || '');
+  for (const [label, colour, re] of TRADE_RULES) if (re.test(t)) return { label, colour };
+  return { label: TRADE_OTHER[0], colour: TRADE_OTHER[1] };
+}
+
+function shiftCardStyle(s) {
+  const trade = tradeOf(s.task);
+  return `border-left-color: ${userColor(s.operative_id)}; background-color: ${trade.colour}38; --trade: ${trade.colour};`;
+}
+
+function tradeTagHtml(s) {
+  const trade = tradeOf(s.task);
+  return `<span class="trade-tag" style="background:${trade.colour}">${trade.label}</span>`;
+}
+
+let plannerFocusTrade = '';
+function renderTradeLegend(weekDays) {
+  const el = document.getElementById('plannerLegend');
+  if (!el) return;
+  const days = new Set(weekDays.map(formatDateISO));
+  const siteIds = new Set(getPlannerSites().map(site => parseInt(site.id)));
+  const counts = new Map();
+  allShifts.forEach(s => {
+    if (s.is_drying_day || !days.has(s.shift_date) || !siteIds.has(parseInt(s.site_id))) return;
+    const t = tradeOf(s.task);
+    const c = counts.get(t.label) || { colour: t.colour, n: 0 };
+    c.n++;
+    counts.set(t.label, c);
+  });
+  if (plannerFocusTrade && !counts.has(plannerFocusTrade)) plannerFocusTrade = '';
+  el.innerHTML = counts.size === 0 ? '' : `<span class="legend-title">Jobs this week</span>` +
+    [...counts.entries()].map(([label, c]) =>
+      `<button type="button" class="legend-chip${plannerFocusTrade === label ? ' active' : ''}" data-trade="${label}"><i style="background:${c.colour}"></i>${label} <b>${c.n}</b></button>`
+    ).join('') + (plannerFocusTrade ? `<button type="button" class="legend-chip legend-clear" data-trade="">Show all</button>` : '');
+  el.querySelectorAll('.legend-chip').forEach(btn => btn.addEventListener('click', () => {
+    plannerFocusTrade = btn.dataset.trade === plannerFocusTrade ? '' : btn.dataset.trade;
+    applyTradeFocus();
+    renderTradeLegend(weekDays);
+  }));
+  applyTradeFocus();
+}
+
+function applyTradeFocus() {
+  document.querySelectorAll('#plannerTableBody .shift-card[data-trade]').forEach(card => {
+    card.classList.toggle('dimmed', !!plannerFocusTrade && card.dataset.trade !== plannerFocusTrade);
+  });
+}
+
 function renderPlannerView() {
   if (isTypingIn('plannerTableBody')) { uiRefreshPending = true; return; }
   const weekDays = getRollingDays(currentPlannerWeekOffset);
@@ -1673,7 +1738,8 @@ function renderPlannerView() {
         const periodBadge = formatShiftPeriodBadge(s.shift_period);
         if (s.is_drying_day) return dryingCardHtml(s);
         return `
-          <div class="shift-card" draggable="true" data-shift-id="${s.id}" style="border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
+          <div class="shift-card" draggable="true" data-shift-id="${s.id}" data-trade="${tradeOf(s.task).label}" style="${shiftCardStyle(s)}">
+            ${tradeTagHtml(s)}
             <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
               <span>👤 ${opName}</span>
               ${periodBadge}
@@ -1729,6 +1795,7 @@ function renderPlannerView() {
 
   setupPlannerTableDragAndDrop();
   setupPlannerClickHandlers();
+  renderTradeLegend(weekDays);
   renderMobilePlannerView(weekDays);
 }
 
@@ -1925,7 +1992,8 @@ function renderMobilePlannerView(weekDays) {
               const periodBadge = formatShiftPeriodBadge(s.shift_period);
               if (s.is_drying_day) return dryingCardHtml(s);
               return `
-                <div class="shift-card" style="margin-top: 8px; border-left-color: ${userColor(s.operative_id)}; background-color: ${userColor(s.operative_id)}30;">
+                <div class="shift-card" style="margin-top: 8px; ${shiftCardStyle(s)}">
+                  ${tradeTagHtml(s)}
                   <div class="shift-op-name" style="display:flex; justify-content:space-between; align-items:center;">
                     <span>👤 ${op ? op.full_name : 'Operative'}</span>
                     ${periodBadge}
