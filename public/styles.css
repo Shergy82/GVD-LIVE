@@ -1659,3 +1659,9 @@ body {
   #view-labour-sheet .labour-table th.op-name-col { width: 190px; min-width: 190px; }
 }
 .labour-table td.labour-name .no-shifts-note { display: block; margin-top: 2px; font-size: 0.66rem; color: var(--text-muted); font-weight: 400; }
+
+details.user-ops-details > summary.user-group-title { cursor: pointer; list-style: none; }
+details.user-ops-details > summary.user-group-title::-webkit-details-marker { display: none; }
+details.user-ops-details > summary.user-group-title::before { content: "▸ "; }
+details.user-ops-details[open] > summary.user-group-title::before { content: "▾ "; }
+.user-ops-note { margin: 0 0 8px; font-size: 0.78rem; color: var(--text-muted); }

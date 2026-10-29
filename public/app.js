@@ -3,7 +3,7 @@
 // Keep the stylesheet in step with this script, even if an older copy of the page is still held by the browser
 (function syncStylesheet() {
   try {
-    const v = '31.0';
+    const v = '32.0';
     const link = document.querySelector('link[rel="stylesheet"][href*="/styles.css"]');
     if (link && !link.href.includes('v=' + v)) link.href = '/styles.css?v=' + v;
   } catch (e) { /* the page still works with whatever styles it has */ }
@@ -842,6 +842,7 @@ function siteInfoHtml(site) {
 }
 
 // Editable info boxes in the planner's site column (managers/admins)
+let adminOpsOpen = false;
 const siteInfoOpen = new Set();   // sites whose notes boxes are unfolded, so a redraw does not fold them while someone types
 document.addEventListener('toggle', e => {
   const d = e.target;
@@ -3048,9 +3049,16 @@ function renderAdminSettingsView() {
   chipsEl.innerHTML = groups.map(([title, test]) => {
     const list = allUsers.filter(test).sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
     if (list.length === 0) return '';
-    return `<div class="user-group-title">${title} (${list.length})</div><div class="user-chip-row">${list.map(u =>
+    const rows = `<div class="user-chip-row">${list.map(u =>
       `<button type="button" class="user-chip${u.status === 'Pending' ? ' pending' : ''}${u.status === 'Restricted' ? ' restricted' : ''}" data-user-id="${diaryEsc(u.id)}"><span style="width: 14px; height: 14px; border-radius: 50%; background: ${userColor(u)}; display: inline-block;"></span> ${diaryEsc(u.full_name)}${!hasUsedApp(u) && u.status === 'Active' ? ' <small style="color: var(--warning);">· not logged in yet</small>' : ''}</button>`).join('')}</div>`;
+    // Contractors are set up in Onboarding, so their list stays folded away until it is needed
+    if (title === 'Operatives') {
+      return `<details class="user-ops-details"${adminOpsOpen ? ' open' : ''}><summary class="user-group-title">Operatives and contractors (${list.length})</summary><p class="user-ops-note">New contractors are set up in Onboarding. Open this list only to change a planner colour or pay type, or to reset a password.</p>${rows}</details>`;
+    }
+    return `<div class="user-group-title">${title} (${list.length})</div>${rows}`;
   }).join('');
+  const opsDetails = chipsEl.querySelector('details.user-ops-details');
+  if (opsDetails) opsDetails.addEventListener('toggle', () => { adminOpsOpen = opsDetails.open; });
   chipsEl.querySelectorAll('.user-chip').forEach(chip => {
     chip.addEventListener('click', () => openUserModal(chip.dataset.userId));
   });
