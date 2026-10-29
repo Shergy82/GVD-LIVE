@@ -1537,3 +1537,27 @@ body {
 .rep-table td:nth-child(n+5):not(:last-child) { white-space: nowrap; }
 .rep-table td:last-child { white-space: nowrap; }
 @media (max-width: 900px) { .rep-table { font-size: 0.72rem; } #repOutput .site-card { overflow-x: auto; } .rep-table { min-width: 820px; } }
+
+/* Planner (desktop): more room for the grid. Compact header, a one-row operatives strip, a wider site column and folded-away site notes. */
+@media screen and (min-width: 769px) {
+  #view-planner .section-header { gap: 10px; margin-bottom: 6px; }
+  #view-planner .section-title-group h2 { font-size: 1.1rem; margin: 0; }
+  #view-planner .section-title-group p { display: none; }
+  #view-planner .op-dock { display: flex; align-items: center; gap: 12px; padding: 6px 10px; margin-bottom: 6px; }
+  #view-planner .op-dock h4 { margin: 0; white-space: nowrap; flex: none; font-size: 0.72rem; }
+  #view-planner .op-dock .op-dock-hint { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-muted); margin-left: 4px; }
+  #view-planner .op-dock .op-chips { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+  #view-planner .op-dock .op-chip { flex: none; padding: 2px 10px; font-size: 0.78rem; }
+  #view-planner .op-dock .op-dock-toggle { flex: none; }
+  #view-planner .op-dock.expanded { align-items: flex-start; }
+  #view-planner .op-dock.expanded .op-chips { flex-wrap: wrap; overflow: visible; }
+  .planner-table { min-width: 1020px; }
+  .planner-table th.site-col { width: 320px; min-width: 320px; }
+  .planner-table th.date-col { width: calc((100% - 320px) / 7); }
+  .planner-table td { padding: 8px 10px; }
+  details.site-info-details { margin-top: 6px; }
+  details.site-info-details > summary { cursor: pointer; font-size: 0.72rem; font-weight: 700; color: var(--primary); list-style: none; }
+  details.site-info-details > summary::-webkit-details-marker { display: none; }
+  details.site-info-details > summary::before { content: "▸ "; }
+  details.site-info-details[open] > summary::before { content: "▾ "; }
+}

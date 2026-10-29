@@ -505,6 +505,17 @@ function hideSsoSplash() {
   const d = document.getElementById('ssoSplash');
   if (d) d.remove();
 }
+// Operatives strip above the planner: one scrolling row by default, "Show all" wraps every name (remembered on this device)
+function setupOpDockToggle() {
+  const dock = document.querySelector('#view-planner .op-dock'), btn = document.getElementById('btnToggleOpDock');
+  if (!dock || !btn) return;
+  const apply = on => { dock.classList.toggle('expanded', on); btn.textContent = on ? 'Show one row ▴' : 'Show all ▾'; };
+  let on = false;
+  try { on = localStorage.getItem('gvd_op_dock') === 'all'; } catch (e) {}
+  apply(on);
+  btn.addEventListener('click', () => { on = !on; apply(on); try { localStorage.setItem('gvd_op_dock', on ? 'all' : 'row'); } catch (e) {} });
+}
+
 function setupHubSso() {
   if (window.parent === window || !auth) return;
   showSsoSplash();
@@ -536,6 +547,7 @@ function setupHubSso() {
 document.addEventListener('DOMContentLoaded', async () => {
   loadLocalStorageData();
   setupEventListeners();
+  setupOpDockToggle();
   setupHubSso();
   setupFeedbackListeners();
   setupChatListeners();
@@ -832,10 +844,16 @@ function siteInfoHtml(site) {
 }
 
 // Editable info boxes in the planner's site column (managers/admins)
+const siteInfoOpen = new Set();   // sites whose notes boxes are unfolded, so a redraw does not fold them while someone types
+document.addEventListener('toggle', e => {
+  const d = e.target;
+  if (d && d.classList && d.classList.contains('site-info-details')) { d.open ? siteInfoOpen.add(d.dataset.siteId) : siteInfoOpen.delete(d.dataset.siteId); }
+}, true);
 function siteInfoEditorHtml(site) {
-  return `<div class="site-info-editor" style="margin-top: 10px;">${SITE_INFO_FIELDS.map(([key, label, icon]) => `
+  const filled = SITE_INFO_FIELDS.filter(([key]) => (site[key] || '').trim()).length;
+  return `<details class="site-info-details" data-site-id="${site.id}" ${siteInfoOpen.has(String(site.id)) ? 'open' : ''}><summary>Site info${filled ? ` (${filled} set)` : ''}</summary><div class="site-info-editor" style="margin-top: 6px;">${SITE_INFO_FIELDS.map(([key, label, icon]) => `
     <label style="display: block; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); margin-top: 6px;">${icon} ${label.toUpperCase()}</label>
-    <textarea class="form-control site-info-input" data-site-id="${site.id}" data-field="${key}" rows="2" placeholder="Not set" style="font-size: 0.8rem; padding: 4px 6px; min-height: 0; resize: vertical;">${diaryEsc(site[key] || '')}</textarea>`).join('')}</div>`;
+    <textarea class="form-control site-info-input" data-site-id="${site.id}" data-field="${key}" rows="2" placeholder="Not set" style="font-size: 0.8rem; padding: 4px 6px; min-height: 0; resize: vertical;">${diaryEsc(site[key] || '')}</textarea>`).join('')}</div></details>`;
 }
 
 async function saveSiteInfo(siteId, field, value) {
