@@ -561,6 +561,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
+  // Link from the password reset email (?reset=TOKEN): show the new-password form, no sign-in needed
+  const resetTok = urlParams.get('reset');
+  if (resetTok) {
+    document.getElementById('resetToken').value = resetTok;
+    showView('view-reset-password');
+    return;
+  }
+
   if (!auth) { showView('view-login'); return; }
 
   // Restore a signed-in session: Firebase keeps the sign-in, and we ask the server for fresh role claims.
@@ -4430,6 +4438,25 @@ async function handleSetNewPassword(e) {
     alertEl.style.display = 'block';
     return;
   }
+  const linkToken = document.getElementById('resetToken').value;
+  if (linkToken) {
+    // came from the emailed link: no sign-in yet, the one-time token is the proof
+    try {
+      await callFn('completePasswordReset', { token: linkToken, newPassword: pw });
+    } catch (err) {
+      alertEl.textContent = err.message;
+      alertEl.style.display = 'block';
+      return;
+    }
+    document.getElementById('resetToken').value = '';
+    document.getElementById('resetNewPassword').value = '';
+    document.getElementById('resetConfirmPassword').value = '';
+    history.replaceState(null, '', window.location.pathname);
+    showView('view-login');
+    const la = document.getElementById('loginAlert');
+    if (la) { la.className = 'alert-box alert-info'; la.textContent = 'Your password has been changed. Please log in with your new password.'; la.style.display = 'block'; }
+    return;
+  }
   try {
     await callFn('setPassword', { newPassword: pw });
   } catch (err) {
@@ -4449,7 +4476,7 @@ async function handleForgotPassword(e) {
   const alertEl = document.getElementById('forgotAlert');
   const email = ((document.getElementById('forgotEmail') || {}).value || '').trim().toLowerCase();
   if (email) await callFn('requestPasswordReset', { email }).catch(() => {});
-  alertEl.textContent = 'Password reset request received. If an account exists with that email, instructions have been sent.';
+  alertEl.textContent = 'If an account exists with that email, we have emailed a link to reset your password. It works once and expires in 1 hour.';
   alertEl.style.display = 'block';
 }
 
