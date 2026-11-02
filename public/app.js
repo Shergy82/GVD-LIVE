@@ -525,6 +525,16 @@ function setupHubSso() {
       window.location.reload();
       return;
     }
+    if (e.data.type === 'gvd-open-shift') {   // a GVD Live alert was tapped on this device: open that shift (and so mark it seen)
+      const id = parseInt(e.data.shiftId);
+      if (isNaN(id)) return;
+      let tries = 0;
+      const t = setInterval(() => {
+        if (allShifts.some(x => parseInt(x.id) === id)) { clearInterval(t); openShiftDetailModal(id); }
+        else if (++tries > 40) clearInterval(t);   // waits up to ~12 s for the shifts to load after signing in
+      }, 300);
+      return;
+    }
     if (e.data.type !== 'gvd-sso' || !e.data.idToken || ssoBusy) return;
     ssoBusy = true;
     try {
@@ -2140,7 +2150,7 @@ async function openShiftDetailModal(shiftId) {
   document.getElementById('detailSiteInfo').innerHTML = siteInfoHtml(site);
 
   // Only set seen_at when the authenticated operative explicitly opens and views details
-  const isOperativeOwner = currentUser && currentUser.role === 'Operative' && String(shift.operative_id) === String(currentUser.id);
+  const isOperativeOwner = currentUser && String(shift.operative_id) === String(currentUser.id);   // whoever the shift is for (any role) has now seen it
   if (isOperativeOwner) {
     const nowIso = new Date().toISOString();
     shift.seen_at = nowIso;
