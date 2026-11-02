@@ -11,11 +11,10 @@
 
 const firebaseConfig = {
   // Public web identifiers (they ship in every web app); access is controlled by security rules, not by hiding this
-  apiKey: "AIzaSyC2nnP8nXrFKw-4JWswddXLfroDD2lBcg0",
-  appId: "1:440817107816:web:a000c5685aaf7604a84cdd",
-  projectId: "gvd-live",
-  authDomain: "gvd-live.firebaseapp.com",
-  storageBucket: "gvd-live.appspot.com"
+  apiKey: "AIzaSyBC6N2wUkVSg3XtSSEMSpMOgCXY4zuIAeE",
+  projectId: "gvd-hub",
+  authDomain: "gvd-hub.firebaseapp.com",
+  storageBucket: "gvd-hub.firebasestorage.app"
 };
 
 // Local testing only: ?emulator=1 on localhost uses the demo-gvd emulator project, so it can never touch production data.
@@ -529,7 +528,7 @@ function setupHubSso() {
     if (e.data.type !== 'gvd-sso' || !e.data.idToken || ssoBusy) return;
     ssoBusy = true;
     try {
-      const res = await callFn('ssoSession', { idToken: e.data.idToken });
+      const res = await callFn('liveSsoSession', { idToken: e.data.idToken });
       if (currentUser && String(currentUser.id) === String(res.user.id) && auth.currentUser) { hideSsoSplash(); return; } // already this person
       await signInWithServerSession(res);
       startSyncOnce();
@@ -5127,7 +5126,7 @@ async function handlePhotoUpload(e) {
   loadProjectPage(siteId);
 }
 
-const STORAGE_BUCKETS = ['gs://gvd-live.firebasestorage.app', 'gs://gvd-live.appspot.com'];
+const STORAGE_BUCKETS = ['gs://gvd-hub.firebasestorage.app'];
 const MAX_SITE_FILE_MB = 30;
 
 function getStorageForBucket(bucketUrl) {

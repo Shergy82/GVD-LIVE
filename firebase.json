@@ -1,9 +1,7 @@
 {
-  "firestore": {
-    "rules": "firestore.rules"
-  },
   "functions": {
-    "source": "functions"
+    "source": "functions",
+    "codebase": "live"
   },
   "hosting": {
     "site": "gvd-live",
@@ -46,9 +44,6 @@
         "destination": "/index.html"
       }
     ]
-  },
-  "storage": {
-    "rules": "storage.rules"
   },
   "emulators": {
     "auth": {

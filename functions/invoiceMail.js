@@ -9,7 +9,7 @@ const { parseInvoiceText, matchSiteByAddress } = require('./invoiceParser');
 
 const GMAIL_USER = defineSecret('GMAIL_USER');
 const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
-const BUCKETS = ['gvd-live.firebasestorage.app', 'gvd-live.appspot.com'];
+const BUCKETS = ['gvd-hub.firebasestorage.app'];
 const MAX_PER_RUN = 15;
 
 async function extractLines(buffer) {
