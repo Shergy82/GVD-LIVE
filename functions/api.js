@@ -1,6 +1,8 @@
 // Callable functions that replace the old "download every user and compare a hash in the browser" login,
 // plus the public customer page and feedback, and the finance summary read for GVD Logic.
+const crypto = require('crypto');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { legacyHash, hashPassword, verifyPassword, randomTempPassword } = require('./credentials');
@@ -11,6 +13,13 @@ const LOCK_MINUTES = 15;
 const MIN_PASSWORD = 6;
 
 const opts = { region: 'us-central1', cors: true };
+// Reset emails go out through the same Gmail account the invoices inbox already uses
+const GMAIL_USER = defineSecret('GMAIL_USER');
+const GMAIL_APP_PASSWORD = defineSecret('GMAIL_APP_PASSWORD');
+const APP_URL = 'https://gvd-live.web.app';
+const RESET_MINUTES = 60;
+const RESET_MAX_PER_HOUR = 3;
+const sha256 = t => crypto.createHash('sha256').update(t).digest('hex');
 const db = () => getFirestore();
 
 const isMgmtRole = (role, email) => role === 'Owner' || role === 'Admin' || role === 'Manager' || email === OWNER_EMAIL;
@@ -212,23 +221,71 @@ exports.register = onCall(opts, async (req) => {
 });
 
 // ---------------------------------------------------------------------------
-// requestPasswordReset(email): always the same answer. Management get a push + an entry they can act on.
+// requestPasswordReset(email): always the same answer, whether or not the account exists. If it does, the person gets
+// an email with a one-time link (valid for an hour). Their password is NOT changed until they use the link, so nobody
+// else can lock them out by typing their address. Only a hash of the link token is stored.
 // ---------------------------------------------------------------------------
-exports.requestPasswordReset = onCall(opts, async (req) => {
+async function sendResetEmail(to, name, link) {
+  const nodemailer = require('nodemailer');
+  const t = nodemailer.createTransport({ host: 'smtp.gmail.com', port: 465, secure: true,
+    auth: { user: GMAIL_USER.value().trim(), pass: GMAIL_APP_PASSWORD.value().replace(/\s+/g, '') } });
+  const hi = name ? `Hi ${String(name).split(' ')[0]},` : 'Hi,';
+  await t.sendMail({
+    from: `GVD LIVE <${GMAIL_USER.value().trim()}>`, to,
+    subject: 'Reset your GVD LIVE password',
+    text: `${hi}\n\nWe received a request to reset your GVD LIVE password. Open this link to choose a new one (it works once and expires in ${RESET_MINUTES} minutes):\n\n${link}\n\nIf you did not ask for this, ignore this email. Your password has not been changed.\n`,
+    html: `<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:480px;color:#18202b"><p>${hi}</p><p>We received a request to reset your GVD LIVE password.</p>
+      <p><a href="${link}" style="display:inline-block;background:#2f5d3a;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Choose a new password</a></p>
+      <p style="color:#667085;font-size:13px">The link works once and expires in ${RESET_MINUTES} minutes. If you did not ask for this, ignore this email. Your password has not been changed.</p></div>`
+  });
+}
+
+exports.requestPasswordReset = onCall({ ...opts, secrets: [GMAIL_USER, GMAIL_APP_PASSWORD] }, async (req) => {
   const email = str(req.data && req.data.email, 200).toLowerCase();
   if (email) {
     const u = await findUserByEmail(email);
-    if (u) {
-      await db().collection('password_reset_requests').add({ user_id: u.id, email, full_name: u.data().full_name || '', created_at: new Date().toISOString() });
-      const mgrs = await db().collection('users').where('status', '==', 'Active').get();
-      await Promise.all(mgrs.docs.filter(m => isMgmtRole(m.data().role, m.data().email)).map(m => db().collection('notifications').add({
-        target_user_id: m.id,
-        title: '🔑 Password reset requested',
-        body: `${u.data().full_name || email} asked for a password reset. Set a temporary password in Team.`,
-        created_at: new Date().toISOString()
-      })));
+    if (u && u.data().status === 'Active') {
+      const since = Date.now() - 3600 * 1000;
+      const recent = (await db().collection('password_resets').where('user_id', '==', u.id).get()).docs.filter(d => Date.parse(d.data().created_at) > since);
+      if (recent.length < RESET_MAX_PER_HOUR) {
+        const token = crypto.randomBytes(32).toString('hex');
+        await db().collection('password_resets').doc(sha256(token)).set({
+          user_id: u.id, email, used: false, created_at: new Date().toISOString(), expires_at: new Date(Date.now() + RESET_MINUTES * 60000).toISOString()
+        });
+        try { await sendResetEmail(email, u.data().full_name, `${APP_URL}/?reset=${token}`); }
+        catch (err) { console.error('Reset email failed:', err.message); }
+      }
     }
   }
+  return { ok: true };
+});
+
+// completePasswordReset(token, newPassword): no sign-in needed; the one-time token is the proof.
+exports.completePasswordReset = onCall(opts, async (req) => {
+  const token = str(req.data && req.data.token, 200);
+  const pw = String((req.data && req.data.newPassword) || '');
+  const expired = () => new HttpsError('invalid-argument', 'This reset link has expired or was already used. Please request a new one.');
+  if (!/^[a-f0-9]{64}$/.test(token)) throw new HttpsError('invalid-argument', 'This reset link is not valid.');
+  if (pw.length < MIN_PASSWORD || pw.length > 200) throw new HttpsError('invalid-argument', `Password must be at least ${MIN_PASSWORD} characters.`);
+  const ref = db().collection('password_resets').doc(sha256(token));
+  const used = await db().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const d = snap.data();
+    if (!snap.exists || d.used || Date.parse(d.expires_at) < Date.now()) return null;
+    tx.update(ref, { used: true, used_at: new Date().toISOString() });
+    return d;
+  });
+  if (!used) throw expired();
+  const userRef = db().collection('users').doc(used.user_id);
+  const user = await userRef.get();
+  if (!user.exists || user.data().status !== 'Active') throw expired();
+  await db().collection('credentials').doc(used.user_id).set({
+    ...(await hashPassword(pw)), legacy_hash: FieldValue.delete(), failed_count: 0, locked_until: FieldValue.delete(), updated_at: new Date().toISOString()
+  }, { merge: true });
+  await userRef.update({ must_change_password: false });
+  // any other link still outstanding for this person is now void
+  const others = await db().collection('password_resets').where('user_id', '==', used.user_id).get();
+  await Promise.all(others.docs.filter(d => !d.data().used).map(d => d.ref.update({ used: true, used_at: new Date().toISOString() })));
   return { ok: true };
 });
 
