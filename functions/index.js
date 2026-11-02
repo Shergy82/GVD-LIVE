@@ -107,6 +107,10 @@ exports.sendDiaryReminders = onSchedule({ schedule: '0 7 * * *', timeZone: 'Euro
 
 // Serves site documents from our own domain (/files/<pdfDocId>) so phones treat them as normal downloads.
 exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (req, res) => {
+  // the old gvd-live.web.app address sends requests here (see functions-shell); the app reads the file across origins
+  res.set('Access-Control-Allow-Origin', 'https://gvd-live.web.app');
+  res.set('Vary', 'Origin');
+  if (req.method === 'OPTIONS') return res.status(204).set('Access-Control-Allow-Methods', 'GET').send('');
   try {
     const id = decodeURIComponent((req.path || '').split('/').filter(Boolean).pop() || '');
     if (!id) return res.status(400).send('Missing file id');

@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "gvd-live"
+    "default": "gvd-live",
+    "hub": "gvd-hub"
   }
 }

@@ -142,7 +142,7 @@ exports.refreshSession = onCall(opts, async (req) => sessionFor(requireAuth(req)
 // ssoSession(idToken): used when GVD Live is opened inside the GVD Hub. The Hub signs management in once and hands each app a
 // GVD Live ID token; this verifies it and returns a normal session for this app. Management accounts only.
 // ---------------------------------------------------------------------------
-exports.ssoSession = onCall(opts, async (req) => {
+exports.liveSsoSession = onCall(opts, async (req) => {
   let decoded;
   try { decoded = await getAuth().verifyIdToken(String((req.data && req.data.idToken) || '')); }
   catch (e) { throw new HttpsError('unauthenticated', 'Please sign in again.'); }

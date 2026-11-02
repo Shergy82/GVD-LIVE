@@ -11,11 +11,10 @@
 
 const firebaseConfig = {
   // Public web identifiers (they ship in every web app); access is controlled by security rules, not by hiding this
-  apiKey: "AIzaSyC2nnP8nXrFKw-4JWswddXLfroDD2lBcg0",
-  appId: "1:440817107816:web:a000c5685aaf7604a84cdd",
-  projectId: "gvd-live",
-  authDomain: "gvd-live.firebaseapp.com",
-  storageBucket: "gvd-live.appspot.com"
+  apiKey: "AIzaSyBC6N2wUkVSg3XtSSEMSpMOgCXY4zuIAeE",
+  projectId: "gvd-hub",
+  authDomain: "gvd-hub.firebaseapp.com",
+  storageBucket: "gvd-hub.firebasestorage.app"
 };
 
 // Local testing only: ?emulator=1 on localhost uses the demo-gvd emulator project, so it can never touch production data.
@@ -529,7 +528,7 @@ function setupHubSso() {
     if (e.data.type !== 'gvd-sso' || !e.data.idToken || ssoBusy) return;
     ssoBusy = true;
     try {
-      const res = await callFn('ssoSession', { idToken: e.data.idToken });
+      const res = await callFn('liveSsoSession', { idToken: e.data.idToken });
       if (currentUser && String(currentUser.id) === String(res.user.id) && auth.currentUser) { hideSsoSplash(); return; } // already this person
       await signInWithServerSession(res);
       startSyncOnce();
@@ -1091,6 +1090,24 @@ function getOrCreateDeviceId() {
   return devId;
 }
 
+const HUB_ORIGINS = ['https://gvd-hub.web.app', 'http://localhost:5099'];
+// Asks the Hub page around us to turn on alerts; resolves {status:'ok'|'no-hub'|'fail', msg}
+function askHubForPush() {
+  return new Promise(resolve => {
+    let acked = false, done = false;
+    const finish = r => { if (done) return; done = true; window.removeEventListener('message', onMsg); resolve(r); };
+    const onMsg = e => {
+      if (!HUB_ORIGINS.includes(e.origin) || !e.data) return;
+      if (e.data.type === 'gvd-push-ack') acked = true;
+      if (e.data.type === 'gvd-push-result') finish(e.data.ok ? { status: 'ok' } : { status: 'fail', msg: e.data.msg });
+    };
+    window.addEventListener('message', onMsg);
+    HUB_ORIGINS.forEach(o => { try { window.parent.postMessage({ type: 'gvd-push-request' }, o); } catch (x) { /* not that parent */ } });
+    setTimeout(() => { if (!acked) finish({ status: 'no-hub' }); }, 2500);   // an older Hub page never answers
+    setTimeout(() => finish({ status: 'fail', msg: 'No answer from the Hub' }), 5 * 60 * 1000);
+  });
+}
+
 async function registerDevicePushSubscription(forceInteractive = false) {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     updatePushDiagnosticsUI('Not Supported', 'Browser does not support WebPush', 'Failed');
@@ -1101,6 +1118,28 @@ async function registerDevicePushSubscription(forceInteractive = false) {
     updatePushDiagnosticsUI('Denied', 'Blocked in Settings', 'Failed');
     const guideEl = document.getElementById('iosRecoveryGuidePanel');
     if (guideEl && forceInteractive) guideEl.style.display = 'block';
+    return null;
+  }
+
+  // Browsers refuse to show the notification prompt to a page that is embedded in another one (as GVD Live is inside the GVD Hub),
+  // so inside the Hub we ask the Hub, which is the top-level page, to turn alerts on for this device.
+  if (forceInteractive && window.parent !== window && Notification.permission !== 'granted') {
+    updatePushDiagnosticsUI('Asking the Hub', 'Waiting for the Hub', 'Pending');
+    const r = await askHubForPush();
+    if (r.status === 'ok') {
+      localStorage.setItem('gvd_push_subscribed', 'true');
+      updatePushDiagnosticsUI('Granted (via the Hub)', 'Registered', 'Success');
+      updateHeaderBellUI();
+      updateCleanPushUI();
+      showGreenToast('🔔 Alerts turned on for this device (through the Hub)');
+    } else if (r.status === 'no-hub') {
+      updatePushDiagnosticsUI('Open in own tab', 'Browsers block the alerts prompt in a frame', 'Failed');
+      if (confirm('Your browser will not ask for notification permission here.\n\nOpen GVD LIVE in its own tab now? Turn alerts on there (it only needs doing once on this device).')) {
+        window.open('https://gvd-live.web.app/', '_blank', 'noopener');
+      }
+    } else {
+      updatePushDiagnosticsUI('Not turned on', r.msg || 'Cancelled', 'Failed');
+    }
     return null;
   }
 
@@ -1200,7 +1239,7 @@ function updateCleanPushUI() {
   const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
 
   if (badgeEl) {
-    if (perm === 'granted' && isSubscribed) {
+    if ((perm === 'granted' || window.parent !== window) && isSubscribed) {
       badgeEl.innerHTML = '🟢 <span style="color: #10b981;">Push Notifications Active & Subscribed</span>';
     } else if (perm === 'denied') {
       badgeEl.innerHTML = '🔴 <span style="color: #ef4444;">Push Notifications Blocked in Settings</span>';
@@ -5127,7 +5166,7 @@ async function handlePhotoUpload(e) {
   loadProjectPage(siteId);
 }
 
-const STORAGE_BUCKETS = ['gs://gvd-live.firebasestorage.app', 'gs://gvd-live.appspot.com'];
+const STORAGE_BUCKETS = ['gs://gvd-hub.firebasestorage.app'];
 const MAX_SITE_FILE_MB = 30;
 
 function getStorageForBucket(bucketUrl) {
