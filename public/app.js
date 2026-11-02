@@ -1090,6 +1090,24 @@ function getOrCreateDeviceId() {
   return devId;
 }
 
+const HUB_ORIGINS = ['https://gvd-hub.web.app', 'http://localhost:5099'];
+// Asks the Hub page around us to turn on alerts; resolves {status:'ok'|'no-hub'|'fail', msg}
+function askHubForPush() {
+  return new Promise(resolve => {
+    let acked = false, done = false;
+    const finish = r => { if (done) return; done = true; window.removeEventListener('message', onMsg); resolve(r); };
+    const onMsg = e => {
+      if (!HUB_ORIGINS.includes(e.origin) || !e.data) return;
+      if (e.data.type === 'gvd-push-ack') acked = true;
+      if (e.data.type === 'gvd-push-result') finish(e.data.ok ? { status: 'ok' } : { status: 'fail', msg: e.data.msg });
+    };
+    window.addEventListener('message', onMsg);
+    HUB_ORIGINS.forEach(o => { try { window.parent.postMessage({ type: 'gvd-push-request' }, o); } catch (x) { /* not that parent */ } });
+    setTimeout(() => { if (!acked) finish({ status: 'no-hub' }); }, 2500);   // an older Hub page never answers
+    setTimeout(() => finish({ status: 'fail', msg: 'No answer from the Hub' }), 5 * 60 * 1000);
+  });
+}
+
 async function registerDevicePushSubscription(forceInteractive = false) {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     updatePushDiagnosticsUI('Not Supported', 'Browser does not support WebPush', 'Failed');
@@ -1103,11 +1121,24 @@ async function registerDevicePushSubscription(forceInteractive = false) {
     return null;
   }
 
-  // Browsers refuse to show the notification prompt to a page that is embedded in another one (as GVD Live is inside the GVD Hub).
+  // Browsers refuse to show the notification prompt to a page that is embedded in another one (as GVD Live is inside the GVD Hub),
+  // so inside the Hub we ask the Hub, which is the top-level page, to turn alerts on for this device.
   if (forceInteractive && window.parent !== window && Notification.permission !== 'granted') {
-    updatePushDiagnosticsUI('Open in own tab', 'Browsers block the alerts prompt inside the Hub', 'Failed');
-    if (confirm('Your browser will not ask for notification permission while GVD Live is inside the Hub.\n\nOpen GVD LIVE in its own tab now? Turn alerts on there (it only needs doing once on this device).')) {
-      window.open('https://gvd-live.web.app/', '_blank', 'noopener');
+    updatePushDiagnosticsUI('Asking the Hub', 'Waiting for the Hub', 'Pending');
+    const r = await askHubForPush();
+    if (r.status === 'ok') {
+      localStorage.setItem('gvd_push_subscribed', 'true');
+      updatePushDiagnosticsUI('Granted (via the Hub)', 'Registered', 'Success');
+      updateHeaderBellUI();
+      updateCleanPushUI();
+      showGreenToast('🔔 Alerts turned on for this device (through the Hub)');
+    } else if (r.status === 'no-hub') {
+      updatePushDiagnosticsUI('Open in own tab', 'Browsers block the alerts prompt in a frame', 'Failed');
+      if (confirm('Your browser will not ask for notification permission here.\n\nOpen GVD LIVE in its own tab now? Turn alerts on there (it only needs doing once on this device).')) {
+        window.open('https://gvd-live.web.app/', '_blank', 'noopener');
+      }
+    } else {
+      updatePushDiagnosticsUI('Not turned on', r.msg || 'Cancelled', 'Failed');
     }
     return null;
   }
@@ -1208,7 +1239,7 @@ function updateCleanPushUI() {
   const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
 
   if (badgeEl) {
-    if (perm === 'granted' && isSubscribed) {
+    if ((perm === 'granted' || window.parent !== window) && isSubscribed) {
       badgeEl.innerHTML = '🟢 <span style="color: #10b981;">Push Notifications Active & Subscribed</span>';
     } else if (perm === 'denied') {
       badgeEl.innerHTML = '🔴 <span style="color: #ef4444;">Push Notifications Blocked in Settings</span>';
