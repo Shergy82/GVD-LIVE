@@ -1103,6 +1103,15 @@ async function registerDevicePushSubscription(forceInteractive = false) {
     return null;
   }
 
+  // Browsers refuse to show the notification prompt to a page that is embedded in another one (as GVD Live is inside the GVD Hub).
+  if (forceInteractive && window.parent !== window && Notification.permission !== 'granted') {
+    updatePushDiagnosticsUI('Open in own tab', 'Browsers block the alerts prompt inside the Hub', 'Failed');
+    if (confirm('Your browser will not ask for notification permission while GVD Live is inside the Hub.\n\nOpen GVD LIVE in its own tab now? Turn alerts on there (it only needs doing once on this device).')) {
+      window.open('https://gvd-live.web.app/', '_blank', 'noopener');
+    }
+    return null;
+  }
+
   try {
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
