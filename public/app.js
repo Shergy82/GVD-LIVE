@@ -324,6 +324,17 @@ function saveLocalStorageData() {
   }
 }
 
+// The live data listeners are started right after sign-in. If one is refused while the sign-in is still settling (the first load, which
+// used to leave the screen empty until a reload), try again a few times instead of giving up.
+function listenWithRetry(label, start) {
+  let tries = 0;
+  const go = () => start(err => {
+    console.warn('Firestore ' + label + ' error:', err);
+    if (++tries <= 6) setTimeout(go, 1200 * tries);
+  });
+  go();
+}
+
 function initFirestoreSync() {
   if (!db) {
     console.warn('Firestore SDK not loaded, using REST fallback');
@@ -332,7 +343,7 @@ function initFirestoreSync() {
   }
 
   // Real-time Users Collection Sync & Auto-Approval Login
-  db.collection('users').onSnapshot(snapshot => {
+  listenWithRetry('users', onErr => db.collection('users').onSnapshot(snapshot => {
     allUsers = snapshot.docs.map(doc => {
       const d = doc.data();
       delete d.password_hash; delete d.temp_password; // never keep credentials in memory or the local cache
@@ -368,10 +379,10 @@ function initFirestoreSync() {
     saveLocalStorageData();
     updatePendingUsersBadge();
     renderActiveView();
-  }, err => console.warn('Firestore users error:', err));
+  }, onErr));
 
   // Real-time Sites Collection Sync (with deduplication)
-  db.collection('sites').onSnapshot(snapshot => {
+  listenWithRetry('sites', onErr => db.collection('sites').onSnapshot(snapshot => {
     allSites = snapshot.docs.map(doc => {
       const d = doc.data();
       return { ...d, id: parseInt(d.id || doc.id) };
@@ -384,11 +395,11 @@ function initFirestoreSync() {
     }
     renderActiveView();
     fsMarkReady('sites');
-  }, err => console.warn('Firestore sites error:', err));
+  }, onErr));
 
 
   // Real-time Shifts Collection Sync
-  db.collection('shifts').onSnapshot(snapshot => {
+  listenWithRetry('shifts', onErr => db.collection('shifts').onSnapshot(snapshot => {
     const newShifts = snapshot.docs.map(doc => {
       const d = doc.data();
       return { ...d, id: parseInt(d.id || doc.id) };
@@ -405,20 +416,20 @@ function initFirestoreSync() {
     renderActiveView();
     if (typeof refreshFinanceViews === 'function') refreshFinanceViews();
     fsMarkReady('shifts');
-  }, err => console.warn('Firestore shifts error:', err));
+  }, onErr));
 
   // Real-time Photos Collection Sync
-  db.collection('photos').onSnapshot(snapshot => {
+  listenWithRetry('photos', onErr => db.collection('photos').onSnapshot(snapshot => {
     allPhotos = snapshot.docs.map(doc => {
       const d = doc.data();
       return { ...d, id: String(d.id || doc.id) };
     });
     saveLocalStorageData();
     if (activeSiteId) loadProjectPage(activeSiteId);
-  }, err => console.warn('Firestore photos error:', err));
+  }, onErr));
 
   // Real-time PDFs Collection Sync
-  db.collection('pdfs').onSnapshot(snapshot => {
+  listenWithRetry('pdfs', onErr => db.collection('pdfs').onSnapshot(snapshot => {
     allPdfs = snapshot.docs.map(doc => {
       const d = doc.data();
       return { ...d, id: String(d.id || doc.id) };
@@ -428,17 +439,17 @@ function initFirestoreSync() {
     const invView = document.getElementById('view-invoices');
     if (invView && invView.style.display !== 'none') renderInvoiceRegister();
     fsMarkReady('pdfs');
-  }, err => console.warn('Firestore pdfs error:', err));
+  }, onErr));
 
   // Real-time App Settings Sync
-  db.collection('settings').doc('app').onSnapshot(doc => {
+  listenWithRetry('settings', onErr => db.collection('settings').doc('app').onSnapshot(doc => {
     if (doc.exists) {
       appSettings = doc.data();
       saveLocalStorageData();
       updateBrandingUI();
     }
     fsMarkReady('settings');
-  }, err => console.warn('Firestore settings error:', err));
+  }, onErr));
 }
 
 function triggerShiftNotification(shift, customTitle = '🚨 New Shift Assigned!') {
