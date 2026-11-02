@@ -1056,7 +1056,8 @@ function updateHeaderBellUI() {
   const isSubscribed = localStorage.getItem('gvd_push_subscribed') === 'true';
   const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
 
-  if (perm === 'granted' && isSubscribed) {
+  // inside the Hub the permission belongs to the Hub page, so the saved flag is what counts
+  if ((perm === 'granted' || window.parent !== window) && isSubscribed) {
     dot.className = 'bell-dot active';
     dot.title = 'Push Notifications Active';
   } else if (perm === 'denied') {
@@ -1092,7 +1093,7 @@ function getOrCreateDeviceId() {
 
 const HUB_ORIGINS = ['https://gvd-hub.web.app', 'http://localhost:5099'];
 // Asks the Hub page around us to turn on alerts; resolves {status:'ok'|'no-hub'|'fail', msg}
-function askHubForPush() {
+function askHubForPush(type = 'gvd-push-request') {
   return new Promise(resolve => {
     let acked = false, done = false;
     const finish = r => { if (done) return; done = true; window.removeEventListener('message', onMsg); resolve(r); };
@@ -1102,7 +1103,7 @@ function askHubForPush() {
       if (e.data.type === 'gvd-push-result') finish(e.data.ok ? { status: 'ok' } : { status: 'fail', msg: e.data.msg });
     };
     window.addEventListener('message', onMsg);
-    HUB_ORIGINS.forEach(o => { try { window.parent.postMessage({ type: 'gvd-push-request' }, o); } catch (x) { /* not that parent */ } });
+    HUB_ORIGINS.forEach(o => { try { window.parent.postMessage({ type }, o); } catch (x) { /* not that parent */ } });
     setTimeout(() => { if (!acked) finish({ status: 'no-hub' }); }, 2500);   // an older Hub page never answers
     setTimeout(() => finish({ status: 'fail', msg: 'No answer from the Hub' }), 5 * 60 * 1000);
   });
@@ -1213,6 +1214,8 @@ async function registerDevicePushSubscription(forceInteractive = false) {
 }
 
 async function unsubscribeDevicePushSubscription() {
+  // alerts turned on from inside the Hub belong to the Hub page, which has to switch them off
+  if (window.parent !== window) await askHubForPush('gvd-push-off');
   try {
     if ('serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.ready;
