@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GVD LIVE</title>
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://us-central1-gvd-hub.cloudfunctions.net" crossorigin>
+  <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin>
   <link rel="stylesheet" href="/styles.css?v=34.0">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -1236,17 +1240,22 @@
   </div>
 
 
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
-  <script src="/qrcode.min.js?v=17.0"></script>
-  <script src="/jspdf.umd.min.js"></script>
-  <script src="/jspdf.plugin.autotable.min.js"></script>
-  <script src="/app.js?v=84.0"></script>
-  <script src="/reports.js?v=1.5"></script>
-  <script src="/invoice-template.js?v=1.5"></script>
-  <script src="/my-invoice.js?v=1.6"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
+  <script defer src="/app.js?v=84.0"></script>
+  <script defer src="/reports.js?v=1.5"></script>
+  <script defer src="/invoice-template.js?v=1.5"></script>
+  <script defer src="/my-invoice.js?v=1.6"></script>
+  <script>
+    // PDF and QR libraries are only needed when printing or showing a code: fetch them after the page is up, off the critical path
+    window.addEventListener('load', function () {
+      ['/qrcode.min.js?v=17.0', '/jspdf.umd.min.js', '/jspdf.plugin.autotable.min.js'].reduce(function (p, src) {
+        return p.then(function () { return new Promise(function (r) { var s = document.createElement('script'); s.src = src; s.onload = s.onerror = r; document.head.appendChild(s); }); });
+      }, Promise.resolve());
+    });
+  </script>
 </body>
 </html>
