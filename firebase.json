@@ -8,20 +8,29 @@
     "public": "public",
     "headers": [
       {
-        "source": "**/*.@(js|css)",
+        "source": "**/@(jspdf.umd.min.js|jspdf.plugin.autotable.min.js|pdf.min.js|pdf.worker.min.js|qrcode.min.js)",
         "headers": [
           {
             "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
+            "value": "public, max-age=31536000, immutable"
           }
         ]
       },
       {
-        "source": "**/*.html",
+        "source": "**/*.@(png|jpg|svg|ico|webp)",
         "headers": [
           {
             "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
+            "value": "public, max-age=86400"
+          }
+        ]
+      },
+      {
+        "source": "**/!(jspdf.umd.min|jspdf.plugin.autotable.min|pdf.min|pdf.worker.min|qrcode.min).@(js|css|html)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
           }
         ]
       }
