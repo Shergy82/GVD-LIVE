@@ -8,6 +8,15 @@
     "public": "public",
     "headers": [
       {
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
         "source": "**/@(jspdf.umd.min.js|jspdf.plugin.autotable.min.js|pdf.min.js|pdf.worker.min.js|qrcode.min.js)",
         "headers": [
           {
