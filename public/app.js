@@ -2148,6 +2148,54 @@ function renderMyShiftsView() {
   });
 }
 
+// ---- Job checklist (set up in GVD Logic): the operative ticks off the items for their trade on this job ----
+let myTradesCache = null;
+async function loadMyTrades() {
+  if (myTradesCache) return myTradesCache;
+  try { myTradesCache = ((await callFn('myTrades')).trades || []).map(t => String(t).toLowerCase()); } catch (e) { myTradesCache = []; }
+  return myTradesCache;
+}
+const CHECKLIST_STATES = [['○', 'Not started', '#e0524d'], ['◐', 'Part done', '#f0a21c'], ['●', 'Complete', '#2fa04f']];
+async function renderShiftChecklist(shift) {
+  const box = document.getElementById('detailChecklist');
+  if (!box) return;
+  box.innerHTML = '';
+  if (!db || !shift || shift.is_drying_day) return;
+  let items;
+  try {
+    const snap = await db.collection('checklist_items').where('liveRef', '==', String(shift.site_id)).get();
+    items = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
+  } catch (e) { console.warn('Checklist unavailable:', e.message); return; }
+  if (!items.length) return;
+  const mgmt = isManagementUser(currentUser);
+  const trades = mgmt ? [] : await loadMyTrades();
+  const mine = mgmt ? items : items.filter(i => trades.includes(String(i.trade || '').toLowerCase()));
+  if (document.getElementById('detailChecklist') !== box) return;
+  if (!mine.length) { box.innerHTML = '<div style="margin-bottom:16px;color:var(--text-muted);font-size:0.85rem;">No checklist items for your trade on this job.</div>'; return; }
+  const draw = () => {
+    const done = mine.filter(i => i.status === 2).length;
+    box.innerHTML = `<div style="margin-bottom:16px;">
+      <strong style="font-size:0.85rem;color:var(--text-muted);">Checklist${mgmt ? '' : ' (your trade)'}: ${done} of ${mine.length} complete</strong>
+      <div style="margin-top:6px;">${mine.map(i => {
+        const s = Number(i.status) || 0;
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border-color);">
+          <div style="font-size:0.92rem;${s === 2 ? 'text-decoration:line-through;color:var(--text-muted);' : ''}">${diaryEsc(i.text)}${mgmt && i.trade ? ` <span style="color:var(--text-muted);font-size:0.78rem;">· ${diaryEsc(i.trade)}</span>` : ''}</div>
+          <div style="display:flex;gap:6px;margin-top:6px;">${CHECKLIST_STATES.map((c, n) => `<button type="button" data-cl="${i.id}" data-s="${n}" style="flex:1;padding:10px 4px;border-radius:8px;border:2px solid ${s === n ? c[2] : 'var(--border-color)'};background:${s === n ? c[2] : 'transparent'};color:${s === n ? '#fff' : 'inherit'};font-size:0.8rem;font-weight:600;cursor:pointer;">${c[0]} ${c[1]}</button>`).join('')}</div></div>`;
+      }).join('')}</div></div>`;
+    box.querySelectorAll('button[data-cl]').forEach(btn => btn.onclick = async () => {
+      const it = mine.find(x => x.id === btn.dataset.cl), n = parseInt(btn.dataset.s);
+      if (!it || it.status === n) return;
+      const prev = it.status;
+      it.status = n; draw();
+      try {
+        await db.collection('checklist_items').doc(it.id).update({ status: n, statusBy: String(currentUser.id), statusByName: currentUser.full_name || '', statusAt: firebase.firestore.FieldValue.serverTimestamp() });
+        showGreenToast(`✔ ${CHECKLIST_STATES[n][1]}`);
+      } catch (e) { it.status = prev; draw(); alert('Could not save that tick: ' + e.message); }
+    });
+  };
+  draw();
+}
+
 async function openShiftDetailModal(shiftId) {
   const shift = allShifts.find(s => parseInt(s.id) === shiftId);
   if (!shift) return;
@@ -2159,6 +2207,8 @@ async function openShiftDetailModal(shiftId) {
   document.getElementById('detailDate').textContent = `Date: ${formatUKDate(shift.shift_date)}`;
   document.getElementById('detailTask').textContent = shift.task;
   document.getElementById('detailSiteInfo').innerHTML = siteInfoHtml(site);
+
+  renderShiftChecklist(shift);
 
   // Only set seen_at when the authenticated operative explicitly opens and views details
   const isOperativeOwner = currentUser && String(shift.operative_id) === String(currentUser.id);   // whoever the shift is for (any role) has now seen it
