@@ -128,8 +128,11 @@ exports.importInvoiceEmails = onSchedule({
   const { simpleParser } = require('mailparser');
   const client = new ImapFlow({
     host: 'imap.gmail.com', port: 993, secure: true, logger: false,
+    // fail fast if Gmail stalls (one run hung until the platform cut it off): the next run, 5 minutes later, simply tries again
+    connectionTimeout: 30000, greetingTimeout: 30000, socketTimeout: 90000,
     auth: { user: GMAIL_USER.value().trim(), pass: GMAIL_APP_PASSWORD.value().replace(/\s+/g, '') }
   });
+  client.on('error', err => console.warn('Invoice inbox connection problem:', err.message));
   await client.connect();
   const lock = await client.getMailboxLock('INBOX');
   try {
