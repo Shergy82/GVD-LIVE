@@ -138,6 +138,23 @@ async function sessionFor(uid) {
 
 exports.refreshSession = onCall(opts, async (req) => sessionFor(requireAuth(req).uid));
 
+// myTrades(): the trades of the person asking, used to show them only their own checklist items in GVD Live.
+// Subcontractors: the trades on their Onboarding record. Direct staff: the role on the Staff List.
+exports.myTrades = onCall(opts, async (req) => {
+  const a = requireAuth(req);
+  const uid = String(a.uid);
+  const split = v => String(v || '').split(/[,;\/&]|\band\b/i).map(t => t.trim()).filter(Boolean);
+  const out = new Set();
+  const subs = await db().collection('subs').where('liveUserId', '==', uid).get();
+  subs.docs.forEach(d => split(d.data().trades).forEach(t => out.add(t)));
+  if (!out.size) {
+    let staff = await db().collection('staff').where('liveUserId', '==', uid).get();
+    if (staff.empty && a.token && a.token.u_email) staff = await db().collection('staff').where('email', '==', String(a.token.u_email).toLowerCase()).get();
+    staff.docs.forEach(d => split(d.data().role).forEach(t => out.add(t)));
+  }
+  return { trades: [...out] };
+});
+
 // ---------------------------------------------------------------------------
 // ssoSession(idToken): used when GVD Live is opened inside the GVD Hub. The Hub signs management in once and hands each app a
 // GVD Live ID token; this verifies it and returns a normal session for this app. Management accounts only.
