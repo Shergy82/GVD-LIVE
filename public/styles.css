@@ -1687,28 +1687,3 @@ body.fv-open { overflow: hidden; }
 .file-viewer .fv-msg a { color: #fff; }
 .file-viewer img.fv-img { display: block; margin: 0 auto; max-width: none; height: auto; }
 
-
-/* Sites list: one compact row per site (details come from GVD Logic) */
-.site-list { display: flex; flex-direction: column; gap: 8px; }
-.site-row { flex-direction: row; align-items: center; justify-content: flex-start; gap: 14px; padding: 10px 14px; }
-.site-row:hover { transform: none; }
-.site-row .sr-main { flex: 1 1 auto; min-width: 0; }
-.site-row .sr-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.site-row .sr-addr { font-size: 0.98rem; font-weight: 700; color: var(--text-main); }
-.site-row .sr-sub { font-size: 0.78rem; color: var(--text-muted); margin-top: 3px; }
-.site-row .site-badge, .site-row .site-type-badge { font-size: 0.7rem; padding: 2px 7px; }
-.site-row .sr-ctl { display: flex; gap: 6px; flex: 0 0 auto; }
-.site-row .sr-ctl select { min-height: 30px; padding: 3px 6px; font-size: 0.78rem; width: 150px; }
-.site-row .sr-prog { flex: 0 0 120px; display: flex; align-items: center; gap: 6px; font-size: 0.78rem; }
-.site-row .sr-bar { flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.12); overflow: hidden; }
-.site-row .sr-bar i { display: block; height: 100%; }
-.site-row .sr-none { color: var(--text-muted); font-size: 0.72rem; }
-.site-row .sr-act { display: flex; gap: 6px; flex: 0 0 auto; }
-.site-row .sr-act .btn { padding: 4px 8px; min-height: 30px; font-size: 0.85rem; }
-@media (max-width: 900px) {
-  .site-row { flex-wrap: wrap; }
-  .site-row .sr-main { flex: 1 1 100%; }
-  .site-row .sr-ctl { flex: 1 1 100%; }
-  .site-row .sr-ctl select { flex: 1; width: auto; }
-  .site-row .sr-prog { flex: 1 1 auto; }
-}
