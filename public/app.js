@@ -91,6 +91,8 @@ let appSettings = { app_name: 'GVD LIVE', logo_url: '/gvd-logo.png' };
 
 let allUsers = [];
 let allSites = [];
+let allSiteLogic = {};      // management only: each job's details from GVD Logic, by Live site id
+let siteChecklist = {};     // management only: checklist progress per Live site id
 let allShifts = [];
 let allPhotos = [];
 let allPdfs = [];
@@ -442,6 +444,19 @@ function initFirestoreSync() {
   }, onErr));
 
   // Real-time App Settings Sync
+  if (isManagementUser(currentUser)) {
+    // the job details Logic keeps for each site (customer, client, scheme, dates) and each job's checklist progress
+    listenWithRetry('site_logic', onErr => db.collection('site_logic').onSnapshot(snap => {
+      allSiteLogic = {}; snap.docs.forEach(d => { allSiteLogic[d.id] = d.data(); });
+      if (document.getElementById('sitesListContainer') && !activeSiteId) renderSitesList();
+    }, onErr));
+    listenWithRetry('checklist_items', onErr => db.collection('checklist_items').onSnapshot(snap => {
+      const t = {};
+      snap.docs.forEach(d => { const x = d.data(), k = String(x.liveRef || ''); if (!k) return; (t[k] ??= { n: 0, sum: 0, done: 0 }); t[k].n++; t[k].sum += Number(x.status) || 0; if (x.status === 2) t[k].done++; });
+      siteChecklist = t;
+      if (document.getElementById('sitesListContainer') && !activeSiteId) renderSitesList();
+    }, onErr));
+  }
   listenWithRetry('settings', onErr => db.collection('settings').doc('app').onSnapshot(doc => {
     if (doc.exists) {
       appSettings = doc.data();
@@ -2285,7 +2300,8 @@ function renderSitesList() {
     return;
   }
 
-  container.style.display = 'grid';
+  container.style.display = 'flex';
+  container.classList.add('site-list');
   projectPage.style.display = 'none';
 
   // Toggle filter button styles
@@ -2335,28 +2351,28 @@ function renderSitesList() {
 
   container.innerHTML = sitesToDisplay.map(site => {
     const archiveBtn = site.is_archived
-      ? `<button class="btn btn-secondary btn-sm restore-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">↩️ Restore</button>`
-      : `<button class="btn btn-warning btn-sm archive-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5); color: #fbbf24; display: inline-flex; align-items: center; gap: 6px;">📦 Archive</button>`;
-
-    const deleteBtn = !isOwnerRole(currentUser) ? '' : `<button class="btn btn-danger btn-sm delete-site-card-btn" data-site-id="${site.id}" style="flex: 1; justify-content: center; font-size: 0.85rem; padding: 8px 12px; display: inline-flex; align-items: center; gap: 6px;">🗑️ Delete</button>`;
-
+      ? `<button class="btn btn-secondary btn-sm restore-site-card-btn" data-site-id="${site.id}" title="Restore this site">↩️</button>`
+      : `<button class="btn btn-warning btn-sm archive-site-card-btn" data-site-id="${site.id}" title="Archive this site" style="background-color: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.5);">📦</button>`;
+    const deleteBtn = !isOwnerRole(currentUser) ? '' : `<button class="btn btn-danger btn-sm delete-site-card-btn" data-site-id="${site.id}" title="Delete this site (Owner only)">🗑️</button>`;
+    const lg = isMgmt ? (allSiteLogic[String(site.id)] || null) : null;
+    const cl = isMgmt ? siteChecklist[String(site.id)] : null;
+    const pct = cl && cl.n ? Math.round(cl.sum / (2 * cl.n) * 100) : null;
+    const ukd = d => (d && /^\d{4}-\d{2}-\d{2}/.test(d)) ? formatUKDate(d) : '';
+    const sub = lg ? [lg.customerName, [lg.client, lg.scheme].filter(Boolean).join(' / '), lg.workType].filter(Boolean).map(diaryEsc).join(' · ') : '';
+    const dates = lg ? [lg.startDate ? 'Start ' + ukd(lg.startDate) : '', lg.targetCompletion ? 'Target ' + ukd(lg.targetCompletion) : ''].filter(Boolean).join(' · ') : '';
     return `
-      <div class="site-card" data-site-id="${site.id}">
-        <div>
-          <div class="site-card-header">
-            <span class="site-badge">${formatSiteId(site.id)} ${site.is_archived ? '(Archived)' : ''}</span>
-            ${siteTypeBadgeHtml(site)}
-          </div>
-          <h3 class="site-card-address">${site.address}</h3>
-          ${isMgmt ? `<select class="form-control site-manager-select" data-site-id="${site.id}" title="Manager responsible for this job" style="margin-top: 8px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Manager: not assigned</option>${managerUsers().map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(site.manager_id) ? ' selected' : ''}>Manager: ${diaryEsc(u.full_name)}</option>`).join('')}</select>
-          <select class="form-control site-branch-select" data-site-id="${site.id}" title="Branch / department" style="margin-top: 6px; min-height: 34px; padding: 4px 8px; font-size: 0.85rem;"><option value="">Branch: none</option>${repBranches().map(b => `<option value="${diaryEsc(b)}"${(site.branch || '').trim() === b ? ' selected' : ''}>Branch: ${diaryEsc(b)}</option>`).join('')}<option value="__new__">+ New branch...</option></select>` : ''}
+      <div class="site-card site-row" data-site-id="${site.id}">
+        <div class="sr-main">
+          <div class="sr-top"><span class="site-badge">${formatSiteId(site.id)} ${site.is_archived ? '(Archived)' : ''}</span>${siteTypeBadgeHtml(site)}<span class="sr-addr">${diaryEsc(site.address)}</span></div>
+          ${sub || dates ? `<div class="sr-sub">${sub}${sub && dates ? ' &nbsp;|&nbsp; ' : ''}${diaryEsc(dates)}${lg && lg.customerPhone ? ` &nbsp;|&nbsp; ${diaryEsc(lg.customerPhone)}` : ''}</div>` : ''}
         </div>
         ${isMgmt ? `
-          <div style="margin-top: 18px; display: flex; gap: 10px; width: 100%;" class="no-print">
-            ${archiveBtn}
-            ${deleteBtn}
-          </div>
-        ` : ''}
+        <div class="sr-ctl no-print">
+          <select class="form-control site-manager-select" data-site-id="${site.id}" title="Manager responsible for this job"><option value="">Manager: none</option>${managerUsers().map(u => `<option value="${diaryEsc(u.id)}"${String(u.id) === String(site.manager_id) ? ' selected' : ''}>${diaryEsc(u.full_name)}</option>`).join('')}</select>
+          <select class="form-control site-branch-select" data-site-id="${site.id}" title="Branch / department"><option value="">Branch: none</option>${repBranches().map(b => `<option value="${diaryEsc(b)}"${(site.branch || '').trim() === b ? ' selected' : ''}>${diaryEsc(b)}</option>`).join('')}<option value="__new__">+ New branch...</option></select>
+        </div>
+        <div class="sr-prog" title="${pct === null ? 'No checklist yet' : `Checklist: ${cl.done} of ${cl.n} complete`}">${pct === null ? '<span class="sr-none">no checklist</span>' : `<div class="sr-bar"><i style="width:${pct}%;background:${pct >= 100 ? '#2fa04f' : pct > 0 ? '#f0a21c' : '#e0524d'}"></i></div><b>${pct}%</b>`}</div>
+        <div class="sr-act no-print">${archiveBtn}${deleteBtn}</div>` : ''}
       </div>
     `;
   }).join('');
