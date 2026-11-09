@@ -1687,3 +1687,32 @@ body.fv-open { overflow: hidden; }
 .file-viewer .fv-msg a { color: #fff; }
 .file-viewer img.fv-img { display: block; margin: 0 auto; max-width: none; height: auto; }
 
+
+/* ---- Team chat: tidier pinned banner, replies, likes ---- */
+.chat-pinned { position: relative; padding: 0; margin-bottom: 10px; font-size: 0.88rem; overflow: hidden; }
+.chat-pinned .pin-head { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; color: var(--text-main); font: inherit; padding: 8px 40px 8px 12px; text-align: left; cursor: pointer; }
+.chat-pinned .pin-line { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+.chat-pinned.open .pin-line { color: var(--text-main); }
+.chat-pinned .pin-chev { font-size: 0.6rem; color: var(--text-muted); }
+.chat-pinned .pin-x { position: absolute; top: 4px; right: 6px; background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 6px 8px; font-size: 0.8rem; }
+.chat-pinned .pin-body { padding: 0 14px 12px 34px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; max-height: 40vh; overflow-y: auto; }
+.chat-announce { margin: 6px 0; padding: 8px 12px; border-left-width: 4px; }
+.chat-announce .chat-text { font-size: 0.92rem; }
+.chat-announce .chat-tag { font-size: 0.64rem; margin-bottom: 2px; }
+.chat-col { display: flex; flex-direction: column; min-width: 0; }
+.chat-row.mine .chat-col { align-items: flex-end; }
+.chat-actions { display: flex; gap: 4px; align-items: center; margin: 3px 6px 0; }
+.chat-act { background: none; border: none; color: var(--text-muted); font: inherit; font-size: 0.72rem; font-weight: 700; cursor: pointer; padding: 2px 6px; border-radius: 99px; }
+.chat-act:hover { background: var(--bg-surface-hover); color: var(--text-main); }
+.chat-act.on { color: #60a5fa; }
+.chat-likes { font-size: 0.72rem; font-weight: 700; color: var(--text-muted); background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 99px; padding: 1px 8px; }
+.chat-announce .chat-actions { margin: 6px 0 0; }
+.chat-quote { display: block; width: 100%; text-align: left; background: rgba(148,163,184,0.15); border: none; border-left: 3px solid #60a5fa; border-radius: 6px; padding: 4px 8px; margin: 2px 0 5px; color: inherit; font: inherit; font-size: 0.78rem; cursor: pointer; }
+.chat-quote b { display: block; font-size: 0.72rem; }
+.chat-quote span { display: block; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
+.chat-row.mine .chat-quote { background: rgba(255,255,255,0.18); border-left-color: #fff; }
+.chat-reply-bar { display: flex; align-items: center; gap: 8px; background: var(--bg-primary); border: 1px solid var(--border-color); border-left: 3px solid #60a5fa; border-radius: 10px; padding: 6px 10px; margin-bottom: 8px; font-size: 0.8rem; }
+.chat-reply-bar .rb-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-reply-bar .rb-text span { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-reply-bar button { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 0.9rem; padding: 4px 6px; }
+.chat-row.flash .chat-bubble, .chat-announce.flash { box-shadow: 0 0 0 2px #60a5fa; }
