@@ -4027,6 +4027,8 @@ let chatUnsub = null;
 let chatFirstSnapshot = true;
 let chatMentionMatches = [];
 let chatMentionIndex = 0;
+let chatPinOpen = false;
+let chatReplyTo = null;
 
 const chatSeenKey = () => `gvd_chat_seen_${currentUser ? currentUser.id : ''}`;
 const chatActiveUsers = () => allUsers.filter(u => u.status === 'Active');
@@ -4157,8 +4159,18 @@ function renderChatView(forceBottom) {
   // pinned: the most recent announcement from the last 7 days
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
   const latest = chatMessages.filter(m => m.kind === 'announcement' && (m.created_at || '') > weekAgo).pop();
-  document.getElementById('chatPinned').innerHTML = latest
-    ? `<div class="chat-pinned">📌 <b>Announcement</b> from <b>${diaryEsc(latest.sender_name)}</b> · ${diaryEsc(chatDayLabel(latest.created_at))}<div style="margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere;">${chatFormatText(latest.text)}</div></div>`
+  const pinKey = 'gvd_chat_pin_dismissed';
+  const pinGone = latest && localStorage.getItem(pinKey) === latest.id;
+  document.getElementById('chatPinned').innerHTML = (latest && !pinGone)
+    ? `<div class="chat-pinned ${chatPinOpen ? 'open' : ''}">
+        <button type="button" class="pin-head" data-pin-toggle>
+          <span class="pin-ico">📌</span>
+          <span class="pin-line"><b>${diaryEsc(latest.sender_name)}</b> · ${chatPinOpen ? '' : diaryEsc(String(latest.text).replace(/\s+/g, ' '))}</span>
+          <span class="pin-chev">${chatPinOpen ? '▲' : '▼'}</span>
+        </button>
+        <button type="button" class="pin-x" data-pin-dismiss="${diaryEsc(latest.id)}" title="Hide">✕</button>
+        ${chatPinOpen ? `<div class="pin-body">${chatFormatText(latest.text)}</div>` : ''}
+      </div>`
     : '';
 
   if (chatMessages.length === 0) {
@@ -4173,16 +4185,29 @@ function renderChatView(forceBottom) {
       const time = new Date(m.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
       const del = (mine || isAdmin) ? `<button type="button" data-chat-delete="${diaryEsc(m.id)}">Delete</button>` : '';
       const role = ['Owner', 'Admin', 'Manager'].includes(m.sender_role) ? `<span class="chat-role">${diaryEsc(m.sender_role)}</span>` : '';
+      const likes = Array.isArray(m.likes) ? m.likes.map(String) : [];
+      const liked = likes.includes(String(currentUser.id));
+      const likeNames = likes.map(id => { const u = allUsers.find(x => String(x.id) === id); return u ? u.full_name : ''; }).filter(Boolean).join(', ');
+      const quote = m.reply_to ? `<button type="button" class="chat-quote" data-chat-jump="${diaryEsc(m.reply_to)}"><b>${diaryEsc(m.reply_name || '')}</b><span>${diaryEsc(m.reply_text || '')}</span></button>` : '';
+      const actions = `<div class="chat-actions">
+          <button type="button" class="chat-act ${liked ? 'on' : ''}" data-chat-like="${diaryEsc(m.id)}">${liked ? '👍 Liked' : '👍 Like'}</button>
+          <button type="button" class="chat-act" data-chat-reply="${diaryEsc(m.id)}">↩ Reply</button>
+          ${likes.length ? `<span class="chat-likes" title="${diaryEsc(likeNames)}">👍 ${likes.length}</span>` : ''}
+        </div>`;
       if (m.kind === 'announcement') {
-        return `${sep}<div class="chat-announce"><div class="chat-tag">📢 Announcement from ${diaryEsc(m.sender_name)}${role}</div><div class="chat-text">${chatFormatText(m.text)}</div><div class="chat-meta"><span>${diaryEsc(m.sender_name)} · ${time}</span>${del}</div></div>`;
+        return `${sep}<div class="chat-announce" id="cm_${diaryEsc(m.id)}"><div class="chat-tag">📢 Announcement${role}</div>${quote}<div class="chat-text">${chatFormatText(m.text)}</div><div class="chat-meta"><span>${diaryEsc(m.sender_name)} · ${time}</span>${del}</div>${actions}</div>`;
       }
       return `${sep}
-        <div class="chat-row ${mine ? 'mine' : ''} ${chatMentionsMe(m) ? 'tagged' : ''}">
+        <div class="chat-row ${mine ? 'mine' : ''} ${chatMentionsMe(m) ? 'tagged' : ''}" id="cm_${diaryEsc(m.id)}">
           ${mine ? '' : `<div class="chat-avatar" style="background: ${userColor(m.sender_id)};">${diaryEsc(chatInitials(m.sender_name))}</div>`}
-          <div class="chat-bubble">
-            <div class="chat-name" style="color: ${userColor(m.sender_id)};">${diaryEsc(m.sender_name)}${role}</div>
-            <div class="chat-text">${chatFormatText(m.text)}</div>
-            <div class="chat-meta"><span>${time}</span>${del}</div>
+          <div class="chat-col">
+            <div class="chat-bubble">
+              <div class="chat-name" style="color: ${userColor(m.sender_id)};">${diaryEsc(m.sender_name)}${role}</div>
+              ${quote}
+              <div class="chat-text">${chatFormatText(m.text)}</div>
+              <div class="chat-meta"><span>${time}</span>${del}</div>
+            </div>
+            ${actions}
           </div>
         </div>`;
     }).join('');
@@ -4218,8 +4243,12 @@ async function sendChatMessage() {
       kind: announce ? 'announcement' : 'message',
       mentions: tags.ids,
       mention_all: tags.all,
+      likes: [],
+      ...(chatReplyTo ? { reply_to: chatReplyTo.id, reply_name: chatReplyTo.sender_name, reply_text: String(chatReplyTo.text).slice(0, 140) } : {}),
       created_at: new Date().toISOString()
     });
+    const repliedTo = chatReplyTo;
+    clearChatReply();
     input.value = '';
     input.style.height = 'auto';
     document.getElementById('chatAnnounce').checked = false;
@@ -4233,6 +4262,9 @@ async function sendChatMessage() {
     if (announce) await push(others, `📢 Announcement from ${currentUser.full_name}`);
     else if (tags.all) await push(others, `💬 ${currentUser.full_name} tagged everyone in Team Chat`);
     else if (tags.ids.length) await push(others.filter(u => tags.ids.includes(String(u.id))), `💬 ${currentUser.full_name} tagged you in Team Chat`);
+    if (repliedTo && !announce && !tags.all && String(repliedTo.sender_id) !== String(currentUser.id) && !tags.ids.includes(String(repliedTo.sender_id))) {
+      await push(others.filter(u => String(u.id) === String(repliedTo.sender_id)), `↩ ${currentUser.full_name} replied to you in Team Chat`);
+    }
     renderChatView(true);
   } catch (e) {
     console.warn('Chat send failed', e);
@@ -4241,6 +4273,33 @@ async function sendChatMessage() {
     btn.disabled = false;
     input.focus();
   }
+}
+
+function clearChatReply() {
+  chatReplyTo = null;
+  const r = document.getElementById('chatReplyBar');
+  if (r) r.style.display = 'none';
+}
+
+function startChatReply(id) {
+  const m = chatMessages.find(x => x.id === id);
+  if (!m) return;
+  chatReplyTo = m;
+  const r = document.getElementById('chatReplyBar');
+  r.innerHTML = `<div class="rb-text"><b>Replying to ${diaryEsc(m.sender_name)}</b><span>${diaryEsc(String(m.text).replace(/\s+/g, ' ').slice(0, 120))}</span></div><button type="button" id="chatReplyCancel" title="Cancel">✕</button>`;
+  r.style.display = '';
+  document.getElementById('chatReplyCancel').onclick = clearChatReply;
+  document.getElementById('chatInput').focus();
+}
+
+async function toggleChatLike(id) {
+  const m = chatMessages.find(x => x.id === id);
+  if (!m || !currentUser) return;
+  const me = String(currentUser.id);
+  const has = Array.isArray(m.likes) && m.likes.map(String).includes(me);
+  const FV = firebase.firestore.FieldValue;
+  try { await db.collection('group_chat').doc(id).update({ likes: has ? FV.arrayRemove(me) : FV.arrayUnion(me) }); }
+  catch (e) { console.warn('Like failed', e); }
 }
 
 async function deleteChatMessage(id) {
@@ -4327,7 +4386,21 @@ function setupChatListeners() {
   });
   document.getElementById('chatMessages').addEventListener('click', e => {
     const b = e.target.closest('[data-chat-delete]');
-    if (b) deleteChatMessage(b.dataset.chatDelete);
+    if (b) return deleteChatMessage(b.dataset.chatDelete);
+    const l = e.target.closest('[data-chat-like]');
+    if (l) return toggleChatLike(l.dataset.chatLike);
+    const r = e.target.closest('[data-chat-reply]');
+    if (r) return startChatReply(r.dataset.chatReply);
+    const j = e.target.closest('[data-chat-jump]');
+    if (j) {
+      const el = document.getElementById('cm_' + j.dataset.chatJump);
+      if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400); }
+    }
+  });
+  document.getElementById('chatPinned').addEventListener('click', e => {
+    const x = e.target.closest('[data-pin-dismiss]');
+    if (x) { try { localStorage.setItem('gvd_chat_pin_dismissed', x.dataset.pinDismiss); } catch (err) {} return renderChatView(false); }
+    if (e.target.closest('[data-pin-toggle]')) { chatPinOpen = !chatPinOpen; renderChatView(false); }
   });
 }
 
