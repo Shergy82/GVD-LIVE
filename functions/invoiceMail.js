@@ -127,6 +127,52 @@ async function importOne({ db, att, mail, ctx }) {
   return `imported, needs review (${record.review_reason})`;
 }
 
+// Second chance for invoices that landed in the register unassigned ("no job found"): read the stored PDF again with the
+// full list of POs as it is now (a PO may have been raised since, or the number may have been written differently) and,
+// when a PO is found, put the invoice on that PO's job and cost the PO. Anything doubtful stays flagged for review.
+async function rematchUnassigned(db, dryRun) {
+  const pdfs = (await db.collection('pdfs').where('file_type', '==', 'invoice').get()).docs.map(d => d.data());
+  const todo = pdfs.filter(f => f.needs_review && f.storage_path && !f.site_id && String(f.po_number || '').startsWith('INV-') && !f.dup_dismissed && !f.duplicate_of);
+  if (!todo.length) return [];
+  const pos = (await db.collection('purchase_orders').get()).docs.map(d => d.data());
+  const sites = (await db.collection('sites').get()).docs.map(d => ({ ...d.data(), id: d.data().id != null ? d.data().id : d.id }));
+  const done = [];
+  for (const f of todo.slice(0, 20)) {
+    try {
+      const [buf] = await getStorage().bucket(String(f.storage_bucket || BUCKETS[0]).replace('gs://', '')).file(f.storage_path).download();
+      let lines = await extractLines(buf);
+      if (lines.join(' ').length < 40) { try { lines = await ocrLines(buf); } catch (e) { /* leave as is */ } }
+      const parsed = parseInvoiceText(lines, pos);
+      const po = parsed.po ? pos.find(p => String(p.po_number).toUpperCase() === parsed.po) : null;
+      const site = po ? sites.find(s => String(s.id) === String(po.site_id)) : null;
+      if (!po || !site) continue;
+      const priceOk = parsed.net != null && parsed.hasText;
+      const confident = priceOk && parsed.totalsAgree && !parsed.netEstimated;
+      const update = { po_number: po.po_number, site_id: String(site.id), merchant: po.merchant || f.merchant || '' };
+      if (parsed.net != null) { update.invoice_net = parsed.net; update.invoice_vat = parsed.vat; update.invoice_gross = parsed.gross; }
+      if (parsed.date && !f.invoice_date) update.invoice_date = parsed.date;
+      if (confident) { update.needs_review = false; update.review_reason = ''; }
+      else update.review_reason = priceOk ? 'check the amounts' : 'price not found';
+      if (dryRun) { done.push(`${f.filename} -> ${po.po_number} net ${parsed.net} ${confident ? 'confident' : 'needs check'}`); continue; }
+      await db.collection('pdfs').doc(f.id).update(update);
+      if (confident) {
+        const fields = await recalcPo(db, po.po_number, { ...f, ...update });
+        await db.collection('purchase_orders').doc(po.po_number).update(fields);
+      }
+      done.push(`${f.filename} -> ${po.po_number}${confident ? '' : ' (still needs a check)'}`);
+    } catch (err) { console.warn('Re-match failed', f.filename, err.message); }
+  }
+  return done;
+}
+
+exports.rematchUnassignedInvoices = onSchedule({
+  schedule: 'every 15 minutes', timeZone: 'Europe/London', memory: '1GiB', timeoutSeconds: 300
+}, async () => {
+  const done = await rematchUnassigned(getFirestore());
+  done.forEach(d => console.log('Re-matched', d));
+});
+exports.rematchUnassigned = rematchUnassigned;
+
 exports.importInvoiceEmails = onSchedule({
   schedule: 'every 5 minutes', timeZone: 'Europe/London', memory: '1GiB', timeoutSeconds: 300,
   secrets: [GMAIL_USER, GMAIL_APP_PASSWORD]
