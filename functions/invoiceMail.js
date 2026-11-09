@@ -75,7 +75,7 @@ async function importOne({ db, att, mail, ctx }) {
       try { lines = await ocrLines(att.content); console.log(`${att.filename}: scanned, read with OCR (${lines.length} lines)`); }
       catch (e) { console.warn('OCR failed', att.filename, e.message); }
     }
-    parsed = parseInvoiceText(lines);
+    parsed = parseInvoiceText(lines, ctx.pos);
   }
   catch (err) { console.warn('PDF read failed', att.filename, err.message); parsed = { net: null, vat: null, gross: null, po: null, invNo: null, merchant: null, date: null, deliverText: '', hasText: false }; }
 

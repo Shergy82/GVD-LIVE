@@ -6443,7 +6443,20 @@ async function extractPdfLines(file) {
 
 const r2 = n => Math.round(n * 100) / 100;
 
-function parseInvoiceText(lines) {
+
+// Find the PO number even when the merchant's system has dropped the dashes or spaces (PO99800009 -> PO-99800-009),
+// and recognise any PO we already hold wherever it appears, ignoring punctuation.
+function findPoNumber(text, knownPos) {
+  const squash = t => String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const hay = squash(text);
+  const known = (knownPos || []).map(p => String(p.po_number || p).toUpperCase()).filter(p => /^PO-\d+-\d+$/.test(p));
+  const hit = known.find(p => hay.includes(squash(p)));
+  if (hit) return hit;
+  const m = String(text).match(/\bPO[\s\-–_.]*(\d{4,6})[\s\-–_.]*(\d{3,4})\b/i);
+  return m ? `PO-${m[1]}-${m[2]}` : null;
+}
+
+function parseInvoiceText(lines, knownPos) {
   const money = /(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g;
   const amountsIn = line => [...line.matchAll(money)].map(m => parseFloat(m[1].replace(/,/g, '')));
   // A label's amount is on its own line, or - when the figures are laid out below the labels - on the next line or two
@@ -6511,7 +6524,7 @@ function parseInvoiceText(lines) {
   const totalsAgree = agrees();
 
   const text = lines.join('\n');
-  const po = (text.match(/\bPO-\d{4,6}-\d{3,4}\b/i) || [])[0] || null;
+  const po = findPoNumber(text, knownPos);
   const invNo = ((text.match(/invoice\s*(?:no|number|#)\.?\s*:?\s*([A-Z0-9][A-Z0-9\/\-]{2,})/i)) || [])[1] || null;
   const dateMatch = text.match(/invoice\s*date[^0-9\n]*(\d{2})\/(\d{2})\/(\d{4})/i);
   const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : null;
@@ -6679,7 +6692,7 @@ async function handleInvoiceBatchPicked(e) {
       item.status = 'error'; item.message = `Over ${MAX_SITE_FILE_MB}MB`;
     } else {
       let parsed;
-      try { parsed = parseInvoiceText(await extractPdfLines(file)); }
+      try { parsed = parseInvoiceText(await extractPdfLines(file), allPOs); }
       catch (err) { parsed = { net: null, vat: null, gross: null, po: null, invNo: null, merchant: null, date: null, deliverText: '', hasText: false }; }
       const a = analyseInvoice(parsed);
       Object.assign(item, {
