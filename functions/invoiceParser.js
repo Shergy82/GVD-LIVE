@@ -25,7 +25,7 @@ function parseInvoiceText(lines) {
     return null;
   };
 
-  let net = findAmount([/total goods/i, /total\s*(ex|excl)/i, /sub\s*-?\s*total/i, /net\s*(total|amount|value)/i, /goods\s*(value|total)?\s*:/i]);
+  let net = findAmount([/total goods/i, /total\s*(ex|excl)/i, /sub\s*-?\s*total/i, /net\s*(total|amount|value)/i, /goods\s*(value|total)?\s*:/i, /nett?\s*goods/i, /goods\s*total/i]);
   let vat = findAmount([/total vat/i, /vat\s*(total|amount)/i, /^vat\s*:/i]);
   let gross = findAmount([/inv(oice)?\s*total/i, /total\s*(inc|incl)/i, /amount due/i, /balance due/i, /total due/i, /grand total/i, /^total\s*:?\s*£/i]);
   let netEstimated = false;
@@ -70,9 +70,12 @@ function parseInvoiceText(lines) {
 
   const text = lines.join('\n');
   const po = (text.match(/\bPO-\d{4,6}-\d{3,4}\b/i) || [])[0] || null;
-  const invNo = ((text.match(/invoice\s*(?:no|number|#)\.?\s*:?\s*([A-Z0-9][A-Z0-9\/\-]{2,})/i)) || [])[1] || null;
+  const invNo = ((text.match(/invoice\s*(?:no|number|#)\.?\s*:?\s*(?:[A-Za-z]{2,10}\s+){0,2}?((?=[A-Z0-9\/\-]*\d)[A-Z0-9][A-Z0-9\/\-]{2,})/i)) || [])[1] || null;
   const dateMatch = text.match(/invoice\s*date[^0-9\n]*(\d{2})\/(\d{2})\/(\d{4})/i);
-  const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : null;
+  const altDate = text.match(/date\s*\/?\s*(?:tax\s*point)?\s*:?\s*(\d{1,2})\s+([A-Za-z]{3})[a-z]*\s+(\d{4})/i);
+  const MON = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  const altIso = altDate && MON[altDate[2].toLowerCase()] ? `${altDate[3]}-${String(MON[altDate[2].toLowerCase()]).padStart(2, '0')}-${altDate[1].padStart(2, '0')}` : null;
+  const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : altIso;
   let merchant = ((text.match(/Account Name:\s*(.+?)\s*\.?\s*$/im)) || [])[1] || null;
   if (!merchant) merchant = ((text.match(/([A-Z][A-Za-z&' ]+(?:Limited|Ltd|LLP|PLC))\.?\s*Registered/)) || [])[1] || null;
 

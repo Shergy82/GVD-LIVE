@@ -5,6 +5,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 const { getStorage } = require('firebase-admin/storage');
 const crypto = require('crypto');
 const { parseInvoiceText, matchSiteByAddress } = require('./invoiceParser');
+const { ocrLines } = require('./invoiceOcr');
 // imapflow / mailparser / pdfjs are loaded only when the function runs, so deploying stays quick
 
 const GMAIL_USER = defineSecret('GMAIL_USER');
@@ -68,7 +69,14 @@ async function importOne({ db, att, mail, ctx }) {
   if ((await db.collection('pdfs').doc(fileId).get()).exists) return 'already imported';
 
   let parsed;
-  try { parsed = parseInvoiceText(await extractLines(att.content)); }
+  try {
+    let lines = await extractLines(att.content);
+    if (lines.join(' ').length < 40) {   // a scan: no text in the PDF, so read the picture instead
+      try { lines = await ocrLines(att.content); console.log(`${att.filename}: scanned, read with OCR (${lines.length} lines)`); }
+      catch (e) { console.warn('OCR failed', att.filename, e.message); }
+    }
+    parsed = parseInvoiceText(lines);
+  }
   catch (err) { console.warn('PDF read failed', att.filename, err.message); parsed = { net: null, vat: null, gross: null, po: null, invNo: null, merchant: null, date: null, deliverText: '', hasText: false }; }
 
   const matchedPo = parsed.po ? ctx.pos.find(p => String(p.po_number).toUpperCase() === parsed.po) : null;
