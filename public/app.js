@@ -6968,7 +6968,10 @@ function renderLabourCheck() {
     got[k] = (got[k] || 0) + (parseFloat(f.invoice_net) || 0);
   });
   const ids = Array.from(new Set(Object.keys(days).concat(Object.keys(got)).map(k => k.split('|')[0])));
-  const people = ids.map(id => ({ id, name: (allUsers.find(u => String(u.id) === id) || {}).full_name || 'Unknown' })).sort((a, b) => a.name.localeCompare(b.name));
+  // only people who have sent at least one invoice in the weeks shown
+  const subs = typeof operativeInvoices !== 'undefined' ? operativeInvoices : [];
+  const hasSent = id => weeks.some(w => got[`${id}|${w}`] != null || subs.some(x => x.status === 'submitted' && String(x.user_id) === String(id) && x.week_start === w));
+  const people = ids.filter(hasSent).map(id => ({ id, name: (allUsers.find(u => String(u.id) === id) || {}).full_name || 'Unknown' })).sort((a, b) => a.name.localeCompare(b.name));
   let missing = 0;
   const cell = (id, wk) => {
     const d = Math.round((days[`${id}|${wk}`] || 0) * 10) / 10, g = got[`${id}|${wk}`];
@@ -6984,7 +6987,7 @@ function renderLabourCheck() {
   host.style.display = '';
   host.innerHTML = `<h3 style="margin-bottom: 4px;">👷 Weekly labour invoices</h3>
     <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 8px;">Days booked in the planner against the invoice received for that week. ${missing ? `<strong style="color: var(--warning);">${missing} week${missing > 1 ? 's' : ''} still waiting for an invoice.</strong>` : 'Nothing outstanding.'} Labour only counts as a cost once its invoice is imported below.</p>
-    ${people.length ? `<div style="overflow-x: auto;"><table class="rep-table"><thead><tr><th>Operative</th>${weeks.map(w => `<th>w/c ${diaryEsc(formatUKDate(w).slice(0, 5))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '<p style="color: var(--text-muted);">No shifts booked since the start date.</p>'}`;
+    ${people.length ? `<div style="overflow-x: auto;"><table class="rep-table"><thead><tr><th>Operative</th>${weeks.map(w => `<th>w/c ${diaryEsc(formatUKDate(w).slice(0, 5))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>` : '<p style="color: var(--text-muted);">No labour invoices received yet.</p>'}`;
 }
 
 function invMerchantOf(f) {
