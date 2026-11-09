@@ -139,6 +139,7 @@ exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (r
 
 // Invoices inbox (Gmail) - imports emailed PDF invoices automatically
 exports.importInvoiceEmails = require('./invoiceMail').importInvoiceEmails;
+exports.rematchUnassignedInvoices = require('./invoiceMail').rematchUnassignedInvoices;
 
 // Auth, customer page and finance summary callables
 Object.assign(exports, require('./api'));
