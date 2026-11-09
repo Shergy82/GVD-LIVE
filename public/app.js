@@ -6564,9 +6564,10 @@ function invPoOptions(siteId, selectedPo) {
 function invDuplicateReason(it) {
   const no = String(it.invNo || '').trim().toLowerCase();
   const inRegister = allPdfs.filter(f => f.file_type === 'invoice');
-  if (no && inRegister.some(f => String(f.invoice_no || '').trim().toLowerCase() === no)) return 'invoice number already imported';
+  const weekDiffers = f => it.contractorId && isLabourInvoice(f) && it.week && f.week_start && f.week_start !== it.week;   // a labour invoice for another week is not a repeat
+  if (no && inRegister.some(f => String(f.invoice_no || '').trim().toLowerCase() === no && !weekDiffers(f))) return 'invoice number already imported';
   if (inRegister.some(f => f.filename === it.file.name && (it.net == null || Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005))) return 'this file was already imported';
-  if (it.net != null && it.gross != null && inRegister.some(f => !f.dup_dismissed && Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005 && Math.abs((parseFloat(f.invoice_gross) || 0) - it.gross) < 0.005 && (!it.date || !f.invoice_date || f.invoice_date === it.date))) return 'same amounts and date as an invoice already imported';
+  if (it.net != null && it.gross != null && inRegister.some(f => !f.dup_dismissed && !weekDiffers(f) && Math.abs((parseFloat(f.invoice_net) || 0) - it.net) < 0.005 && Math.abs((parseFloat(f.invoice_gross) || 0) - it.gross) < 0.005 && (!it.date || !f.invoice_date || f.invoice_date === it.date))) return 'same amounts and date as an invoice already imported';
   const others = invBatch.filter(o => o !== it && o.status !== 'error');
   if (no && others.some(o => String(o.invNo || '').trim().toLowerCase() === no)) return 'same invoice number appears twice in this batch';
   if (others.some(o => o.file.name === it.file.name && o.file.size === it.file.size)) return 'same file added twice in this batch';
@@ -6938,7 +6939,10 @@ function renderInvoiceRegister() {
   const canDelete = isOwnerOrAdminUser(currentUser);
   // Repeats: same invoice number, or same net + total + date. "Not a duplicate" (dup_dismissed) takes an invoice out of the check.
   const allInv = allPdfs.filter(f => f.file_type === 'invoice');
+  // Parts of one invoice split across jobs share a split group, and a labour invoice for a different week is a different invoice: neither is a repeat
+  const notRepeat = (f, o) => (f.split_group && f.split_group === o.split_group) || (isLabourInvoice(f) && isLabourInvoice(o) && f.week_start && o.week_start && f.week_start !== o.week_start);
   const sameInvoice = (f, o) => {
+    if (notRepeat(f, o)) return false;
     const n1 = String(f.invoice_no || '').trim().toLowerCase(), n2 = String(o.invoice_no || '').trim().toLowerCase();
     if (n1 && n1 === n2) return true;
     const a = parseFloat(f.invoice_net), b = parseFloat(o.invoice_net), ga = parseFloat(f.invoice_gross), gb = parseFloat(o.invoice_gross);
