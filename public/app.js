@@ -462,6 +462,7 @@ function initFirestoreSync() {
   listenWithRetry('settings', onErr => db.collection('settings').doc('app').onSnapshot(doc => {
     if (doc.exists) {
       appSettings = doc.data();
+      document.body.classList.toggle('finance-in-logic', appSettings.finance_engine === 'server');   // finance now runs from GVD Logic
       saveLocalStorageData();
       updateBrandingUI();
     }
@@ -7160,6 +7161,7 @@ function fsMarkReady(name) {
 async function publishFinanceSummary() {
   try {
     if (!db || !currentUser || !isManagementUser(currentUser)) return;
+    if (appSettings.finance_engine === 'server') return;   // the server works the figures out now (functions/financeEngine.js)
     if (!fsLast) {
       fsLast = {};
       const snap = await db.collection('finance_summary').get();
