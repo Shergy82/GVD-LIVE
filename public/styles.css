@@ -1719,3 +1719,19 @@ body.fv-open { overflow: hidden; }
 
 /* Finance runs from GVD Logic once settings/app.finance_engine = 'server' */
 body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { display: none !important; }   /* the Labour Sheet is a scheduling view (who is on which job), so it stays */
+
+/* Labour Sheet: sectioned by manager, only people with a shift */
+.labour-table .lb-dayhead { line-height: 1.15; }
+.labour-table .lb-dayhead span { display: block; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75; }
+.labour-table .lb-dayhead b { font-size: 1.05rem; }
+.labour-table .lb-dayhead.lb-today { background: rgba(245, 158, 11, 0.22); color: #fbbf24; box-shadow: inset 0 -3px 0 #f59e0b; }
+.labour-table td.lb-today-cell { box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.45); }
+.labour-table tr.labour-section > td { background: linear-gradient(90deg, rgba(47, 160, 79, 0.22), rgba(47, 160, 79, 0.04)); border-top: 3px solid #2fa04f; padding: 10px 14px; font-size: 0.95rem; }
+.labour-table .lb-mgr-dot, .labour-table .lb-op-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; flex: none; }
+.labour-table .lb-sum { margin-left: 12px; font-size: 0.78rem; color: var(--text-muted); font-weight: 500; }
+.labour-table .lb-me { margin-left: 8px; font-size: 0.65rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; background: #2fa04f; color: #fff; border-radius: 99px; padding: 2px 8px; }
+.labour-table td.lb-total { text-align: center; font-size: 1rem; min-width: 56px; }
+@media (max-width: 800px) {
+  .responsive-table tr.labour-section, .responsive-table tr.labour-section > td { display: block; width: 100%; }
+  .responsive-table tr.labour-section { margin: 16px 0 6px; border-radius: 10px; overflow: hidden; }
+}
