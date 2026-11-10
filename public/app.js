@@ -2066,6 +2066,30 @@ function formatShiftPeriodBadge(period) {
 let myShiftsTab = 'today'; // always starts on today's work
 const SHIFT_GRACE_DAYS = 3; // operatives keep access to a job (e.g. to attach photos) for this many days after the shift
 
+// "Today" screen helpers: a nudge when last week's invoice has not been sent, and a look at tomorrow
+function invoiceBannerHtml() {
+  try {
+    if (!currentUser || typeof miLastSunday !== 'function' || (typeof isDirectPay === 'function' && isDirectPay(currentUser.id))) return '';
+    const wk = miLastSunday();
+    const lines = miPlannerLines(currentUser.id, wk);
+    if (!lines.length) return '';
+    const sent = (typeof operativeInvoices !== 'undefined' ? operativeInvoices : []).some(i => String(i.user_id) === String(currentUser.id) && i.week_end === wk && (i.status === 'submitted' || i.status === 'approved'));
+    if (sent) return '';
+    const days = lines.reduce((t, l) => t + (l.days || l.qty || 0), 0);
+    return `<div class="site-card" style="grid-column: 1 / -1; border-left: 5px solid var(--warning); display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+      <div style="flex: 1; min-width: 200px;"><strong>🧾 Your invoice for the week ending ${formatShortUKDayDate(wk)} has not been sent</strong><div style="color: var(--text-muted); font-size: 0.85rem;">It is already filled in from the planner${days ? ` (${days} day${days === 1 ? '' : 's'})` : ''}. Check it and send it - it takes a minute.</div></div>
+      <button type="button" class="btn btn-primary btn-sm" id="todayInvoiceBtn">Send my invoice →</button></div>`;
+  } catch (e) { return ''; }
+}
+function tomorrowStripHtml(upcoming, todayKey) {
+  const next = upcoming.filter(s => s.shift_date > todayKey).map(s => s.shift_date).sort()[0];
+  if (!next) return '';
+  const list = upcoming.filter(s => s.shift_date === next);
+  return `<div style="grid-column: 1 / -1; margin-top: 8px;"><h3 style="margin: 8px 0;">Next: ${next === addDaysISO(todayKey, 1) ? 'Tomorrow' : formatShortUKDayDate(next)}</h3>${list.map(s => {
+    const st = allSites.find(x => parseInt(x.id) === parseInt(s.site_id));
+    return `<div class="site-card" style="margin-bottom: 8px;"><strong>${st ? diaryEsc(st.address) : 'Site'}</strong> ${formatShiftPeriodBadge(s.shift_period)}<div style="color: var(--text-muted); font-size: 0.9rem;">${diaryEsc(s.task || '')}</div></div>`; }).join('')}</div>`;
+}
+
 function renderMyShiftsView() {
   const container = document.getElementById('myShiftsContainer');
   if (!currentUser) return;
@@ -2108,7 +2132,7 @@ function renderMyShiftsView() {
     `;
   } else {
     let lastDate = null;
-    container.innerHTML = myShifts.map(s => {
+    container.innerHTML = invoiceBannerHtml() + myShifts.map(s => {
       let heading = '';
       if (myShiftsTab === 'all' && s.shift_date !== lastDate) {
         lastDate = s.shift_date;
@@ -2133,12 +2157,30 @@ function renderMyShiftsView() {
             <strong style="font-size: 0.8rem; color: var(--text-muted);">TASK:</strong>
             <p style="margin-top: 2px; font-size: 0.9rem;">${s.task}</p>
           </div>
+          ${site && !s.is_drying_day ? `<div style="display: flex; gap: 8px; margin-bottom: 8px;">
+            <a class="btn btn-primary btn-sm nav-btn" href="${diaryEsc(mapsHref(site.address))}" target="_blank" rel="noopener" style="flex: 1; text-align: center; text-decoration: none;">🧭 Navigate</a>
+            <label class="btn btn-secondary btn-sm quick-photo" style="flex: 1; text-align: center; cursor: pointer; margin: 0;">📸 Add photos<input type="file" accept="image/*" multiple data-quick-photo="${s.site_id}" style="display: none;"></label>
+          </div>` : ''}
           <button class="btn btn-primary btn-sm po-request-btn" data-site-id="${s.site_id}" style="width: 100%; margin-bottom: 8px;">🧾 Request PO number</button>
           <button class="btn btn-secondary btn-sm" style="width: 100%;">View Shift Details & Site Documents →</button>
         </div>
       `;
-    }).join('');
+    }).join('') + (myShiftsTab === 'today' ? tomorrowStripHtml(upcoming, todayKey) : '');
   }
+  if (myShifts.length === 0 && myShiftsTab === 'today') container.innerHTML = invoiceBannerHtml() + container.innerHTML + tomorrowStripHtml(upcoming, todayKey);
+
+  container.querySelectorAll('[data-quick-photo]').forEach(inp => {
+    inp.addEventListener('click', ev => ev.stopPropagation());
+    inp.addEventListener('change', async () => {
+      const files = Array.from(inp.files || []); inp.value = '';
+      if (!files.length) return;
+      try { for (let i = 0; i < files.length; i++) await uploadOnePhoto(files[i], i, inp.dataset.quickPhoto); showGreenToast(`${files.length} photo${files.length === 1 ? '' : 's'} added to the job`); }
+      catch (err) { alert('Could not add the photo: ' + err.message); }
+    });
+  });
+  container.querySelectorAll('.quick-photo, .nav-btn').forEach(el => el.addEventListener('click', ev => ev.stopPropagation()));
+  const invBtn = container.querySelector('#todayInvoiceBtn');
+  if (invBtn) invBtn.addEventListener('click', () => showView('view-my-invoice'));
 
   const toggleBtn = document.getElementById('btnMyShiftsPushToggle');
   if (toggleBtn) {
