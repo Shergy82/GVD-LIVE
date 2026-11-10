@@ -9,3 +9,6 @@ cloudflared.exe
 .firebase/
 .DS_Store
 Thumbs.db
+
+# customer uploads must never be committed
+uploads/

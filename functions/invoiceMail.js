@@ -53,6 +53,11 @@ function senderAllowed(from, allowed) {
   return allowed.some(a => { a = String(a).trim().toLowerCase(); return a && (a.startsWith('@') ? addr.endsWith(a) : addr === a); });
 }
 
+// Heartbeat: the morning brief warns if an automation has stopped or is failing
+async function beat(db, id, label, maxAgeMins, error) {
+  try { await db.collection('system_health').doc(id).set({label, maxAgeMins, at: new Date().toISOString(), error: error ? String(error).slice(0, 200) : null}); } catch (e) { /* never let monitoring break the job */ }
+}
+
 async function recalcPo(db, poNumber, extraRecord) {
   const snap = await db.collection('pdfs').where('po_number', '==', poNumber).get();
   const files = snap.docs.map(d => d.data()).filter(f => f.file_type === 'invoice' && f.id !== extraRecord.id).concat([extraRecord]);
@@ -168,8 +173,9 @@ async function rematchUnassigned(db, dryRun) {
 exports.rematchUnassignedInvoices = onSchedule({
   schedule: 'every 15 minutes', timeZone: 'Europe/London', memory: '1GiB', timeoutSeconds: 300
 }, async () => {
-  const done = await rematchUnassigned(getFirestore());
-  done.forEach(d => console.log('Re-matched', d));
+  const db = getFirestore();
+  try { const done = await rematchUnassigned(db); done.forEach(d => console.log('Re-matched', d)); await beat(db, 'rematchUnassignedInvoices', 'Invoice re-matching', 60, null); }
+  catch (e) { await beat(db, 'rematchUnassignedInvoices', 'Invoice re-matching', 60, e.message); throw e; }
 });
 exports.rematchUnassigned = rematchUnassigned;
 
@@ -179,6 +185,7 @@ exports.importInvoiceEmails = onSchedule({
 }, async () => {
   const db = getFirestore();
   const { ImapFlow } = require('imapflow');
+  await beat(db, 'importInvoiceEmails', 'Invoice email import (Gmail inbox)', 30, null);
   const { simpleParser } = require('mailparser');
   const client = new ImapFlow({
     host: 'imap.gmail.com', port: 993, secure: true, logger: false,
@@ -187,7 +194,7 @@ exports.importInvoiceEmails = onSchedule({
     auth: { user: GMAIL_USER.value().trim(), pass: GMAIL_APP_PASSWORD.value().replace(/\s+/g, '') }
   });
   client.on('error', err => console.warn('Invoice inbox connection problem:', err.message));
-  await client.connect();
+  try { await client.connect(); } catch (e) { await beat(db, 'importInvoiceEmails', 'Invoice email import (Gmail inbox)', 30, 'cannot connect to Gmail: ' + e.message); throw e; }
   const lock = await client.getMailboxLock('INBOX');
   try {
     const uids = (await client.search({ seen: false }, { uid: true })) || [];
