@@ -2436,6 +2436,11 @@ function renderSitesList() {
 }
 
 // The job's details from GVD Logic, shown at the top of an opened site (management only; Logic is where they are edited)
+function customerPhonesHtml(lg) {
+  const list = [...phoneNumbersIn(lg.customerPhone).map((n, i) => ({ label: i === 0 ? lg.customerPhoneLabel || '' : '', number: n })), ...(lg.customerPhones || [])];
+  return list.filter(p => p.number).map(p => `<div>${p.label ? `<small style="color: var(--text-muted);">${diaryEsc(p.label)}</small> ` : ''}${telLinkHtml(p.number)}</div>`).join('');
+}
+
 function renderProjectLogicInfo(site) {
   const box = document.getElementById('projLogicInfo');
   if (!box) return;
@@ -2446,16 +2451,24 @@ function renderProjectLogicInfo(site) {
   const ukd = d => (d && /^\d{4}-\d{2}-\d{2}/.test(d)) ? formatUKDate(d) : '';
   const mgr = managerUsers().find(u => String(u.id) === String(site.manager_id));
   const cl = siteChecklist[String(site.id)], pct = cl && cl.n ? Math.round(cl.sum / (2 * cl.n) * 100) : null;
-  const items = [['Job', lg.title], ['Reference', lg.ref], ['Status', site.job_status], ['Customer', lg.customerName], ['Customer phone', lg.customerPhone],
+  const items = [['Job', lg.title], ['Reference', lg.ref], ['Status', site.job_status], ['Customer', lg.customerName], ['Customer phone', { h: customerPhonesHtml(lg) }], ['Address', { h: mapsLinkHtml(lg.customerAddress || site.address) }],
     ['Client / scheme', [lg.client, lg.scheme].filter(Boolean).join(' / ')], ['Work type', lg.workType], ['Manager', mgr ? mgr.full_name : ''], ['Branch', site.branch],
-    ['Start', ukd(lg.startDate)], ['Target completion', ukd(lg.targetCompletion)]].filter(x => x[1]);
+    ['Start', ukd(lg.startDate)], ['Target completion', ukd(lg.targetCompletion)]].filter(x => x[1] && (x[1].h === undefined || x[1].h));
   box.style.display = '';
   box.innerHTML = `<div class="site-card" style="margin-bottom: 16px; cursor: default;">
     <div style="font-size:0.75rem;font-weight:700;color:var(--text-muted);margin-bottom:10px;">JOB DETAILS FROM GVD LOGIC</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 18px;">${items.map(([k, v]) => `<div><div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;">${k}</div><div style="font-size:0.92rem;font-weight:600;word-break:break-word;">${diaryEsc(v)}</div></div>`).join('')}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px 18px;">${items.map(([k, v]) => `<div><div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.4px;">${k}</div><div style="font-size:0.92rem;font-weight:600;word-break:break-word;">${v && v.h !== undefined ? v.h : diaryEsc(v)}</div></div>`).join('')}</div>
     ${pct === null ? '' : `<div style="margin-top:12px;display:flex;align-items:center;gap:10px;"><span style="font-size:0.75rem;color:var(--text-muted);">Checklist</span><div style="flex:1;height:10px;border-radius:5px;background:rgba(255,255,255,0.12);overflow:hidden;"><i style="display:block;height:100%;width:${pct}%;background:${pct >= 100 ? '#2fa04f' : pct > 0 ? '#f0a21c' : '#e0524d'}"></i></div><b style="font-size:0.85rem;">${pct}% · ${cl.done} of ${cl.n} complete</b></div>`}
   </div>`;
 }
+
+
+// Tap to navigate / tap to call. iPhone opens Apple Maps; Android and computers open Google Maps.
+const isAppleDevice = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function mapsHref(addr) { const q = encodeURIComponent(addr); return isAppleDevice() ? `https://maps.apple.com/?q=${q}` : `https://www.google.com/maps/search/?api=1&query=${q}`; }
+function mapsLinkHtml(addr) { return addr ? `<a href="${diaryEsc(mapsHref(addr))}" target="_blank" rel="noopener" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">📍 ${diaryEsc(addr)}</a>` : ''; }
+function phoneNumbersIn(text) { return String(text || '').match(/\+?\d[\d\s().-]{7,}\d/g) || []; }
+function telLinkHtml(num) { return `<a href="tel:${diaryEsc(String(num).replace(/[^\d+]/g, ''))}" style="color: var(--primary);">📞 ${diaryEsc(String(num).trim())}</a>`; }
 
 function loadProjectPage(siteId) {
   activeSiteId = siteId;
@@ -2466,7 +2479,7 @@ function loadProjectPage(siteId) {
   document.getElementById('projectPageContainer').style.display = 'block';
 
   document.getElementById('projSiteIdBadge').textContent = `${formatSiteId(site.id)}${site.is_archived ? ' (Archived)' : ''}`;
-  document.getElementById('projSiteAddress').textContent = site.address;
+  document.getElementById('projSiteAddress').innerHTML = mapsLinkHtml(site.address) || diaryEsc(site.address || '');
   renderProjectLogicInfo(site);
   const projTypeBadge = document.getElementById('projSiteTypeBadge');
   const canEditType = isManagementUser(currentUser);
