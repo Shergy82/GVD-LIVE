@@ -101,7 +101,7 @@ let siteFilterMode = 'active'; // 'active' | 'archived'
 let isDraftPlanningMode = false;
 
 let currentPlannerWeekOffset = 0; // 0 = current week
-let currentLabourWeekOffset = 1;  // 1 = next week by default
+let currentLabourWeekOffset = 0;  // 0 = this week: the Labour Sheet always opens on the current week
 let selectedMobileDayIndex = 0;   // 0 = Monday
 
 let knownShiftIds = null;
@@ -789,6 +789,7 @@ function showView(viewId) {
   const targetView = document.getElementById(viewId);
   if (targetView) targetView.style.display = 'block';
   if (viewId === 'view-my-shifts') myShiftsTab = 'today';
+  if (viewId === 'view-labour-sheet') currentLabourWeekOffset = 0;   // always open on the current week
   updateMobileMenuLabel(viewId);
 
   document.querySelectorAll('.nav-item').forEach(btn => {
@@ -4605,7 +4606,7 @@ function setupEventListeners() {
 
   document.getElementById('labourPrevWeekBtn').addEventListener('click', () => { currentLabourWeekOffset--; renderLabourSheetView(); });
   document.getElementById('labourNextWeekBtn').addEventListener('click', () => { currentLabourWeekOffset++; renderLabourSheetView(); });
-  document.getElementById('labourNextWeekNavBtn').addEventListener('click', () => { currentLabourWeekOffset = 1; renderLabourSheetView(); });
+  document.getElementById('labourNextWeekNavBtn').addEventListener('click', () => { currentLabourWeekOffset = 0; renderLabourSheetView(); });
 
   document.getElementById('btnBackToSites').addEventListener('click', () => {
     activeSiteId = null;
