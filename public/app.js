@@ -3186,52 +3186,68 @@ function openPhotoLightbox(photo) {
 // -------------------------------------------------------------------
 function renderLabourSheetView() {
   const weekDays = getWeekDays(currentLabourWeekOffset);
-  const startDateStr = formatDateShort(weekDays[0]);
-  const endDateStr = formatDateShort(weekDays[6]);
-  document.getElementById('labourWeekRangeLabel').textContent = `${startDateStr} — ${endDateStr}`;
+  document.getElementById('labourWeekRangeLabel').textContent = `${formatDateShort(weekDays[0])} — ${formatDateShort(weekDays[6])}`;
+  const todayKey = formatDateISO(new Date());
+  const dayKeys = weekDays.map(d => formatDateISO(d));
+
+  // everyone booked this week on a real job (drying days have no operative)
+  const weekShifts = allShifts.filter(s => s.operative_id && !s.is_drying_day && dayKeys.includes(s.shift_date));
+  // Saturday and Sunday only show when someone is working them
+  const cols = weekDays.map((d, i) => ({ d, key: dayKeys[i], weekend: isWeekendDay(d) })).filter(c => !c.weekend || weekShifts.some(s => s.shift_date === c.key));
 
   const headerRow = document.getElementById('labourHeaderRow');
   headerRow.innerHTML = `
-    <th class="op-name-col">Operative / Manager</th>
-    ${weekDays.map(d => `<th style="text-align: center;">${formatDateShort(d)}</th>`).join('')}
+    <th class="op-name-col">Operative</th>
+    ${cols.map(c => `<th class="lb-dayhead${c.key === todayKey ? ' lb-today' : ''}" style="text-align: center;"><span>${c.d.toLocaleDateString('en-GB', { weekday: 'short' })}</span><b>${c.d.getDate()}</b></th>`).join('')}
+    <th class="lb-dayhead" style="text-align: center;"><span>Days</span><b>&Sigma;</b></th>
   `;
-
   const tbody = document.getElementById('labourTableBody');
-  const activeStaff = getAssignableOperatives();
 
-  if (activeStaff.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">No active operatives or managers in system.</td></tr>`;
+  if (weekShifts.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="${cols.length + 2}" style="text-align: center; color: var(--text-muted); padding: 30px;">Nobody is booked on a job this week.</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = activeStaff.map(op => {
-    const cellsHtml = weekDays.map(day => {
-      const dateStr = formatDateISO(day);
-      const opShifts = allShifts.filter(s => String(s.operative_id) === String(op.id) && s.shift_date === dateStr);
+  // sectionalise by the manager of the job: Phil's jobs, Dave's jobs, ...  (an operative appears under each manager whose jobs they are on)
+  const mgrOf = shift => {
+    const site = allSites.find(st => parseInt(st.id) === parseInt(shift.site_id));
+    const m = site && site.manager_id ? allUsers.find(u => String(u.id) === String(site.manager_id)) : null;
+    return m ? { id: String(m.id), name: m.full_name, user: m } : { id: 'none', name: 'No manager assigned', user: null };
+  };
+  const groups = new Map();
+  weekShifts.forEach(sh => {
+    const m = mgrOf(sh);
+    if (!groups.has(m.id)) groups.set(m.id, { ...m, byOp: new Map() });
+    const g = groups.get(m.id);
+    if (!g.byOp.has(String(sh.operative_id))) g.byOp.set(String(sh.operative_id), []);
+    g.byOp.get(String(sh.operative_id)).push(sh);
+  });
+  const dayFrac = sh => (sh.shift_period === 'am' || sh.shift_period === 'pm') ? 0.5 : 1;
+  const fmtDays = n => (Math.round(n * 2) / 2).toString();
+  const meId = currentUser ? String(currentUser.id) : '';
+  const order = Array.from(groups.values()).sort((a, b) => (a.id === meId ? -1 : b.id === meId ? 1 : a.id === 'none' ? 1 : b.id === 'none' ? -1 : a.name.localeCompare(b.name)));
 
-      const badgesHtml = opShifts.map(s => {
-        const site = allSites.find(st => parseInt(st.id) === parseInt(s.site_id));
-        return `
-          <div class="labour-assignment-badge" style="border-left-color: ${userColor(op)};" title="${String(s.task || '').replace(/"/g, '&quot;')}">
-            <div class="lb-addr">${site ? site.address : 'Site #' + s.site_id}</div>
-            <div class="lb-task">${s.shift_period === 'am' || s.shift_period === 'pm' ? `<span class="sc-per ${s.shift_period}">${s.shift_period.toUpperCase()}</span> ` : ''}${s.task}</div>
-          </div>
-        `;
+  tbody.innerHTML = order.map(g => {
+    const ops = Array.from(g.byOp.entries()).map(([opId, shifts]) => ({ op: allUsers.find(u => String(u.id) === opId), shifts })).filter(x => x.op)
+      .sort((a, b) => a.op.full_name.localeCompare(b.op.full_name));
+    const allG = ops.flatMap(x => x.shifts);
+    const head = `<tr class="labour-section"><td colspan="${cols.length + 2}"><span class="lb-mgr-dot" style="background: ${g.user ? userColor(g.user) : '#64748b'};"></span><strong>${g.name}</strong>${g.id === meId ? ' <span class="lb-me">your jobs</span>' : ''}<span class="lb-sum">${ops.length} ${ops.length === 1 ? 'person' : 'people'} &middot; ${allG.length} shift${allG.length === 1 ? '' : 's'} &middot; ${fmtDays(allG.reduce((t, sh) => t + dayFrac(sh), 0))} ${fmtDays(allG.reduce((t, sh) => t + dayFrac(sh), 0)) === '1' ? 'day' : 'days'}</span></td></tr>`;
+    const rows = ops.map(({ op, shifts }) => {
+      const cells = cols.map(c => {
+        const dayShifts = shifts.filter(sh => sh.shift_date === c.key);
+        const badges = dayShifts.map(sh => {
+          const site = allSites.find(st => parseInt(st.id) === parseInt(sh.site_id));
+          const full = site ? site.address : 'Site #' + sh.site_id;
+          return `<div class="labour-assignment-badge" style="border-left-color: ${userColor(op)};" title="${(full + ' - ' + (sh.task || '')).replace(/"/g, '&quot;')}">
+            <div class="lb-addr">${full.split(',')[0]}</div>
+            <div class="lb-task">${sh.shift_period === 'am' || sh.shift_period === 'pm' ? `<span class="sc-per ${sh.shift_period}">${sh.shift_period.toUpperCase()}</span> ` : ''}${sh.task || ''}</div>
+          </div>`;
+        }).join('');
+        return `<td class="labour-cell${dayShifts.length ? '' : ' empty-cell'}${c.key === todayKey ? ' lb-today-cell' : ''}" data-label="${c.d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' })}">${badges || '<span style="color: var(--border-color); font-size: 0.75rem;">&mdash;</span>'}</td>`;
       }).join('');
-
-      return `
-        <td class="labour-cell${opShifts.length ? '' : ' empty-cell'}" data-label="${formatDateShort(day)}">
-          ${badgesHtml || '<span style="color: var(--border-color); font-size: 0.75rem;">—</span>'}
-        </td>
-      `;
+      return `<tr class="labour-row"><td class="labour-name" style="font-weight: 700;"><span class="lb-op-dot" style="background: ${userColor(op)};"></span>${op.full_name}${op.role && op.role !== 'Operative' ? ` <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>` : ''}</td>${cells}<td class="labour-cell lb-total" data-label="Days"><b>${fmtDays(shifts.reduce((t, sh) => t + dayFrac(sh), 0))}</b></td></tr>`;
     }).join('');
-
-    return `
-      <tr class="labour-row">
-        <td class="labour-name" style="font-weight: 700;">${op.full_name} <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>${weekDays.some(day => allShifts.some(s => String(s.operative_id) === String(op.id) && s.shift_date === formatDateISO(day))) ? '' : '<span class="no-shifts-note">No shifts this week</span>'}</td>
-        ${cellsHtml}
-      </tr>
-    `;
+    return head + rows;
   }).join('');
 }
 
