@@ -1791,7 +1791,7 @@ function renderPlannerView() {
         <td class="site-cell-header">
           <div class="site-cell-inner">
             <span class="site-badge">${formatSiteId(site.id)}</span>
-            <strong>${site.address}</strong>
+            <strong>${mapsAnchor(site.address)}</strong>
             ${finishHtml}
             ${siteTypeBadgeHtml(site)}
             ${siteInfoEditorHtml(site)}
@@ -2003,7 +2003,7 @@ function renderMobilePlannerView(weekDays) {
           <div class="site-card-header">
             <div>
               <span class="site-badge">${formatSiteId(site.id)}</span>
-              <strong style="display: block; margin-top: 4px;">${site.address}</strong>
+              <strong style="display: block; margin-top: 4px;">${mapsAnchor(site.address)}</strong>
               ${(() => { const f = getSiteFinish(site.id); return f ? `<div class="${f.completed ? 'site-completed-badge' : 'site-finish-badge'}">${f.completed ? '✅ COMPLETED' : '🏁 Finishes'} ${formatShortUKDayDate(f.date)}</div>` : ''; })()}
             </div>
             <div>
@@ -2151,7 +2151,7 @@ function renderMyShiftsView() {
               ${periodBadge}
             </div>
           </div>
-          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 6px;">${site ? site.address : 'Site Address'}</h3>
+          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 6px;">${site ? mapsAnchor(site.address) : 'Site Address'}</h3>
           <p style="color: var(--primary); font-weight: 600; font-size: 0.95rem; margin-bottom: 10px;">📅 ${formatUKDate(s.shift_date)}</p>
           ${siteInfoHtml(site)}
           <div style="background-color: var(--bg-primary); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 10px;">
@@ -2263,7 +2263,7 @@ async function openShiftDetailModal(shiftId) {
   const site = allSites.find(st => parseInt(st.id) === parseInt(shift.site_id));
 
   document.getElementById('detailSiteId').textContent = formatSiteId(shift.site_id);
-  document.getElementById('detailAddress').textContent = site ? site.address : 'Site Address';
+  document.getElementById('detailAddress').innerHTML = site ? mapsAnchor(site.address) : 'Site Address';
   document.getElementById('detailDate').textContent = `Date: ${formatUKDate(shift.shift_date)}`;
   document.getElementById('detailTask').textContent = shift.task;
   document.getElementById('detailSiteInfo').innerHTML = siteInfoHtml(site);
@@ -2509,6 +2509,20 @@ function renderProjectLogicInfo(site) {
 // Tap to navigate / tap to call. iPhone opens Apple Maps; Android and computers open Google Maps.
 const isAppleDevice = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 function mapsHref(addr) { const q = encodeURIComponent(addr); return isAppleDevice() ? `https://maps.apple.com/?q=${q}` : `https://www.google.com/maps/search/?api=1&query=${q}`; }
+// a map link never also triggers the card or chip it sits inside
+document.addEventListener('click', e => { if (e.target.closest && e.target.closest('a.map-link')) e.stopPropagation(); }, true);
+function mapsAnchor(addr) { return addr ? `<a href="${diaryEsc(mapsHref(addr))}" target="_blank" rel="noopener" class="map-link" title="Open in Maps" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">${diaryEsc(addr)}</a>` : ''; }
+// An address for a diary entry: the linked site's address, else the address typed in the title (read up to its postcode)
+function diaryMapQuery(e) {
+  const site = e.site_id ? allSites.find(s => String(s.id) === String(e.site_id)) : null;
+  if (site && site.address) return site.address;
+  const t = String(e.title || '');
+  const pc = t.match(/[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}/i);
+  if (!pc) return '';
+  const upto = t.slice(0, pc.index + pc[0].length);
+  const start = upto.search(/(?:flat\s*)?\d/i);
+  return (start >= 0 ? upto.slice(start) : upto).trim();
+}
 function mapsLinkHtml(addr) { return addr ? `<a href="${diaryEsc(mapsHref(addr))}" target="_blank" rel="noopener" style="color: inherit; text-decoration: underline; text-decoration-style: dotted;">📍 ${diaryEsc(addr)}</a>` : ''; }
 function phoneNumbersIn(text) { return String(text || '').match(/\+?\d[\d\s().-]{7,}\d/g) || []; }
 function telLinkHtml(num) { return `<a href="tel:${diaryEsc(String(num).replace(/[^\d+]/g, ''))}" style="color: var(--primary);">📞 ${diaryEsc(String(num).trim())}</a>`; }
@@ -5648,7 +5662,7 @@ function renderDiaryView() {
     const d = new Date(year, month, 1 - startOffset + i);
     const key = diaryDateKey(d);
     const chips = (byDate[key] || []).map(e =>
-      `<span class="diary-chip" data-entry="${diaryEsc(e.id)}" style="background: ${userColor((e.assignee_ids || [])[0] || '')};"><strong class="dc-who">${diaryEsc(diaryAssigneeNames(e, true) || 'Unassigned')}</strong> <span class="dc-win">${diaryEsc(diaryWindowLabel(e.time))}</span> <span class="dc-title">${diaryEsc(e.title)}</span></span>`).join('');
+      `<span class="diary-chip" data-entry="${diaryEsc(e.id)}" style="background: ${userColor((e.assignee_ids || [])[0] || '')};"><strong class="dc-who">${diaryEsc(diaryAssigneeNames(e, true) || 'Unassigned')}</strong> <span class="dc-win">${diaryEsc(diaryWindowLabel(e.time))}</span> <span class="dc-title">${diaryEsc(e.title)}</span>${diaryMapQuery(e) ? ` <a class="map-link" href="${diaryEsc(mapsHref(diaryMapQuery(e)))}" target="_blank" rel="noopener" title="Open in Maps" style="text-decoration: none;">📍</a>` : ''}</span>`).join('');
     html += `<div class="diary-cell${d.getMonth() !== month ? ' other-month' : ''}${key === todayKey ? ' today' : ''}" data-date="${key}"><div class="diary-daynum">${d.getDate()}</div>${chips}</div>`;
   }
   const grid = document.getElementById('diaryGrid');
@@ -5675,6 +5689,7 @@ function renderDiaryView() {
       <strong>${diaryEsc(formatUKDate(e.date))}${e.time ? ' · ' + diaryEsc(diaryWindowLabel(e.time)) : ''} - ${diaryEsc(e.title)}</strong>
       <div style="font-size: 0.9rem; margin-top: 2px;">👤 <strong>${names ? diaryEsc(names) : 'No one assigned'}</strong></div>
       <div style="font-size: 0.85rem; color: var(--text-muted);">${site ? '🏗️ ' + diaryEsc(site.address) : ''}${site && e.reminder_7am ? ' · ' : ''}${e.reminder_7am ? '⏰ 7am reminder' : ''}</div>
+      ${diaryMapQuery(e) ? `<div style="margin-top: 4px;"><a class="map-link" href="${diaryEsc(mapsHref(diaryMapQuery(e)))}" target="_blank" rel="noopener" style="color: var(--primary); font-weight: 600; font-size: 0.85rem;">🧭 Open in Maps</a></div>` : ''}
       ${e.notes ? `<div style="font-size: 0.85rem; margin-top: 4px;">${diaryEsc(e.notes)}</div>` : ''}
     </div>`;
   }).join('');
