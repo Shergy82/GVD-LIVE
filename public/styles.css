@@ -1718,4 +1718,4 @@ body.fv-open { overflow: hidden; }
 .chat-row.flash .chat-bubble, .chat-announce.flash { box-shadow: 0 0 0 2px #60a5fa; }
 
 /* Finance runs from GVD Logic once settings/app.finance_engine = 'server' */
-body.finance-in-logic #navLabourBtn, body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { display: none !important; }
+body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { display: none !important; }   /* the Labour Sheet is a scheduling view (who is on which job), so it stays */
