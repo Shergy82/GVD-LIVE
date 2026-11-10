@@ -1673,13 +1673,40 @@ function getSiteFinish(siteId) {
 }
 
 // Sites finishing soonest first, then sites with no finish date yet, then completed sites last
+// Planner status filter (WIP, Confirmed - ready to start, ...) - remembered on this device
+let plannerStatusFilter = '';
+try { plannerStatusFilter = localStorage.getItem('gvd_planner_status') || ''; } catch (e) {}
+const plannerStatusOf = site => site.job_status_key || '__none';
+function plannerScopeSites() {
+  return allSites.filter(site => !site.is_archived && (!currentUser || !isManagementUser(currentUser) || siteInScope(site)));
+}
+function refreshPlannerStatusFilter() {
+  const sel = document.getElementById('plannerStatusFilter');
+  if (!sel) return;
+  const counts = new Map();
+  plannerScopeSites().forEach(site => { const k = plannerStatusOf(site); const c = counts.get(k) || { label: site.job_status || 'No status', n: 0 }; c.n++; counts.set(k, c); });
+  if (plannerStatusFilter && !counts.has(plannerStatusFilter)) plannerStatusFilter = '';
+  sel.innerHTML = `<option value="">All statuses</option>` + Array.from(counts.entries()).sort((a, b) => b[1].n - a[1].n).map(([k, c]) => `<option value="${diaryEsc(k)}">${diaryEsc(c.label)} (${c.n})</option>`).join('');
+  sel.value = plannerStatusFilter;
+  if (!sel.dataset.bound) {
+    sel.dataset.bound = '1';
+    sel.addEventListener('change', () => {
+      plannerStatusFilter = sel.value;
+      try { localStorage.setItem('gvd_planner_status', plannerStatusFilter); } catch (e) {}
+      renderPlannerView();
+    });
+  }
+}
 function getPlannerSites() {
-  const sites = allSites.filter(site => !site.is_archived && (!currentUser || !isManagementUser(currentUser) || siteInScope(site)));
+  const sites = plannerScopeSites().filter(site => !plannerStatusFilter || plannerStatusOf(site) === plannerStatusFilter);
   const info = new Map(sites.map(site => [site.id, getSiteFinish(site.id)]));
   const rank = site => { const f = info.get(site.id); return !f ? 1 : f.completed ? 2 : 0; };
+  // sites with work booked in the week on screen come first; empty ones after
+  const days = new Set(getRollingDays(currentPlannerWeekOffset).map(d => formatDateISO(d)));
+  const busy = new Set(allShifts.filter(sh => days.has(sh.shift_date)).map(sh => parseInt(sh.site_id)));
   return sites
-    .map((site, i) => ({ site, i, f: info.get(site.id), r: rank(site) }))
-    .sort((a, b) => a.r - b.r || (a.r === 0 || a.r === 2 ? a.f.date.localeCompare(b.f.date) : 0) || a.i - b.i)
+    .map((site, i) => ({ site, i, f: info.get(site.id), r: rank(site), idle: busy.has(parseInt(site.id)) ? 0 : 1 }))
+    .sort((a, b) => a.idle - b.idle || a.r - b.r || (a.r === 0 || a.r === 2 ? a.f.date.localeCompare(b.f.date) : 0) || a.i - b.i)
     .map(x => x.site);
 }
 
@@ -1720,6 +1747,7 @@ function renderPlannerView() {
     chip.addEventListener('dragend', () => chip.classList.remove('dragging'));
   });
 
+  refreshPlannerStatusFilter();
   const todayISO = formatDateISO(new Date());
 
   // Weekend days stay thin unless someone is working that day
