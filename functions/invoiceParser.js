@@ -83,20 +83,25 @@ function parseInvoiceText(lines, knownPos) {
 
   const text = lines.join('\n');
   const po = findPoNumber(text, knownPos);
+  // standalone invoice number: the line after a heading that ends in the word INVOICE (e.g. Travis Perkins)
+  const standaloneNo = ((text.match(/\bINVOICE\s*\n\s*(\d{6,12})\s*(?:\n|$)/)) || [])[1] || null;
   const invNo = ((text.match(/invoice\s*(?:no|number|#)\.?\s*:?\s*(?:[A-Za-z]{2,10}\s+){0,2}?((?=[A-Z0-9\/\-]*\d)[A-Z0-9][A-Z0-9\/\-]{2,})/i)) || [])[1] || null;
-  const dateMatch = text.match(/invoice\s*date[^0-9\n]*(\d{2})\/(\d{2})\/(\d{4})/i);
+  const dateMatch = text.match(/invoice\s*(?:\/\s*tax\s*)?date[^0-9\n]*(\d{2})\/(\d{2})\/(\d{4})/i);
   const altDate = text.match(/date\s*\/?\s*(?:tax\s*point)?\s*:?\s*(\d{1,2})\s+([A-Za-z]{3})[a-z]*\s+(\d{4})/i);
   const MON = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
   const altIso = altDate && MON[altDate[2].toLowerCase()] ? `${altDate[3]}-${String(MON[altDate[2].toLowerCase()]).padStart(2, '0')}-${altDate[1].padStart(2, '0')}` : null;
   const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : altIso;
-  let merchant = ((text.match(/Account Name:\s*(.+?)\s*\.?\s*$/im)) || [])[1] || null;
+  // supplier name: the company named beside its VAT number, else the bank 'Account Name' with the bank details cut off
+  let merchant = ((text.match(/^\s*([A-Z][A-Za-z&' .-]+?(?:Ltd|Limited|LLP|PLC))\s+VAT\s*Reg/im)) || [])[1] || null;
+  if (!merchant) merchant = ((text.match(/Account Name:\s*(.+?)\s*\.?\s*$/im)) || [])[1] || null;
+  if (merchant) merchant = merchant.replace(/\s+(Sort\s*Code|Account\b|Bank\b|Invoice\b|Tax\s*Date|VAT\b|Registered)\b.*$/i, '').trim() || null;
   if (!merchant) merchant = ((text.match(/([A-Z][A-Za-z&' ]+(?:Limited|Ltd|LLP|PLC))\.?\s*Registered/)) || [])[1] || null;
 
   // Delivery block text used for matching the job by address
   const deliverIdx = lines.findIndex(l => /deliver(y)?\s*to/i.test(l));
   const deliverText = deliverIdx >= 0 ? lines.slice(deliverIdx, deliverIdx + 8).join(' ') : text;
 
-  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo, date, merchant, deliverText, hasText: text.length > 40 };
+  return { net, vat, gross, netEstimated, totalsAgree, po: po ? po.toUpperCase() : null, invNo: invNo || standaloneNo, date, merchant, deliverText, hasText: text.length > 40 };
 }
 
 function matchSiteByAddress(text, sites) {
