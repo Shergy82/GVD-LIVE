@@ -1735,3 +1735,27 @@ body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { dis
   .responsive-table tr.labour-section, .responsive-table tr.labour-section > td { display: block; width: 100%; }
   .responsive-table tr.labour-section { margin: 16px 0 6px; border-radius: 10px; overflow: hidden; }
 }
+
+
+/* Desktop header: the menu never pushes Logout off the screen. On narrower desktops the icons and name drop away and the menu tightens. */
+@media (min-width: 769px) {
+  .app-header { flex-wrap: nowrap; gap: 10px; }
+  .app-header .brand-container { flex: 0 0 auto; }
+  .app-header .nav-menu:not([data-never]) { flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; justify-content: center; }
+  .app-header .nav-menu::-webkit-scrollbar { display: none; }
+  .app-header .nav-item { flex: 0 0 auto; }
+  .app-header .user-status-bar { flex: 0 0 auto; }
+}
+@media (min-width: 769px) and (max-width: 1499px) {
+  .app-header { padding: 10px 12px; }
+  .app-header .nav-menu { gap: 2px; }
+  .app-header .nav-item { padding: 8px 9px; font-size: 0.86rem; gap: 4px; }
+  .app-header .nav-item .nav-ico { display: none; }
+  .app-header .user-status-bar { gap: 8px; }
+  .app-header #userNameText { display: none; }
+  .app-header .app-title { font-size: 1.05rem; }
+}
+@media (min-width: 769px) and (max-width: 1199px) {
+  .app-header .nav-item { padding: 8px 6px; font-size: 0.8rem; }
+  .app-header .app-title, .app-header #userRoleBadge { display: none; }
+}
