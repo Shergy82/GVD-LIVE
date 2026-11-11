@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://us-central1-gvd-hub.cloudfunctions.net" crossorigin>
   <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
   <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin>
-  <link rel="stylesheet" href="/styles.css?v=42.0">
+  <link rel="stylesheet" href="/styles.css?v=43.0">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
@@ -420,6 +420,7 @@
           <button class="btn btn-outline btn-sm" id="labourNextWeekNavBtn">This Week</button>
           <button class="btn btn-secondary btn-sm" id="labourNextWeekBtn">Next Week →</button>
           <span class="current-week-label" id="labourWeekRangeLabel"></span>
+          <button class="btn btn-outline btn-sm" id="labourMileageReportBtn" title="Weekly road miles for everyone, to print or download">🚗 Mileage report</button>
         </div>
       </div>
 
@@ -1008,6 +1009,17 @@
     </div>
   </div>
 
+  <!-- Modal: Mileage (a person's daily breakdown, or the whole week's report) -->
+  <div class="modal-overlay" id="modalMiles">
+    <div class="modal-card" style="max-width: 860px; width: 96vw;">
+      <div class="modal-header">
+        <h3 id="modalMilesTitle">Miles</h3>
+        <button class="close-btn" data-close="modalMiles">&times;</button>
+      </div>
+      <div id="modalMilesBody"></div>
+    </div>
+  </div>
+
   <!-- Modal: User Account -->
   <div class="modal-overlay" id="modalUser">
     <div class="modal-card">
@@ -1230,7 +1242,7 @@
   <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
-  <script defer src="/app.js?v=105.0"></script>
+  <script defer src="/app.js?v=106.0"></script>
   <script defer src="/reports.js?v=1.5"></script>
   <script defer src="/invoice-template.js?v=1.5"></script>
   <script defer src="/my-invoice.js?v=1.6"></script>

@@ -3212,13 +3212,16 @@ function renderLabourSheetView() {
   // Saturday and Sunday only show when someone is working them
   const cols = weekDays.map((d, i) => ({ d, key: dayKeys[i], weekend: isWeekendDay(d) })).filter(c => !c.weekend || weekShifts.some(s => s.shift_date === c.key));
 
+  const showMiles = canSeeMiles();
+  const mileBtn = document.getElementById('labourMileageReportBtn'); if (mileBtn) mileBtn.style.display = showMiles ? '' : 'none';
   const headerRow = document.getElementById('labourHeaderRow');
   headerRow.innerHTML = `
     <th class="op-name-col">Operative</th>
     ${cols.map(c => `<th class="lb-dayhead${c.key === todayKey ? ' lb-today' : ''}" style="text-align: center;"><span>${c.d.toLocaleDateString('en-GB', { weekday: 'short' })}</span><b>${c.d.getDate()}</b></th>`).join('')}
-    <th class="lb-dayhead" style="text-align: center;"><span>Days</span><b>&Sigma;</b></th>
+    ${showMiles ? `<th class="lb-dayhead" style="text-align: center;" title="Road miles from home to site and back. Tap a number for the daily breakdown."><span>Miles</span><b>mi</b></th>` : `<th class="lb-dayhead" style="text-align: center;"><span>Days</span><b>&Sigma;</b></th>`}
   `;
   const tbody = document.getElementById('labourTableBody');
+  if (showMiles) loadMiles(dayKeys[0]);
 
   if (weekShifts.length === 0) {
     tbody.innerHTML = `<tr><td colspan="${cols.length + 2}" style="text-align: center; color: var(--text-muted); padding: 30px;">Nobody is booked on a job this week.</td></tr>`;
@@ -3262,11 +3265,138 @@ function renderLabourSheetView() {
         }).join('');
         return `<td class="labour-cell${dayShifts.length ? '' : ' empty-cell'}${c.key === todayKey ? ' lb-today-cell' : ''}" data-label="${c.d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' })}">${badges || '<span style="color: var(--border-color); font-size: 0.75rem;">&mdash;</span>'}</td>`;
       }).join('');
-      return `<tr class="labour-row"><td class="labour-name" style="font-weight: 700;"><span class="lb-op-dot" style="background: ${userColor(op)};"></span>${op.full_name}${op.role && op.role !== 'Operative' ? ` <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>` : ''}</td>${cells}<td class="labour-cell lb-total" data-label="Days"><b>${fmtDays(shifts.reduce((t, sh) => t + dayFrac(sh), 0))}</b></td></tr>`;
+      return `<tr class="labour-row"><td class="labour-name" style="font-weight: 700;"><span class="lb-op-dot" style="background: ${userColor(op)};"></span>${op.full_name}${op.role && op.role !== 'Operative' ? ` <span style="font-size: 0.75rem; color: var(--text-muted);">(${op.role})</span>` : ''}</td>${cells}${showMiles ? milesCell(dayKeys[0], String(op.id)) : `<td class="labour-cell lb-total" data-label="Days"><b>${fmtDays(shifts.reduce((t, sh) => t + dayFrac(sh), 0))}</b></td>`}</tr>`;
     }).join('');
     return head + rows;
   }).join('');
 }
+
+// -------------------------------------------------------------------
+// MILEAGE IN THE LABOUR SHEET (Owner / Admin). Road miles from each person's home to their sites and back, worked out by the
+// Hub's mileage function (the same one the old Mileage app used). Tap a number for the daily breakdown; the report covers everyone.
+// -------------------------------------------------------------------
+const MILES = { weeks: new Map(), loading: new Set() };   // Monday date -> result from the server, or { error }
+function canSeeMiles() {
+  return !!(currentUser && auth && (currentUser.role === 'Owner' || currentUser.role === 'Admin' || String(currentUser.email || '').toLowerCase() === 'phil@gvdcontracts.com'));
+}
+async function loadMiles(weekStart, force) {
+  if (!canSeeMiles() || !auth.currentUser) return;
+  if (!force && (MILES.weeks.has(weekStart) || MILES.loading.has(weekStart))) return;
+  MILES.loading.add(weekStart);
+  if (force) MILES.weeks.delete(weekStart);
+  refreshMilesViews();
+  try {
+    const idToken = await auth.currentUser.getIdToken();
+    const r = (await firebase.app().functions('europe-west2').httpsCallable('mlWeek', { timeout: 300000 })({ idToken, date: weekStart })).data;
+    MILES.weeks.set(weekStart, r);
+  } catch (err) {
+    const code = String(err.code || '').replace('functions/', '');
+    MILES.weeks.set(weekStart, { error: ['permission-denied', 'invalid-argument'].includes(code) ? err.message : 'Could not work out the miles just now. Try again in a moment.' });
+  }
+  MILES.loading.delete(weekStart);
+  refreshMilesViews();
+}
+function refreshMilesViews() {
+  const lab = document.getElementById('view-labour-sheet');
+  if (lab && lab.style.display !== 'none') renderLabourSheetView();
+  const m = document.getElementById('modalMiles');
+  if (m && m.classList.contains('active') && MILES.open) MILES.open();
+}
+const milesPerson = (week, uid) => { const r = MILES.weeks.get(week); return r && r.people ? r.people.find(o => String(o.uid) === String(uid)) || null : null; };
+function milesCell(week, uid) {
+  const r = MILES.weeks.get(week), loading = MILES.loading.has(week) || !r;
+  let txt = '…', title = 'Working out the road miles…', cls = '';
+  if (!loading) {
+    const o = milesPerson(week, uid);
+    if (r.error) { txt = '—'; title = r.error; }
+    else if (!o || o.hidden) { txt = '—'; title = o ? 'Removed from the mileage list' : 'No mileage for this person'; }
+    else if (o.problem) { txt = '⚠'; title = o.problem; cls = ' lb-miles-warn'; }
+    else { txt = o.miles.toFixed(1) + (o.incomplete ? ' ⚠' : ''); title = 'Tap for the daily breakdown'; cls = o.incomplete ? ' lb-miles-warn' : ''; }
+  }
+  return `<td class="labour-cell lb-total lb-miles${cls}" data-label="Miles" data-miles-uid="${diaryEsc(uid)}" data-miles-week="${week}" title="${diaryEsc(title)}"><b>${txt}</b></td>`;
+}
+const ukDay = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+const ukDate = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? `${m[3]}/${m[2]}/${m[1]}` : ''; };
+const miFmt = n => (Math.round((Number(n) || 0) * 10) / 10).toFixed(1);
+
+function personMilesHtml(o) {
+  const home = o.homePostcode || 'home';
+  const rows = o.days.map(d => `<tr><td>${diaryEsc(ukDay(d.date))}</td><td>${diaryEsc([home, ...d.sites, home].join(' → '))}${d.error ? `<div class="lb-mi-err">${diaryEsc(d.error)}</div>` : ''}</td><td class="r"><b>${d.miles != null ? miFmt(d.miles) : '—'}</b></td></tr>`).join('');
+  return (o.problem ? `<p class="lb-mi-err" style="margin-bottom:8px;">${diaryEsc(o.problem)}</p>` : '') +
+    `<table class="lb-mi-table"><thead><tr><th>Day</th><th>Route (home → site → home)</th><th class="r">Miles</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No shifts this week.</td></tr>'}
+     <tr class="lb-mi-total"><td colspan="2">Total for the week${o.incomplete ? ' (some days could not be worked out)' : ''}</td><td class="r"><b>${miFmt(o.miles)}</b></td></tr></tbody></table>`;
+}
+function openPersonMiles(week, uid) {
+  const getO = () => milesPerson(week, uid);
+  const draw = () => {
+    const o = getO(), r = MILES.weeks.get(week);
+    const u = allUsers.find(x => String(x.id) === String(uid));
+    const name = o ? o.name : (u ? u.full_name : 'Person');
+    document.getElementById('modalMilesTitle').textContent = `Miles: ${name}`;
+    const body = document.getElementById('modalMilesBody');
+    if (!r || MILES.loading.has(week)) { body.innerHTML = '<p>Working out the road miles… the first time for a week can take a minute.</p>'; return; }
+    if (r.error) { body.innerHTML = `<p class="lb-mi-err">${diaryEsc(r.error)}</p>`; return; }
+    if (!o) { body.innerHTML = '<p>No mileage for this person this week.</p>'; return; }
+    body.innerHTML = `<p style="color:var(--text-muted);margin-bottom:8px;">Week of ${diaryEsc(ukDate(r.week.start))} to ${diaryEsc(ukDate(r.week.end))} · ${diaryEsc(o.kind)}${o.homePostcode ? ' · home ' + diaryEsc(o.homePostcode) : ''}</p>${personMilesHtml(o)}
+      <div class="lb-mi-actions"><button class="btn btn-primary btn-sm" id="miPrintOne">🖨 Print / save as PDF</button>
+      <button class="btn btn-outline btn-sm" id="miHide">${o.hidden ? 'Put back on the mileage list' : 'Remove from the mileage list'}</button></div>`;
+    document.getElementById('miPrintOne').onclick = () => milesSheet(`Miles: ${name}`, `<h1>Miles: ${diaryEsc(name)}</h1><p>Week of ${diaryEsc(ukDate(r.week.start))} to ${diaryEsc(ukDate(r.week.end))} · ${diaryEsc(o.kind)}${o.homePostcode ? ' · home ' + diaryEsc(o.homePostcode) : ''}</p>${personMilesHtml(o)}`);
+    document.getElementById('miHide').onclick = async () => {
+      if (!o.hidden && !confirm(`Remove ${name} from the mileage list? Nothing is deleted; you can put them back from the Mileage report.`)) return;
+      try { const idToken = await auth.currentUser.getIdToken(); await firebase.app().functions('europe-west2').httpsCallable('mlHide')({ idToken, uid, name, hidden: !o.hidden }); showGreenToast(o.hidden ? 'Put back on the list' : 'Removed from the list'); closeModal('modalMiles'); loadMiles(week, true); }
+      catch (err) { alert(err.message || 'Could not change that.'); }
+    };
+  };
+  MILES.open = draw; openModal('modalMiles'); draw(); loadMiles(week);
+}
+function openMilesReport() {
+  const days = getWeekDays(currentLabourWeekOffset).map(d => formatDateISO(d)), week = days[0];
+  const draw = () => {
+    const r = MILES.weeks.get(week);
+    document.getElementById('modalMilesTitle').textContent = 'Mileage report';
+    const body = document.getElementById('modalMilesBody');
+    if (!r || MILES.loading.has(week)) { body.innerHTML = '<p>Working out the road miles… the first time for a week can take a minute.</p>'; return; }
+    if (r.error) { body.innerHTML = `<p class="lb-mi-err">${diaryEsc(r.error)}</p>`; return; }
+    const people = r.people.filter(o => !o.hidden), removed = r.people.filter(o => o.hidden);
+    const dates = r.week ? Array.from({ length: 7 }, (_, i) => { const d = new Date(r.week.start + 'T12:00:00'); d.setDate(d.getDate() + i); return d.toISOString().slice(0, 10); }) : days;
+    const used = dates.filter(dt => people.some(o => o.days.some(d => d.date === dt)));
+    const cell = (o, dt) => { const d = o.days.find(x => x.date === dt); return d ? (d.miles != null ? miFmt(d.miles) : '⚠') : ''; };
+    const table = `<table class="lb-mi-table"><thead><tr><th>Name</th><th>Type</th>${used.map(dt => `<th class="r">${diaryEsc(new Date(dt + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' }))}</th>`).join('')}<th class="r">Total</th></tr></thead><tbody>
+      ${people.map(o => `<tr><td>${diaryEsc(o.name)}${o.problem ? `<div class="lb-mi-err">${diaryEsc(o.problem)}</div>` : ''}</td><td>${diaryEsc(o.kind)}</td>${used.map(dt => `<td class="r">${cell(o, dt)}</td>`).join('')}<td class="r"><b>${o.problem ? '—' : miFmt(o.miles) + (o.incomplete ? ' ⚠' : '')}</b></td></tr>`).join('')}
+      <tr class="lb-mi-total"><td colspan="${2 + used.length}">Direct staff</td><td class="r"><b>${miFmt(r.totals.staff)}</b></td></tr>
+      <tr class="lb-mi-total"><td colspan="${2 + used.length}">Subcontractors</td><td class="r"><b>${miFmt(r.totals.subs)}</b></td></tr>
+      <tr class="lb-mi-total"><td colspan="${2 + used.length}">All</td><td class="r"><b>${miFmt(r.totals.all)}</b></td></tr></tbody></table>`;
+    const head = `Mileage report: week of ${ukDate(r.week.start)} to ${ukDate(r.week.end)}`;
+    body.innerHTML = `<p style="color:var(--text-muted);margin-bottom:8px;">${diaryEsc(head)}. Road miles from home to site and back, in the order of the day.</p><div style="overflow-x:auto;">${table}</div>
+      <div class="lb-mi-actions"><button class="btn btn-primary btn-sm" id="miPrintAll">🖨 Print / save as PDF</button><button class="btn btn-outline btn-sm" id="miCsv">⬇ Download CSV</button><button class="btn btn-outline btn-sm" id="miRecalc">↻ Recalculate</button></div>
+      ${removed.length ? `<p style="margin-top:12px;font-size:0.85rem;color:var(--text-muted);">Removed from the list: ${removed.map(o => `${diaryEsc(o.name)} <a href="#" class="mi-restore" data-uid="${diaryEsc(o.uid)}" data-name="${diaryEsc(o.name)}">put back</a>`).join(', ')}</p>` : ''}`;
+    document.getElementById('miPrintAll').onclick = () => milesSheet(head, `<h1>GVD Contracts Limited: ${diaryEsc(head)}</h1><p>Confidential. Road miles from each person's home postcode to their shifts' sites and back.</p>${table}${people.filter(o => o.days.length).map(o => `<h2>${diaryEsc(o.name)}</h2>${personMilesHtml(o)}`).join('')}`);
+    document.getElementById('miCsv').onclick = () => {
+      const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+      const rows = [['Name', 'Type', 'Home postcode', ...used.map(ukDate), 'Total miles'], ...people.map(o => [o.name, o.kind, o.homePostcode, ...used.map(dt => cell(o, dt).replace('⚠', 'n/a')), o.problem ? '' : miFmt(o.miles)]), [], ['Direct staff', '', '', ...used.map(() => ''), miFmt(r.totals.staff)], ['Subcontractors', '', '', ...used.map(() => ''), miFmt(r.totals.subs)], ['All', '', '', ...used.map(() => ''), miFmt(r.totals.all)]];
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + rows.map(x => x.map(q).join(',')).join('\n')], { type: 'text/csv' })); a.download = `gvd-mileage-${r.week.start}.csv`; document.body.appendChild(a); a.click(); a.remove();
+    };
+    document.getElementById('miRecalc').onclick = () => loadMiles(week, true);
+    body.querySelectorAll('.mi-restore').forEach(a => a.addEventListener('click', async ev => {
+      ev.preventDefault();
+      try { const idToken = await auth.currentUser.getIdToken(); await firebase.app().functions('europe-west2').httpsCallable('mlHide')({ idToken, uid: a.dataset.uid, name: a.dataset.name, hidden: false }); loadMiles(week, true); } catch (err) { alert(err.message || 'Could not change that.'); }
+    }));
+  };
+  MILES.open = draw; openModal('modalMiles'); draw(); loadMiles(week);
+}
+function milesSheet(title, bodyHtml) {
+  const w = window.open('', '_blank');
+  if (!w) { alert('Allow pop-ups to print.'); return; }
+  w.document.write(`<!doctype html><meta charset="utf-8"><title>${diaryEsc(title)}</title><style>
+    body{font:13px/1.45 -apple-system,Segoe UI,Arial,sans-serif;color:#111;margin:24px}h1{font-size:19px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px}
+    table{width:100%;border-collapse:collapse;margin:8px 0}th,td{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;vertical-align:top}th{background:#f1f4f1;font-size:12px}.r{text-align:right}
+    .lb-mi-total td{font-weight:700;background:#f7f9f7}.lb-mi-err{color:#b42318;font-size:12px}@media print{body{margin:10mm}}</style>${bodyHtml}<script>setTimeout(()=>print(),300)<\/script>`);
+  w.document.close();
+}
+document.addEventListener('click', (ev) => {
+  const c = ev.target.closest('.lb-miles');
+  if (c && c.dataset.milesUid) openPersonMiles(c.dataset.milesWeek, c.dataset.milesUid);
+});
 
 // -------------------------------------------------------------------
 // ADMIN SETTINGS & USER MANAGEMENT
@@ -4620,6 +4750,7 @@ function setupEventListeners() {
   document.getElementById('labourPrevWeekBtn').addEventListener('click', () => { currentLabourWeekOffset--; renderLabourSheetView(); });
   document.getElementById('labourNextWeekBtn').addEventListener('click', () => { currentLabourWeekOffset++; renderLabourSheetView(); });
   document.getElementById('labourNextWeekNavBtn').addEventListener('click', () => { currentLabourWeekOffset = 0; renderLabourSheetView(); });
+  const lmb = document.getElementById('labourMileageReportBtn'); if (lmb) lmb.addEventListener('click', openMilesReport);
 
   document.getElementById('btnBackToSites').addEventListener('click', () => {
     activeSiteId = null;
