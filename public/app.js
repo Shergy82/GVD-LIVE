@@ -3327,35 +3327,10 @@ function renderAdminSettingsView() {
   }
 
   const chipsEl = document.getElementById('adminUserChips');
-  if (allUsers.length === 0) {
-    chipsEl.innerHTML = '<p style="color: var(--text-muted);">No registered users found.</p>';
-    renderAdminUserPushMonitor();
-    return;
-  }
-
-  const groups = [
-    ['Awaiting approval', u => u.status === 'Pending'],
-    ['Owners', u => u.status !== 'Pending' && u.role === 'Owner'],
-    ['Admins', u => u.status !== 'Pending' && u.role === 'Admin'],
-    ['Managers', u => u.status !== 'Pending' && u.role === 'Manager'],
-    ['Operatives', u => u.status !== 'Pending' && !['Owner', 'Admin', 'Manager'].includes(u.role)]
-  ];
-  chipsEl.innerHTML = groups.map(([title, test]) => {
-    const list = allUsers.filter(test).sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
-    if (list.length === 0) return '';
-    const rows = `<div class="user-chip-row">${list.map(u =>
-      `<button type="button" class="user-chip${u.status === 'Pending' ? ' pending' : ''}${u.status === 'Restricted' ? ' restricted' : ''}" data-user-id="${diaryEsc(u.id)}"><span style="width: 14px; height: 14px; border-radius: 50%; background: ${userColor(u)}; display: inline-block;"></span> ${diaryEsc(u.full_name)}${!hasUsedApp(u) && u.status === 'Active' ? ' <small style="color: var(--warning);">· not logged in yet</small>' : ''}</button>`).join('')}</div>`;
-    // Contractors are set up in Onboarding, so their list stays folded away until it is needed
-    if (title === 'Operatives') {
-      return `<details class="user-ops-details"${adminOpsOpen ? ' open' : ''}><summary class="user-group-title">Operatives and contractors (${list.length})</summary><p class="user-ops-note">New contractors are set up in Onboarding. Open this list only to change a planner colour or pay type, or to reset a password.</p>${rows}</details>`;
-    }
-    return `<div class="user-group-title">${title} (${list.length})</div>${rows}`;
-  }).join('');
-  const opsDetails = chipsEl.querySelector('details.user-ops-details');
-  if (opsDetails) opsDetails.addEventListener('toggle', () => { adminOpsOpen = opsDetails.open; });
-  chipsEl.querySelectorAll('.user-chip').forEach(chip => {
-    chip.addEventListener('click', () => openUserModal(chip.dataset.userId));
-  });
+  const pendingCount = allUsers.filter(u => u.status === 'Pending').length;
+  chipsEl.innerHTML = `<p style="color: var(--text-muted); margin-bottom: 10px;">User accounts are now managed in <b>GVD Onboarding → Accounts</b>: approving new sign-ups, roles, pay, planner colours and passwords. People still register here in GVD Live as normal.</p>
+    ${pendingCount ? `<p style="color: var(--warning); font-weight: 700; margin-bottom: 10px;">⏳ ${pendingCount} ${pendingCount === 1 ? 'person is' : 'people are'} waiting for approval.</p>` : ''}
+    <a class="btn btn-primary" href="https://gvd-hub.web.app/#onboarding" target="_top" style="text-decoration: none;">Open Accounts in Onboarding</a>`;
 
   renderAdminUserPushMonitor();
 }
