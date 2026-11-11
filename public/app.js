@@ -3330,7 +3330,11 @@ function renderAdminSettingsView() {
   const pendingCount = allUsers.filter(u => u.status === 'Pending').length;
   chipsEl.innerHTML = `<p style="color: var(--text-muted); margin-bottom: 10px;">User accounts are now managed in <b>GVD Onboarding → Accounts</b>: approving new sign-ups, roles, pay, planner colours and passwords. People still register here in GVD Live as normal.</p>
     ${pendingCount ? `<p style="color: var(--warning); font-weight: 700; margin-bottom: 10px;">⏳ ${pendingCount} ${pendingCount === 1 ? 'person is' : 'people are'} waiting for approval.</p>` : ''}
-    <a class="btn btn-primary" href="https://gvd-hub.web.app/#onboarding" target="_top" style="text-decoration: none;">Open Accounts in Onboarding</a>`;
+    <a class="btn btn-primary" id="btnOpenAccounts" href="https://gvd-hub.web.app/#onboarding" style="text-decoration: none; display: block; text-align: center;">Open Accounts in Onboarding</a>`;
+  document.getElementById('btnOpenAccounts').addEventListener('click', (e) => {
+    // inside the Hub, ask it to switch to Onboarding's Accounts page; on its own, follow the link
+    if (window.parent !== window) { e.preventDefault(); window.parent.postMessage({ type: 'gvd-open-app', app: 'onboarding', hash: '#/accounts' }, 'https://gvd-hub.web.app'); }
+  });
 
   renderAdminUserPushMonitor();
 }
