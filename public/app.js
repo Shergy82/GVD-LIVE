@@ -5916,21 +5916,33 @@ async function handleSaveUserModal() {
     status: document.getElementById('userModalStatus').value,
     color: document.getElementById('userModalColor').value
   };
-  Object.assign(user, updates);
-  if (db) await db.collection('users').doc(String(user.id)).update(updates).catch(err => alert('Save failed: ' + err.message));
-  if (db && isOwnerOrAdminUser(currentUser)) {
-    const rateRaw = document.getElementById('userModalDayRate').value;
-    const rate = rateRaw === '' ? null : parseFloat(rateRaw);
-    const pt = document.getElementById('userModalPayType').value;
-    const rec = { user_id: String(user.id), pay_type: pt };
-    if (pt === 'hourly') { rec.hourly_rate = isNaN(rate) ? null : rate; rec.hours_per_day = parseFloat(document.getElementById('userModalHours').value) || 8; }
-    else rec.day_rate = isNaN(rate) ? null : rate;
-    await db.collection('finance_rates').doc(String(user.id)).set(rec, { merge: true }).catch(console.warn);
+  const rateRaw = document.getElementById('userModalDayRate').value;
+  const payType = document.getElementById('userModalPayType').value;
+  const hoursRaw = document.getElementById('userModalHours').value;
+  const wasPending = user.status !== 'Active' && updates.status === 'Active';
+  const btn = document.getElementById('btnSaveUser');
+  const scrollY = window.scrollY;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    if (db) await db.collection('users').doc(String(user.id)).update(updates);
+    Object.assign(user, updates);
+    if (db && isOwnerOrAdminUser(currentUser)) {
+      const rate = rateRaw === '' ? null : parseFloat(rateRaw);
+      const rec = { user_id: String(user.id), pay_type: payType };
+      if (payType === 'hourly') { rec.hourly_rate = isNaN(rate) ? null : rate; rec.hours_per_day = parseFloat(hoursRaw) || 8; }
+      else rec.day_rate = isNaN(rate) ? null : rate;
+      await db.collection('finance_rates').doc(String(user.id)).set(rec, { merge: true }).catch(console.warn);
+    }
+    try { saveLocalStorageData(); } catch (e) { console.warn(e); }
+    closeModal('modalUser');
+    showGreenToast(wasPending ? `✅ ${user.full_name} approved and saved` : `✅ Saved ${user.full_name}`);
+    renderActiveView();
+    window.scrollTo(0, scrollY);
+  } catch (err) {
+    alert('Save failed: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
-  saveLocalStorageData();
-  closeModal('modalUser');
-  showGreenToast(`Saved ${user.full_name}`);
-  renderActiveView();
 }
 
 async function handleRemoveUserModal() {
