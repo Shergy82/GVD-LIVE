@@ -810,6 +810,21 @@ function updateMobileMenuLabel(viewId) {
   document.getElementById('appHeader').classList.remove('menu-open');
 }
 
+// ---- Accident Book report form, shown inside GVD Live and signed in with the person's Live login ----
+const ACCIDENT_ORIGIN = location.hostname === 'localhost' ? 'http://localhost:5099' : 'https://gvd-accident.web.app';
+async function sendAccidentToken() {
+  const f = document.getElementById('accidentFrame');
+  if (!f || !f.contentWindow || !auth || !auth.currentUser) return;
+  try { f.contentWindow.postMessage({ type: 'gvd-sso', idToken: await auth.currentUser.getIdToken() }, ACCIDENT_ORIGIN); } catch (e) { console.warn('Accident Book sign-in hand-over failed', e); }
+}
+function ensureAccidentFrame() {
+  const f = document.getElementById('accidentFrame');
+  if (!f) return;
+  if (!f.getAttribute('src')) { f.onload = sendAccidentToken; f.src = ACCIDENT_ORIGIN + '/#/report'; }
+  else sendAccidentToken();
+}
+window.addEventListener('message', ev => { if (ev.origin === ACCIDENT_ORIGIN && ev.data && ev.data.type === 'gvd-sso-ready') sendAccidentToken(); });
+
 function renderActiveView() {
   const activeViewEl = document.querySelector('.app-view:not([style*="display: none"])');
   if (!activeViewEl) return;
@@ -823,6 +838,8 @@ function renderActiveView() {
     renderSitesList();
   } else if (viewId === 'view-labour-sheet') {
     renderLabourSheetView();
+  } else if (viewId === 'view-accident') {
+    ensureAccidentFrame();
   } else if (viewId === 'view-admin') {
     renderAdminSettingsView();
   } else if (viewId === 'view-diary') {
