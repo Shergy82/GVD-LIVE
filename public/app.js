@@ -989,7 +989,7 @@ function formatUKDateTime(isoStr) {
   return d.toLocaleString('en-GB', {
     day: '2-digit',
     month: '2-digit',
-    year: '2-digit',
+    year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false
@@ -3915,7 +3915,7 @@ let fbPageOpenedAt = Date.now();
 const FB_LABELS = { 1: 'Poor', 2: 'Not great', 3: 'Okay', 4: 'Good', 5: 'Excellent' };
 const fbSentiment = r => (r >= 4 ? 'pos' : r === 3 ? 'neu' : 'neg');
 const fbStars = r => `<span class="fb-stars" aria-label="${r} out of 5 stars">${'★'.repeat(r)}<span class="off">${'★'.repeat(5 - r)}</span></span>`;
-const fbDate = iso => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+const fbDate = iso => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '');
 
 function startFeedbackSync() {
   if (feedbackUnsub || !db || !currentUser) return;
