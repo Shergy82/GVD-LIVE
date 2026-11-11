@@ -1759,3 +1759,16 @@ body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { dis
   .app-header .nav-item { padding: 8px 6px; font-size: 0.8rem; }
   .app-header .app-title, .app-header #userRoleBadge { display: none; }
 }
+
+/* Labour sheet miles */
+.labour-table td.lb-miles { cursor: pointer; }
+.labour-table td.lb-miles:hover b { text-decoration: underline; }
+.labour-table td.lb-miles.lb-miles-warn b { color: #fbbf24; }
+.lb-mi-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.lb-mi-table th, .lb-mi-table td { padding: 7px 9px; border-bottom: 1px solid var(--border-color); text-align: left; vertical-align: top; }
+.lb-mi-table th { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.lb-mi-table .r { text-align: right; white-space: nowrap; }
+.lb-mi-total td { font-weight: 700; }
+.lb-mi-err { color: #fbbf24; font-size: 0.8rem; margin-top: 2px; }
+.lb-mi-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.mi-restore { color: var(--primary); }
