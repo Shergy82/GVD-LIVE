@@ -4528,7 +4528,7 @@ function setupEventListeners() {
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
       document.getElementById('appHeader').classList.remove('menu-open');
-      if (btn.dataset.help) { window.open('https://gvd-hub.web.app/help/', '_blank', 'noopener'); return; }   // the how-to guide
+      if (btn.dataset.help) { window.open('https://gvd-hub.web.app/help/operative/', '_blank', 'noopener'); return; }   // the how-to guide
       if (!btn.dataset.target) return;
       activeSiteId = null;
       showView(btn.dataset.target);
