@@ -14,6 +14,32 @@ function findPoNumber(text, knownPos) {
   return m ? `PO-${m[1]}-${m[2]}` : null;
 }
 
+// Invoice date: suppliers label it many ways (Invoice/Tax Date, Taxpoint Date, Issue date, or just "Date :") and write it as 10/11/26, 10/11/2026 or 10 Nov 2026.
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const DATE_RX = '(\\d{1,2})[\\/.\\-](\\d{1,2})[\\/.\\-](\\d{4}|\\d{2})|(\\d{1,2})(?:st|nd|rd|th)?\\s+([A-Za-z]{3,9})\\.?,?\\s+(\\d{4})';
+function isoFromMatch(m, o) {   // o = index of the first group of the date inside the match
+  let d, mo, y;
+  if (m[o] !== undefined) { d = +m[o]; mo = +m[o + 1]; y = +m[o + 2]; if (String(m[o + 2]).length === 2) y += 2000; }
+  else { d = +m[o + 3]; mo = MONTHS[String(m[o + 4]).slice(0, 3).toLowerCase()]; y = +m[o + 5]; }
+  if (!mo || mo < 1 || mo > 12 || d < 1 || d > 31 || y < 2015 || y > 2040) return null;
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+function findInvoiceDate(text) {
+  const t = String(text || '');
+  const labelled = [
+    'invoice\\s*\\/?\\s*tax\\s*(?:point\\s*)?date', 'invoice\\s*date', 'date\\s*of\\s*invoice', 'tax\\s*point\\s*date', 'taxpoint\\s*date', 'tax\\s*point', 'taxpoint',
+    'issue\\s*date', 'date\\s*of\\s*issue', 'date\\s*issued', 'tax\\s*date'
+  ];
+  for (const lab of labelled) {
+    const m = new RegExp(lab + '[^0-9A-Za-z\\n]{0,15}(?:' + DATE_RX + ')', 'i').exec(t);
+    const iso = m && isoFromMatch(m, 1);
+    if (iso) return iso;
+  }
+  // a bare "Date :" (but never delivery / due / order / payment dates)
+  const bare = new RegExp('(?<!delivery |due |order |payment |despatch |dispatch |expiry |print |tax )\\bdate\\s*[:\\-]\\s*(?:' + DATE_RX + ')', 'i').exec(t);
+  return bare ? isoFromMatch(bare, 1) : null;
+}
+
 function parseInvoiceText(lines, knownPos) {
   const money = /(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g;
   const amountsIn = line => [...line.matchAll(money)].map(m => parseFloat(m[1].replace(/,/g, '')));
@@ -90,7 +116,7 @@ function parseInvoiceText(lines, knownPos) {
   const altDate = text.match(/date\s*\/?\s*(?:tax\s*point)?\s*:?\s*(\d{1,2})\s+([A-Za-z]{3})[a-z]*\s+(\d{4})/i);
   const MON = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
   const altIso = altDate && MON[altDate[2].toLowerCase()] ? `${altDate[3]}-${String(MON[altDate[2].toLowerCase()]).padStart(2, '0')}-${altDate[1].padStart(2, '0')}` : null;
-  const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : altIso;
+  const date = dateMatch ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}` : (altIso || findInvoiceDate(text));
   // supplier name: the company named beside its VAT number, else the bank 'Account Name' with the bank details cut off
   let merchant = ((text.match(/^\s*([A-Z][A-Za-z&' .-]+?(?:Ltd|Limited|LLP|PLC))\s+VAT\s*Reg/im)) || [])[1] || null;
   if (!merchant) merchant = ((text.match(/Account Name:\s*(.+?)\s*\.?\s*$/im)) || [])[1] || null;
@@ -118,4 +144,4 @@ function matchSiteByAddress(text, sites) {
 }
 
 
-module.exports = { parseInvoiceText, matchSiteByAddress };
+module.exports = { parseInvoiceText, matchSiteByAddress, findInvoiceDate };
