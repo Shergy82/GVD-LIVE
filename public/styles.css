@@ -1737,26 +1737,62 @@ body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { dis
 }
 
 
-/* Desktop header: the menu never pushes Logout off the screen. On narrower desktops the icons and name drop away and the menu tightens. */
-@media (min-width: 769px) {
-  .app-header { flex-wrap: nowrap; gap: 10px; }
-  .app-header .brand-container { flex: 0 0 auto; }
-  .app-header .nav-menu:not([data-never]) { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; justify-content: center; row-gap: 2px; }   /* never scroll or hide an item: if the menu is too wide it wraps onto a second row */
+/* ===== Responsive header: Mac, PC, tablet and phone =====
+   >= 1600px  one row, icon beside each label
+   901-1599px one row, icon above a short label (laptops, small desktops, tablets across)
+   <= 900px   a compact bar with a Menu button that opens a tidy grid of big tap targets (phones, tablets upright)
+   The menu wraps rather than scrolls, so no item can ever be hidden. */
+.app-header .brand-container, .app-header .user-status-bar { flex: 0 0 auto; }
+@media (min-width: 901px) {
+  .app-header { flex-wrap: nowrap; gap: 14px; padding: 10px 20px; }
+  .app-header .nav-menu { flex: 1 1 auto; min-width: 0; justify-content: center; flex-wrap: wrap; gap: 4px; }
   .app-header .nav-item { flex: 0 0 auto; }
-  .app-header .user-status-bar { flex: 0 0 auto; }
 }
-@media (min-width: 769px) and (max-width: 1799px) {
-  .app-header { padding: 10px 12px; }
+@media (min-width: 901px) and (max-width: 1599px) {
+  .app-header { padding: 8px 14px; gap: 10px; }
   .app-header .nav-menu { gap: 2px; }
-  .app-header .nav-item { padding: 8px 9px; font-size: 0.86rem; gap: 4px; }
-  .app-header .nav-item .nav-ico { display: none; }
-  .app-header .user-status-bar { gap: 8px; }
+  .app-header .nav-item { flex-direction: column; justify-content: center; align-items: center; gap: 3px; padding: 7px 8px; min-width: 66px; max-width: 96px; min-height: 52px; font-size: 0.74rem; line-height: 1.12; text-align: center; font-weight: 600; }
+  .app-header .nav-item .nav-ico { font-size: 1.3rem; }
   .app-header #userNameText { display: none; }
-  .app-header .app-title { font-size: 1.05rem; }
 }
-@media (min-width: 769px) and (max-width: 1399px) {
-  .app-header .nav-item { padding: 8px 6px; font-size: 0.8rem; }
-  .app-header .app-title, .app-header #userRoleBadge { display: none; }
+@media (min-width: 901px) and (max-width: 1279px) {
+  .app-header .app-title { display: none; }
+  .app-header #userRoleBadge { display: none; }
+  .app-header { padding: 8px 10px; gap: 8px; }
+  .app-header .nav-item { flex: 1 1 0; min-width: 54px; padding: 6px 2px; font-size: 0.7rem; }
+  .app-header .nav-item .nav-ico { font-size: 1.2rem; }
+}
+@media (max-width: 900px) {
+  .app-header, .app-header.nav-collapsible {
+    position: sticky; top: 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) 8px calc(12px + env(safe-area-inset-left, 0px));
+  }
+  .app-header .brand-container { flex: 1 1 auto; min-width: 0; justify-content: flex-start; }
+  .app-header .app-logo-img { max-height: 32px; }
+  .app-header .app-title { font-size: 1.05rem; }
+  .app-header .mobile-menu-btn {
+    display: inline-flex !important; align-items: center; gap: 6px; order: 2; min-height: 44px; padding: 0 14px;
+    background: var(--bg-surface-hover); color: var(--text-main); border: 1px solid var(--border-color); border-radius: var(--radius-sm); font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .app-header.menu-open .mobile-menu-btn { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .app-header .user-status-bar { order: 3; gap: 8px; }
+  .app-header #userNameText, .app-header #userRoleBadge { display: none; }
+  .app-header .nav-menu, .app-header.nav-collapsible .nav-menu { display: none; order: 4; flex: 1 0 100%; width: 100%; overflow: visible; padding: 4px 0 2px; }
+  .app-header.menu-open .nav-menu, .app-header.menu-open.nav-collapsible .nav-menu { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .app-header .nav-item, .app-header.nav-collapsible .nav-item {
+    grid-column: auto !important; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 4px;
+    min-height: 72px; padding: 8px 4px; font-size: 0.78rem; line-height: 1.15;
+    background-color: var(--bg-surface-hover); color: var(--text-main); border: 1px solid var(--border-color);
+  }
+  .app-header .nav-item .nav-ico { font-size: 1.6rem; }
+  .app-header .nav-item.active { background-color: var(--primary); border-color: var(--primary); color: #fff; }
+}
+@media (max-width: 420px) {
+  .app-header .app-title { display: none; }
+  .app-header .mobile-menu-btn { padding: 0 12px; }
+}
+@media (min-width: 560px) and (max-width: 900px) {
+  .app-header.menu-open .nav-menu, .app-header.menu-open.nav-collapsible .nav-menu { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 
 /* Labour sheet miles */
