@@ -40,6 +40,20 @@ function findInvoiceDate(text) {
   return bare ? isoFromMatch(bare, 1) : null;
 }
 
+// Invoice number. PDF text sometimes splits a number ("SW -51756"), and some suppliers (City Plumbing) print it straight after the word INVOICE with no label.
+function findInvoiceNumber(text) {
+  const t = String(text || '').replace(/\b([A-Z]{1,6})\s+-\s*(\d{3,})/g, '$1-$2');
+  const labelled = ((t.match(/invoice\s*(?:no|number|#)\.?\s*:?\s*(?:[A-Za-z]{2,10}\s+){0,2}?((?=[A-Z0-9\/\-]*\d)[A-Z0-9][A-Z0-9\/\-]{2,})/i)) || [])[1];
+  if (labelled) return labelled;
+  // labels on one line, values on the next (SWIP): "Invoice number Reference" then "£1,882.21 23 Oct 2026 23 Oct 2026 SW-51756 B 78 2 AX"
+  const ls = t.split('\n');
+  for (let i = 0; i < ls.length - 1; i++) {
+    if (/invoice\s*(?:no|number|#)/i.test(ls[i])) { const m = ls[i + 1].match(/\b([A-Z]{1,6}-\d{3,})\b/); if (m) return m[1]; }
+  }
+  const bare = (t.match(/(?:^|\n)\s*INVOICE\s+(\d{3,5})\s?([A-Z]{2,4}\d{2,5})\b/) || t.match(/\bINVOICE\s+(\d{3,5})\s?([A-Z]{2,4}\d{2,5})\s+INVOICE\s*\/\s*TAX/i));
+  return bare ? bare[1] + bare[2] : null;
+}
+
 function parseInvoiceText(lines, knownPos) {
   const money = /(?:£\s*)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\b/g;
   const amountsIn = line => [...line.matchAll(money)].map(m => parseFloat(m[1].replace(/,/g, '')));
@@ -111,7 +125,7 @@ function parseInvoiceText(lines, knownPos) {
   const po = findPoNumber(text, knownPos);
   // standalone invoice number: the line after a heading that ends in the word INVOICE (e.g. Travis Perkins)
   const standaloneNo = ((text.match(/\bINVOICE\s*\n\s*(\d{6,12})\s*(?:\n|$)/)) || [])[1] || null;
-  const invNo = ((text.match(/invoice\s*(?:no|number|#)\.?\s*:?\s*(?:[A-Za-z]{2,10}\s+){0,2}?((?=[A-Z0-9\/\-]*\d)[A-Z0-9][A-Z0-9\/\-]{2,})/i)) || [])[1] || null;
+  const invNo = findInvoiceNumber(text);
   const dateMatch = text.match(/invoice\s*(?:\/\s*tax\s*)?date[^0-9\n]*(\d{2})\/(\d{2})\/(\d{4})/i);
   const altDate = text.match(/date\s*\/?\s*(?:tax\s*point)?\s*:?\s*(\d{1,2})\s+([A-Za-z]{3})[a-z]*\s+(\d{4})/i);
   const MON = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
@@ -144,4 +158,4 @@ function matchSiteByAddress(text, sites) {
 }
 
 
-module.exports = { parseInvoiceText, matchSiteByAddress, findInvoiceDate };
+module.exports = { parseInvoiceText, matchSiteByAddress, findInvoiceDate, findInvoiceNumber };
