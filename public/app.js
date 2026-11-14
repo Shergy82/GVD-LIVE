@@ -98,7 +98,8 @@ let allPhotos = [];
 let allPdfs = [];
 let activeSiteId = null;
 let siteFilterMode = 'active'; // 'active' | 'archived'
-let isDraftPlanningMode = false;
+let isDraftPlanningMode = false;   // restored for each person when they sign in (see onUserAuthenticated), so closing the app does not switch it back to Live
+const draftModeKey = () => 'gvd_draft_mode_' + (currentUser ? currentUser.id : '');
 
 let currentPlannerWeekOffset = 0; // 0 = current week
 let currentLabourWeekOffset = 0;  // 0 = this week: the Labour Sheet always opens on the current week
@@ -660,6 +661,10 @@ function onUserAuthenticated() {
   touchLastActive();
 
   localStorage.setItem('gvd_current_user_id', currentUser.id);
+  // remember the Draft / Live choice: it used to reset to Live every time the app was closed and reopened
+  try { isDraftPlanningMode = localStorage.getItem(draftModeKey()) === 'true'; } catch (e) {}
+  try { updatePlanningModeToggleUI(); } catch (e) {}
+  if (isDraftPlanningMode) setTimeout(() => showGreenToast('🛠️ Draft Mode is still on: shift notifications are paused'), 1500);
   document.getElementById('appHeader').style.display = 'flex';
   document.getElementById('userNameText').textContent = currentUser.full_name;
   const nameEl = document.getElementById('userNameText');
@@ -1074,7 +1079,7 @@ function updatePlanningModeToggleUI() {
 
 async function handleTogglePlanningMode() {
   isDraftPlanningMode = !isDraftPlanningMode;
-  localStorage.setItem('gvd_draft_planning_mode', isDraftPlanningMode ? 'true' : 'false');
+  try { localStorage.setItem(draftModeKey(), isDraftPlanningMode ? 'true' : 'false'); } catch (e) {}
   updatePlanningModeToggleUI();
 
   if (isDraftPlanningMode) {
