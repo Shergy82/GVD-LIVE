@@ -664,6 +664,7 @@ function onUserAuthenticated() {
   // remember the Draft / Live choice: it used to reset to Live every time the app was closed and reopened
   try { isDraftPlanningMode = localStorage.getItem(draftModeKey()) === 'true'; } catch (e) {}
   try { updatePlanningModeToggleUI(); } catch (e) {}
+  restorePushState();
   if (isDraftPlanningMode) setTimeout(() => showGreenToast('🛠️ Draft Mode is still on: shift notifications are paused'), 1500);
   document.getElementById('appHeader').style.display = 'flex';
   document.getElementById('userNameText').textContent = currentUser.full_name;
@@ -1110,6 +1111,27 @@ async function handleTogglePlanningMode() {
       showGreenToast('✅ Live Mode Active — Automatic Notifications ON!');
     }
   }
+}
+
+// The "alerts are on" flag lives in browser storage, which a phone can clear when the app is fully closed (and the Hub frame is the worst for it).
+// So on every sign-in work out the real answer again: the device's own push subscription, or (inside the Hub) the record the Hub saved for this device.
+async function restorePushState() {
+  try {
+    if (!currentUser) return;
+    let on = false;
+    if (window.parent === window) {
+      if ('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && Notification.permission === 'granted') {
+        const reg = await navigator.serviceWorker.ready;
+        on = !!(await reg.pushManager.getSubscription());
+      }
+    } else if (db) {
+      const snap = await db.collection('users').doc(String(currentUser.id)).collection('subscriptions').get();
+      on = snap.docs.some(d => d.data().user_agent === navigator.userAgent);
+    }
+    if (on) { try { localStorage.setItem('gvd_push_subscribed', 'true'); } catch (e) {} }
+    updateHeaderBellUI();
+    if (typeof updateCleanPushUI === 'function') updateCleanPushUI();
+  } catch (e) { console.warn('Could not re-check alerts', e); }
 }
 
 function updateHeaderBellUI() {
