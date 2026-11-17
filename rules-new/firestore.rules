@@ -24,9 +24,23 @@ service cloud.firestore {
       allow delete: if mgmt() && request.auth.token.role == 'Owner';   // only Owners delete sites; everyone else archives
     }
     match /shifts/{id} { allow read, write: if active(); }
-    match /pdfs/{id} { allow read, write: if active(); }
+    // Site documents (PDF / Excel) are for the whole team. Invoices (file_type 'invoice') are not: only management can read or change them.
+    // The field is read directly (never with .get(.., default), which would let an unrestricted query through), so a non-management request
+    // has to say where file_type != 'invoice' (or is in a list of types). A document with no type is unreadable to them until management's
+    // app has typed it, which it does on its own (tagUntypedDocuments in app.js).
+    match /pdfs/{id} {
+      allow read: if mgmt() || (active() && resource.data.file_type != 'invoice');
+      allow create: if mgmt() || (active() && request.resource.data.file_type in ['pdf', 'excel']);
+      allow update: if mgmt() || (active() && resource.data.file_type in ['pdf', 'excel'] && request.resource.data.file_type in ['pdf', 'excel']);
+      allow delete: if mgmt() || (active() && resource.data.file_type in ['pdf', 'excel']);
+    }
     match /photos/{id} { allow read, write: if active(); }
-    match /purchase_orders/{id} { allow read, write: if active(); }
+    // A purchase order carries its invoice figures, so it follows the same rule: management see every one, everyone else only the ones they requested.
+    match /purchase_orders/{id} {
+      allow read: if mgmt() || (active() && resource.data.requested_by_id == request.auth.uid);
+      allow create: if mgmt() || (active() && request.resource.data.requested_by_id == request.auth.uid);
+      allow update, delete: if mgmt();
+    }
     match /po_counters/{id} { allow read, write: if active(); }
     match /diary/{id} { allow read, write: if active(); }
     match /group_chat/{id} { allow read, write: if active(); }

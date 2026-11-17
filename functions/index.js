@@ -6,6 +6,7 @@ const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 const webpush = require('web-push');
+const { isInvoiceDoc, callerIsManagement } = require('./fileAccess');
 
 initializeApp();
 const db = getFirestore();
@@ -106,18 +107,23 @@ exports.sendDiaryReminders = onSchedule({ schedule: '0 7 * * *', timeZone: 'Euro
 });
 
 // Serves site documents from our own domain (/files/<pdfDocId>) so phones treat them as normal downloads.
+// Invoices are the exception: they are management business, so the request must carry a management sign-in token (see fileAccess.js).
 exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (req, res) => {
   // the old gvd-live.web.app address sends requests here (see functions-shell); the app reads the file across origins
   res.set('Access-Control-Allow-Origin', 'https://gvd-live.web.app');
   res.set('Vary', 'Origin');
-  if (req.method === 'OPTIONS') return res.status(204).set('Access-Control-Allow-Methods', 'GET').send('');
+  if (req.method === 'OPTIONS') return res.status(204).set('Access-Control-Allow-Methods', 'GET').set('Access-Control-Allow-Headers', 'Authorization').send('');
   try {
     const id = decodeURIComponent((req.path || '').split('/').filter(Boolean).pop() || '');
     if (!id) return res.status(400).send('Missing file id');
     const isPhoto = id.startsWith('photo_');
     const snap = await db.collection(isPhoto ? 'photos' : 'pdfs').doc(id).get();
     const d = snap.exists ? snap.data() : null;
-    if (!d || !d.storage_path) return res.status(404).send('File not found');
+    if (!d) return res.status(404).send('File not found');
+    // An invoice is only handed to a signed-in management user. This is checked before anything else about the file is revealed.
+    const invoice = !isPhoto && isInvoiceDoc(d);
+    if (invoice && !(await callerIsManagement(req))) return res.status(403).send('Invoices are for management only');
+    if (!d.storage_path) return res.status(404).send('File not found');
 
     const bucketName = String(d.storage_bucket || '').replace(/^gs:\/\//, '');
     const file = bucketName ? getStorage().bucket(bucketName).file(d.storage_path) : getStorage().bucket().file(d.storage_path);
@@ -127,7 +133,7 @@ exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (r
     res.set('Content-Type', isPdf ? 'application/pdf' : (meta.contentType || 'application/octet-stream'));
     res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(d.filename || 'file')}`);
     if (meta.size) res.set('Content-Length', String(meta.size));
-    res.set('Cache-Control', 'private, max-age=300');
+    res.set('Cache-Control', invoice ? 'private, no-store' : 'private, max-age=300');
     file.createReadStream()
       .on('error', err => { console.error('siteFile stream error', err.message); if (!res.headersSent) res.status(500).send('Could not read file'); else res.end(); })
       .pipe(res);
