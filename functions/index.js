@@ -119,6 +119,13 @@ exports.siteFile = onRequest({ memory: '512MiB', timeoutSeconds: 120 }, async (r
     const d = snap.exists ? snap.data() : null;
     if (!d || !d.storage_path) return res.status(404).send('File not found');
 
+    // Invoices need a short-lived link issued to a signed-in person who may see them (see fileLink in api.js)
+    if (!isPhoto && d.file_type === 'invoice') {
+      const t = String(req.query.t || '');
+      const tk = t ? await db.collection('file_tokens').doc(t).get() : null;
+      if (!tk || !tk.exists || tk.data().file_id !== id || !(tk.data().exp > Date.now())) return res.status(403).send('This invoice link has expired. Open it again from the app.');
+    }
+
     const bucketName = String(d.storage_bucket || '').replace(/^gs:\/\//, '');
     const file = bucketName ? getStorage().bucket(bucketName).file(d.storage_path) : getStorage().bucket().file(d.storage_path);
     const [meta] = await file.getMetadata();
