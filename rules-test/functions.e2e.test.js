@@ -150,14 +150,14 @@ test('ssoSession: management ID token gives a session; operatives and bad tokens
   assert.strictEqual((await call('ssoSession', {})).error.status, 'UNAUTHENTICATED');
 });
 
-test('invoice files: links only for management or the invoice\'s own person; the file needs a valid link', async () => {
+test('invoice files: links for management only; the file needs a valid link', async () => {
   await db.doc('pdfs/inv_mine').set({ id: 'inv_mine', file_type: 'invoice', site_id: 5, uploader_id: 'op1', storage_path: 'x/mine.pdf', filename: 'mine.pdf' });
   await db.doc('pdfs/inv_other').set({ id: 'inv_other', file_type: 'invoice', site_id: 5, uploader_id: 'someone_else', storage_path: 'x/other.pdf', filename: 'other.pdf' });
   await db.doc('pdfs/plain1').set({ id: 'plain1', file_type: 'pdf', site_id: 5, uploader_id: 'someone_else', storage_path: 'x/p.pdf', filename: 'p.pdf' });
   const op = await idTokenFrom((await call('login', { email: 'ollie@x.com', password: 'oppass1' })).token);
   process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
   const adm = await idTokenFrom(await require('firebase-admin/auth').getAuth().createCustomToken('admin1', { mgmt: true, active: true, role: 'Admin' }));
-  assert.ok((await call('fileLink', { id: 'inv_mine' }, op)).url.includes('?t='));                       // own invoice: fine
+  assert.strictEqual((await call('fileLink', { id: 'inv_mine' }, op)).error.status, 'PERMISSION_DENIED');   // even their own invoice: refused
   assert.strictEqual((await call('fileLink', { id: 'inv_other' }, op)).error.status, 'PERMISSION_DENIED'); // someone else's: refused
   const a = await call('fileLink', { id: 'inv_other' }, adm);                                           // management: fine
   assert.ok(a.url, JSON.stringify(a));
