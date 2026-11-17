@@ -113,6 +113,13 @@ let currentCustomerToken = null;
 function isOwnerRole(user) {
   return !!user && (user.role === 'Owner' || user.email === 'phil@gvdcontracts.com');
 }
+// Invoices (supplier and operative) are management-only: an operative sees only their own, never anyone else's
+function canSeePdf(p) {
+  if (!p || p.file_type !== 'invoice') return true;
+  if (isManagementUser(currentUser)) return true;
+  const me = String(currentUser && currentUser.id);
+  return String(p.uploader_id) === me || String(p.contractor_id) === me;
+}
 function isManagementUser(user) {
   if (!user) return false;
   return user.role === 'Owner' || user.role === 'Admin' || user.role === 'Manager' || user.email === 'phil@gvdcontracts.com';
@@ -302,7 +309,7 @@ function loadLocalStorageData() {
     allSites = JSON.parse(localStorage.getItem('gvd_sites')) || [];
     allShifts = JSON.parse(localStorage.getItem('gvd_shifts')) || [];
     allPhotos = JSON.parse(localStorage.getItem('gvd_photos')) || [];
-    allPdfs = JSON.parse(localStorage.getItem('gvd_pdfs')) || [];
+    allPdfs = (JSON.parse(localStorage.getItem('gvd_pdfs')) || []).filter(canSeePdf);
     deduplicateSites();
     deduplicateShifts();
     const settingsStr = localStorage.getItem('gvd_settings');
@@ -436,7 +443,7 @@ function initFirestoreSync() {
     allPdfs = snapshot.docs.map(doc => {
       const d = doc.data();
       return { ...d, id: String(d.id || doc.id) };
-    });
+    }).filter(canSeePdf);
     saveLocalStorageData();
     if (activeSiteId) loadProjectPage(activeSiteId);
     const invView = document.getElementById('view-invoices');
@@ -512,7 +519,7 @@ async function fetchRestFallback() {
         allSites = json.data.sites || [];
         allShifts = json.data.shifts || [];
         allPhotos = json.data.photos || [];
-        allPdfs = json.data.pdfs || [];
+        allPdfs = (json.data.pdfs || []).filter(canSeePdf);
         if (json.data.settings) appSettings = json.data.settings;
         saveLocalStorageData();
         renderActiveView();
