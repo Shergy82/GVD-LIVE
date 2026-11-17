@@ -48,6 +48,11 @@ function startSyncOnce() {
   initFirestoreSync();
 }
 
+// Invoice files are served with a short-lived link issued to people allowed to see them; everything else uses the plain address
+async function siteFileUrl(f) {
+  if (!f || f.file_type !== 'invoice') return `/files/${encodeURIComponent(f.id)}`;
+  return (await callFn('fileLink', { id: String(f.id) })).url;
+}
 async function callFn(name, data) {
   try {
     return (await fns.httpsCallable(name)(data || {})).data;
@@ -3116,16 +3121,18 @@ function openPhotoLightbox(photo) {
     }).join('');
 
     pdfList.querySelectorAll('.download-pdf-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const pdfId = String(btn.dataset.pdfId);
         const pdf = allPdfs.find(p => String(p.id) === pdfId);
         if (pdf && pdf.storage_path) {
           // Served from our own domain via the siteFile function so phones download it normally
+          const fileHref = await siteFileUrl(pdf).catch(err => { alert(err.message || 'Could not open that file.'); return null; });
+          if (!fileHref) return;
           if (fileViewerKind(pdf.filename) === 'pdf') {
-            openFileViewer(`/files/${encodeURIComponent(pdf.id)}`, pdf.filename);
+            openFileViewer(fileHref, pdf.filename);
           } else {
             const link = document.createElement('a');
-            link.href = `/files/${encodeURIComponent(pdf.id)}`;
+            link.href = fileHref;
             link.download = pdf.filename || 'file';
             document.body.appendChild(link);
             link.click();
@@ -7214,7 +7221,7 @@ async function openAssignInvoice(fileId) {
   // suggestions: read the PDF text, plus the merchant and file name
   let text = [invMerchantOf(f), f.filename].join(' ');
   try {
-    const res = await fetch('/files/' + encodeURIComponent(f.id));
+    const res = await fetch(await siteFileUrl(f));
     const blob = await res.blob();
     const lines = await extractPdfLines(new File([blob], f.filename || 'invoice.pdf', { type: 'application/pdf' }));
     text += ' ' + lines.join(' ');

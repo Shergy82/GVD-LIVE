@@ -387,3 +387,23 @@ exports.getFinanceSummary = onCall(opts, async (req) => {
   const snap = await db().collection('finance_summary').get();
   return { jobs: snap.docs.map(d => ({ id: d.id, ...d.data() })) };
 });
+
+// A short-lived (10 minute) link to one invoice file. Only management, the person who uploaded it, or the contractor it is for can get one.
+exports.fileLink = onCall(opts, async (req) => {
+  const a = requireAuth(req);
+  const id = str(req.data && req.data.id, 120);
+  if (!id) throw new HttpsError('invalid-argument', 'Missing file.');
+  const snap = await db().collection('pdfs').doc(id).get();
+  if (!snap.exists) throw new HttpsError('not-found', 'File not found.');
+  const f = snap.data();
+  const mgmt = a.token.mgmt === true && a.token.active === true;
+  const mine = String(f.uploader_id) === String(a.uid) || String(f.contractor_id) === String(a.uid);
+  if (f.file_type === 'invoice' && !mgmt && !mine) throw new HttpsError('permission-denied', 'You cannot open this invoice.');
+  const token = crypto.randomBytes(24).toString('hex');
+  await db().collection('file_tokens').doc(token).set({ file_id: id, exp: Date.now() + 10 * 60 * 1000, by: a.uid });
+  try {   // tidy up expired links as we go
+    const old = await db().collection('file_tokens').where('exp', '<', Date.now() - 3600 * 1000).limit(30).get();
+    await Promise.all(old.docs.map(d => d.ref.delete()));
+  } catch (e) { /* not important */ }
+  return { url: `/files/${encodeURIComponent(id)}?t=${token}` };
+});
