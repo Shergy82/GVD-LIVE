@@ -118,12 +118,10 @@ let currentCustomerToken = null;
 function isOwnerRole(user) {
   return !!user && (user.role === 'Owner' || user.email === 'phil@gvdcontracts.com');
 }
-// Invoices (supplier and operative) are management-only: an operative sees only their own, never anyone else's
+// Invoices (supplier and operative) are for management only. Nobody else sees any of them, not even their own.
 function canSeePdf(p) {
   if (!p || p.file_type !== 'invoice') return true;
-  if (isManagementUser(currentUser)) return true;
-  const me = String(currentUser && currentUser.id);
-  return String(p.uploader_id) === me || String(p.contractor_id) === me;
+  return isManagementUser(currentUser);
 }
 function isManagementUser(user) {
   if (!user) return false;
@@ -444,8 +442,8 @@ function initFirestoreSync() {
   }, onErr));
 
   // Real-time PDFs Collection Sync.
-  // Management reads everything. Everyone else reads plain documents (type pdf/excel) plus only the invoices that are theirs:
-  // the database rules refuse anything wider, so a person cannot read other people's invoices even outside the app.
+  // Management reads everything. Everyone else reads plain documents (type pdf/excel) only, never invoices:
+  // the database rules refuse anything wider, so invoices cannot be read outside the app either.
   const applyPdfs = docs => {
     allPdfs = docs.map(d => ({ ...d, id: String(d.id) })).filter(canSeePdf);
     saveLocalStorageData();
@@ -459,20 +457,9 @@ function initFirestoreSync() {
       applyPdfs(snapshot.docs.map(doc => { const d = doc.data(); return { ...d, id: d.id || doc.id }; }));
     }, onErr));
   } else {
-    const me = String(currentUser.id), parts = {}, ready = new Set();
-    const queries = {
-      plain: () => db.collection('pdfs').where('file_type', 'in', ['pdf', 'excel']),
-      mine: () => db.collection('pdfs').where('uploader_id', '==', me),
-      forMe: () => db.collection('pdfs').where('contractor_id', '==', me)
-    };
-    Object.keys(queries).forEach(k => listenWithRetry('pdfs-' + k, onErr => queries[k]().onSnapshot(snapshot => {
-      parts[k] = snapshot.docs.map(doc => { const d = doc.data(); return { ...d, id: d.id || doc.id }; });
-      ready.add(k);
-      if (ready.size < 3) return;   // wait until all three have answered so the list never flickers
-      const byId = {};
-      Object.values(parts).forEach(list => list.forEach(d => { byId[String(d.id)] = d; }));
-      applyPdfs(Object.values(byId));
-    }, err => { ready.add(k); onErr(err); })));
+    listenWithRetry('pdfs', onErr => db.collection('pdfs').where('file_type', 'in', ['pdf', 'excel']).onSnapshot(snapshot => {
+      applyPdfs(snapshot.docs.map(doc => { const d = doc.data(); return { ...d, id: d.id || doc.id }; }));
+    }, onErr));
   }
 
   // Real-time App Settings Sync

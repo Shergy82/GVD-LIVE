@@ -388,7 +388,7 @@ exports.getFinanceSummary = onCall(opts, async (req) => {
   return { jobs: snap.docs.map(d => ({ id: d.id, ...d.data() })) };
 });
 
-// A short-lived (10 minute) link to one invoice file. Only management, the person who uploaded it, or the contractor it is for can get one.
+// A short-lived (10 minute) link to one invoice file. Only management can get one.
 exports.fileLink = onCall(opts, async (req) => {
   const a = requireAuth(req);
   const id = str(req.data && req.data.id, 120);
@@ -397,8 +397,7 @@ exports.fileLink = onCall(opts, async (req) => {
   if (!snap.exists) throw new HttpsError('not-found', 'File not found.');
   const f = snap.data();
   const mgmt = a.token.mgmt === true && a.token.active === true;
-  const mine = String(f.uploader_id) === String(a.uid) || String(f.contractor_id) === String(a.uid);
-  if (f.file_type === 'invoice' && !mgmt && !mine) throw new HttpsError('permission-denied', 'You cannot open this invoice.');
+  if (f.file_type === 'invoice' && !mgmt) throw new HttpsError('permission-denied', 'Invoices are for management only.');
   const token = crypto.randomBytes(24).toString('hex');
   await db().collection('file_tokens').doc(token).set({ file_id: id, exp: Date.now() + 10 * 60 * 1000, by: a.uid });
   try {   // tidy up expired links as we go
