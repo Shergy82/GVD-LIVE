@@ -469,6 +469,8 @@ function initFirestoreSync() {
       allSiteLogic = {}; snap.docs.forEach(d => { allSiteLogic[d.id] = d.data(); });
       if (document.getElementById('sitesListContainer') && !activeSiteId) renderSitesList();
       else if (activeSiteId) { const st = allSites.find(x => parseInt(x.id) === activeSiteId); if (st) renderProjectLogicInfo(st); }
+      const pb = document.getElementById('plannerTableBody');
+      if (pb && pb.offsetParent) renderPlannerView();   // start dates show on the planner as soon as Logic changes them
     }, onErr));
     listenWithRetry('checklist_items', onErr => db.collection('checklist_items').onSnapshot(snap => {
       const t = {};
