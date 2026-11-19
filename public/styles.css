@@ -1814,3 +1814,5 @@ body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { dis
 .site-start-badge { font-size: 0.75rem; font-weight: 700; color: #22c55e; }
 .site-start-badge.soon { color: #fff; background: #16a34a; border-radius: 6px; padding: 1px 7px; display: inline-block; animation: startpulse 1.4s ease-in-out infinite; }
 @keyframes startpulse { 50% { opacity: .55; } }
+
+.planner-table.five-day th.date-col { width: calc((100% - 200px) / 5); }
