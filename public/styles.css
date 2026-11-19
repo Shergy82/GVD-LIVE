@@ -1816,3 +1816,9 @@ body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { dis
 @keyframes startpulse { 50% { opacity: .55; } }
 
 .planner-table.five-day th.date-col { width: calc((100% - 200px) / 5); }
+
+/* Dates always show as DD/MM/YYYY (see datefmt.js) */
+.dwrap{position:relative;display:block;width:100%}.dwrap input{width:100%}
+.dwrap input[type=date]::-webkit-datetime-edit,.dwrap input[type=datetime-local]::-webkit-datetime-edit{opacity:0}
+.dwrap .dtxt{position:absolute;top:50%;transform:translateY(-50%);pointer-events:none;white-space:nowrap}.dwrap .dtxt.ph{color:#98a2b3}
+.dwrap:focus-within .dtxt{text-decoration:underline dotted}
