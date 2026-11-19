@@ -1807,3 +1807,10 @@ body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { dis
 .lb-mi-err { color: #fbbf24; font-size: 0.8rem; margin-top: 2px; }
 .lb-mi-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .mi-restore { color: var(--primary); }
+
+/* Start date from GVD Logic: the day's box goes green, and the site column says when it starts */
+.planner-table tr.site-row > td.planner-day-cell.start-day-cell { background-color: rgba(34, 197, 94, 0.28) !important; box-shadow: inset 0 0 0 2px #22c55e; }
+.start-flag { font-size: 0.68rem; font-weight: 800; color: #166534; background: #86efac; border-radius: 6px; padding: 1px 6px; display: inline-block; margin-bottom: 4px; pointer-events: none; }
+.site-start-badge { font-size: 0.75rem; font-weight: 700; color: #22c55e; }
+.site-start-badge.soon { color: #fff; background: #16a34a; border-radius: 6px; padding: 1px 7px; display: inline-block; animation: startpulse 1.4s ease-in-out infinite; }
+@keyframes startpulse { 50% { opacity: .55; } }

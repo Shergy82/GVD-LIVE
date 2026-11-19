@@ -469,6 +469,8 @@ function initFirestoreSync() {
       allSiteLogic = {}; snap.docs.forEach(d => { allSiteLogic[d.id] = d.data(); });
       if (document.getElementById('sitesListContainer') && !activeSiteId) renderSitesList();
       else if (activeSiteId) { const st = allSites.find(x => parseInt(x.id) === activeSiteId); if (st) renderProjectLogicInfo(st); }
+      const pb = document.getElementById('plannerTableBody');
+      if (pb && pb.offsetParent) renderPlannerView();   // start dates show on the planner as soon as Logic changes them
     }, onErr));
     listenWithRetry('checklist_items', onErr => db.collection('checklist_items').onSnapshot(snap => {
       const t = {};
@@ -1840,10 +1842,17 @@ function renderPlannerView() {
   updatePlanningModeToggleUI();
 
   tbody.innerHTML = activeSites.map(site => {
+    // The start date set in GVD Logic (management only, as Logic details are): the day's box goes green, and the site shows when it starts
+    const lgStart = isManagementUser(currentUser) ? ((allSiteLogic[String(site.id)] || {}).startDate || '') : '';
+    const startISO = /^\d{4}-\d{2}-\d{2}$/.test(lgStart) ? lgStart : '';
+    const daysToStart = startISO ? Math.round((new Date(startISO + 'T00:00:00Z') - new Date(todayISO + 'T00:00:00Z')) / 86400000) : null;
+    const startHtml = startISO && daysToStart >= 0
+      ? `<div class="site-start-badge ${daysToStart <= 1 ? 'soon' : ''}">▶ Starts ${daysToStart === 0 ? 'TODAY' : formatShortUKDayDate(startISO) + (daysToStart === 1 ? ' (tomorrow)' : ' (in ' + daysToStart + ' days)')}</div>` : '';
     const cellsHtml = weekDays.map(day => {
       const dateStr = formatDateISO(day);
       const isToday = dateStr === todayISO;
       const dayShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id) && s.shift_date === dateStr);
+      const isStart = startISO !== '' && startISO === dateStr;   // the start date set in GVD Logic
 
       const cardsHtml = dayShifts.map(s => {
         const op = allUsers.find(u => String(u.id) === String(s.operative_id));
@@ -1865,8 +1874,8 @@ function renderPlannerView() {
       }).join('');
 
       return `
-        <td class="planner-day-cell ${isWeekendDay(day) ? 'weekend-day-cell' : ''} ${isNarrowWeekendDay(day) ? 'weekend-narrow' : ''} ${isToday ? 'today-day-cell' : ''}" data-site-id="${site.id}" data-date="${dateStr}">
-          ${cardsHtml}
+        <td class="planner-day-cell ${isWeekendDay(day) ? 'weekend-day-cell' : ''} ${isNarrowWeekendDay(day) ? 'weekend-narrow' : ''} ${isToday ? 'today-day-cell' : ''} ${isStart ? 'start-day-cell' : ''}" data-site-id="${site.id}" data-date="${dateStr}">
+          ${isStart ? '<div class="start-flag" title="Start date from GVD Logic">▶ START</div>' : ''}${cardsHtml}
         </td>
       `;
     }).join('');
@@ -1883,6 +1892,7 @@ function renderPlannerView() {
           <div class="site-cell-inner">
             <span class="site-badge">${formatSiteId(site.id)}</span>
             <strong>${mapsAnchor(site.address)}</strong>
+            ${startHtml}
             ${finishHtml}
             ${siteTypeBadgeHtml(site)}
             ${siteInfoEditorHtml(site)}
