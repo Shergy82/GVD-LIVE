@@ -107,8 +107,10 @@ let isDraftPlanningMode = false;   // restored for each person when they sign in
 const draftModeKey = () => 'gvd_draft_mode_' + (currentUser ? currentUser.id : '');
 
 let currentPlannerWeekOffset = 0; // 0 = current week
+let plannerShowWeekend = false;   // weekends stay hidden on the desktop planner until you ask for them (remembered on this device)
+try { plannerShowWeekend = localStorage.getItem('gvd_planner_weekend') === '1'; } catch (e) {}
 let currentLabourWeekOffset = 0;  // 0 = this week: the Labour Sheet always opens on the current week
-let selectedMobileDayIndex = 0;   // 0 = Monday
+let selectedMobileDayIndex = (new Date().getDay() + 6) % 7;   // 0 = Monday; opens on today
 
 let knownShiftIds = null;
 let currentCustomerToken = null;
@@ -956,10 +958,11 @@ async function saveSiteInfo(siteId, field, value) {
 }
 
 // Rolling 7-day window starting today (offset moves it 7 days at a time)
+// A fixed calendar week, Monday to Sunday, so the columns do not slide along as the days pass. offset 0 = this week.
 function getRollingDays(offset = 0) {
   const start = new Date();
   start.setHours(12, 0, 0, 0);
-  start.setDate(start.getDate() + offset * 7);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7) + offset * 7);
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
@@ -1763,16 +1766,9 @@ function refreshPlannerStatusFilter() {
   }
 }
 function getPlannerSites() {
-  const sites = plannerScopeSites().filter(site => !plannerStatusFilter || plannerStatusOf(site) === plannerStatusFilter);
-  const info = new Map(sites.map(site => [site.id, getSiteFinish(site.id)]));
-  const rank = site => { const f = info.get(site.id); return !f ? 1 : f.completed ? 2 : 0; };
-  // sites with work booked in the week on screen come first; empty ones after
-  const days = new Set(getRollingDays(currentPlannerWeekOffset).map(d => formatDateISO(d)));
-  const busy = new Set(allShifts.filter(sh => days.has(sh.shift_date)).map(sh => parseInt(sh.site_id)));
-  return sites
-    .map((site, i) => ({ site, i, f: info.get(site.id), r: rank(site), idle: busy.has(parseInt(site.id)) ? 0 : 1 }))
-    .sort((a, b) => a.idle - b.idle || a.r - b.r || (a.r === 0 || a.r === 2 ? a.f.date.localeCompare(b.f.date) : 0) || a.i - b.i)
-    .map(x => x.site);
+  // A fixed order (by site number), so rows never jump about when you change week, book a shift or finish a site
+  return plannerScopeSites().filter(site => !plannerStatusFilter || plannerStatusOf(site) === plannerStatusFilter)
+    .sort((x, y) => (Number(x.id) || 0) - (Number(y.id) || 0) || String(x.id).localeCompare(String(y.id)));
 }
 
 // -------------------------------------------------------------------
@@ -1791,7 +1787,7 @@ function renderPlannerView() {
   if (isTypingIn('plannerTableBody')) { uiRefreshPending = true; return; }
   const weekDays = getRollingDays(currentPlannerWeekOffset);
   const startDateStr = formatDateShort(weekDays[0]);
-  const endDateStr = formatDateShort(weekDays[6]);
+  const endDateStr = formatDateShort(plannerShowWeekend ? weekDays[6] : weekDays[4]);
   document.getElementById('plannerWeekRangeLabel').textContent = `${startDateStr} — ${endDateStr}`;
 
   const dock = document.getElementById('activeOperativesDock');
@@ -1817,13 +1813,16 @@ function renderPlannerView() {
 
   // Weekend days stay thin unless someone is working that day
   const activeSiteIds = new Set(allSites.filter(site => !site.is_archived).map(site => parseInt(site.id)));
-  const isNarrowWeekendDay = (d) => isWeekendDay(d) &&
-    !allShifts.some(sh => sh.shift_date === formatDateISO(d) && activeSiteIds.has(parseInt(sh.site_id)));
+  const isNarrowWeekendDay = () => false;   // a weekend column is either hidden or shown at full width
+  const colDays = plannerShowWeekend ? weekDays : weekDays.filter(d => !isWeekendDay(d));
+  const weekendShiftCount = allShifts.filter(sh => weekDays.some(d => isWeekendDay(d) && formatDateISO(d) === sh.shift_date) && activeSiteIds.has(parseInt(sh.site_id))).length;
+  const wkBtn = document.getElementById('plannerWeekendBtn');
+  if (wkBtn) wkBtn.textContent = plannerShowWeekend ? 'Hide weekend' : `Show weekend${weekendShiftCount ? ` (${weekendShiftCount} shift${weekendShiftCount === 1 ? '' : 's'})` : ''}`;
 
   const headerRow = document.getElementById('plannerTableHeaderRow');
   headerRow.innerHTML = `
     <th class="site-col">Site / Property</th>
-    ${weekDays.map(d => {
+    ${colDays.map(d => {
       const dStr = formatDateISO(d);
       const isToday = dStr === todayISO;
       const narrow = isNarrowWeekendDay(d);
@@ -1834,6 +1833,7 @@ function renderPlannerView() {
 
   const tbody = document.getElementById('plannerTableBody');
   const activeSites = getPlannerSites();
+  tbody.closest('table')?.classList.toggle('five-day', !plannerShowWeekend);
   if (activeSites.length === 0) {
     tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">No active sites available. Go to Sites & Projects to create a site.</td></tr>`;
     return;
@@ -1848,7 +1848,7 @@ function renderPlannerView() {
     const daysToStart = startISO ? Math.round((new Date(startISO + 'T00:00:00Z') - new Date(todayISO + 'T00:00:00Z')) / 86400000) : null;
     const startHtml = startISO && daysToStart >= 0
       ? `<div class="site-start-badge ${daysToStart <= 1 ? 'soon' : ''}">▶ Starts ${daysToStart === 0 ? 'TODAY' : formatShortUKDayDate(startISO) + (daysToStart === 1 ? ' (tomorrow)' : ' (in ' + daysToStart + ' days)')}</div>` : '';
-    const cellsHtml = weekDays.map(day => {
+    const cellsHtml = colDays.map(day => {
       const dateStr = formatDateISO(day);
       const isToday = dateStr === todayISO;
       const dayShifts = allShifts.filter(s => parseInt(s.site_id) === parseInt(site.id) && s.shift_date === dateStr);
@@ -4796,9 +4796,12 @@ function setupEventListeners() {
   }
   document.getElementById('settingsBrandingForm').addEventListener('submit', handleSaveBranding);
 
-  document.getElementById('plannerPrevWeekBtn').addEventListener('click', () => { currentPlannerWeekOffset--; renderPlannerView(); });
-  document.getElementById('plannerNextWeekBtn').addEventListener('click', () => { currentPlannerWeekOffset++; renderPlannerView(); });
-  document.getElementById('plannerCurrentWeekBtn').addEventListener('click', () => { currentPlannerWeekOffset = 0; renderPlannerView(); });
+  // Changing week redraws the same rows in the same order, and the page stays exactly where it was so you carry on with the site you are on
+  const stayPut = fn => () => { const y = window.scrollY, tb = document.getElementById('plannerTableBody'), x = tb && tb.parentElement && tb.parentElement.parentElement ? tb.parentElement.parentElement.scrollLeft : 0; fn(); window.scrollTo(window.scrollX, y); };
+  document.getElementById('plannerPrevWeekBtn').addEventListener('click', stayPut(() => { currentPlannerWeekOffset--; renderPlannerView(); }));
+  document.getElementById('plannerNextWeekBtn').addEventListener('click', stayPut(() => { currentPlannerWeekOffset++; renderPlannerView(); }));
+  document.getElementById('plannerCurrentWeekBtn').addEventListener('click', stayPut(() => { currentPlannerWeekOffset = 0; renderPlannerView(); }));
+  document.getElementById('plannerWeekendBtn').addEventListener('click', stayPut(() => { plannerShowWeekend = !plannerShowWeekend; try { localStorage.setItem('gvd_planner_weekend', plannerShowWeekend ? '1' : '0'); } catch (e) {} renderPlannerView(); }));
   const btnToggleMode = document.getElementById('btnTogglePlanningMode');
   if (btnToggleMode) {
     btnToggleMode.addEventListener('click', handleTogglePlanningMode);
