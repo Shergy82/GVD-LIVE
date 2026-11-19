@@ -1766,9 +1766,11 @@ function refreshPlannerStatusFilter() {
   }
 }
 function getPlannerSites() {
-  // A fixed order (by site number), so rows never jump about when you change week, book a shift or finish a site
+  // In order of start date (the date set in GVD Logic), earliest first; sites with no start date follow, by site number.
+  // It depends only on those dates, so rows do not jump about when you change week, book a shift or finish a site.
+  const startOf = site => { const d = (allSiteLogic[String(site.id)] || {}).startDate; return /^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d : ''; };
   return plannerScopeSites().filter(site => !plannerStatusFilter || plannerStatusOf(site) === plannerStatusFilter)
-    .sort((x, y) => (Number(x.id) || 0) - (Number(y.id) || 0) || String(x.id).localeCompare(String(y.id)));
+    .sort((x, y) => { const a = startOf(x), b = startOf(y); return (a ? 0 : 1) - (b ? 0 : 1) || a.localeCompare(b) || (Number(x.id) || 0) - (Number(y.id) || 0) || String(x.id).localeCompare(String(y.id)); });
 }
 
 // -------------------------------------------------------------------
