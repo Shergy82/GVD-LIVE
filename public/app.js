@@ -5373,15 +5373,35 @@ async function handleCreateSite(e) {
 }
 
 // A note for a shift box when the same person is also booked on another job that day (in an overlapping part of the day). It only informs; nothing is blocked.
+function bookedElsewhere(opId, date, period, siteId, excludeId) {
+  if (!opId || !date) return [];
+  const per = x => x === 'am' || x === 'pm' ? x : 'all_day';
+  const mine = per(period);
+  return allShifts.filter(o => String(o.id) !== String(excludeId) && !o.is_drying_day && String(o.operative_id) === String(opId) && o.shift_date === date
+    && parseInt(o.site_id) !== parseInt(siteId) && (per(o.shift_period) === 'all_day' || mine === 'all_day' || per(o.shift_period) === mine))
+    .map(o => { const st = allSites.find(x => parseInt(x.id) === parseInt(o.site_id)); const a = st ? String(st.address || '').split(',')[0].trim() : 'another site'; const p = per(o.shift_period); return a + (p === 'all_day' ? '' : ' (' + p.toUpperCase() + ')'); })
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+}
 function alsoBookedNote(s) {
   if (!s || s.is_drying_day || !s.operative_id) return '';
-  const per = x => x.shift_period === 'am' || x.shift_period === 'pm' ? x.shift_period : 'all_day';
-  const others = allShifts.filter(o => o.id !== s.id && !o.is_drying_day && String(o.operative_id) === String(s.operative_id) && o.shift_date === s.shift_date
-    && parseInt(o.site_id) !== parseInt(s.site_id) && (per(o) === 'all_day' || per(s) === 'all_day' || per(o) === per(s)));
-  if (!others.length) return '';
-  const names = [...new Set(others.map(o => { const st = allSites.find(x => parseInt(x.id) === parseInt(o.site_id)); const a = st ? String(st.address || '').split(',')[0].trim() : 'another site'; const p = per(o); return a + (p === 'all_day' ? '' : ' (' + p.toUpperCase() + ')'); }))];
-  return `<div class="sc-also" title="Also booked on another job at the same time">⚠ Also booked at ${diaryEsc(names.join(', '))}</div>`;
+  const names = bookedElsewhere(s.operative_id, s.shift_date, s.shift_period, s.site_id, s.id);
+  return names.length ? `<div class="sc-also" title="Also booked on another job at the same time">⚠ Also booked at ${diaryEsc(names.join(', '))}</div>` : '';
 }
+// The same heads-up inside the Assign Shift box; it only informs and never stops the shift being saved
+function updateShiftBookedNote() {
+  const box = document.getElementById('shiftBookedNote');
+  if (!box) return;
+  const sel = document.getElementById('shiftOpSelect');
+  const period = (document.querySelector('input[name="shiftPeriod"]:checked') || {}).value || 'all_day';
+  const names = bookedElsewhere(sel.value, document.getElementById('shiftDateInput').value, period, document.getElementById('shiftSiteSelect').value, document.getElementById('shiftIdInput').value);
+  if (!names.length) { box.style.display = 'none'; box.textContent = ''; return; }
+  const who = (sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : 'They').replace(/\s*\(.*\)\s*$/, '');
+  box.textContent = `⚠ ${who} is also booked at ${names.join(', ')} at this time`;
+  box.style.display = 'block';
+}
+['shiftOpSelect', 'shiftSiteSelect', 'shiftDateInput'].forEach(id => { const el = document.getElementById(id); if (el) ['change', 'input'].forEach(ev => el.addEventListener(ev, updateShiftBookedNote)); });
+document.querySelectorAll('input[name="shiftPeriod"]').forEach(r => r.addEventListener('change', updateShiftBookedNote));
+
 function openCreateShiftModal(siteId, opId = null, dateStr = null) {
   document.getElementById('modalShiftTitle').textContent = 'Assign New Shift';
   document.getElementById('shiftIdInput').value = '';
@@ -5409,6 +5429,7 @@ function openCreateShiftModal(siteId, opId = null, dateStr = null) {
   const wkChk = document.getElementById('shiftDuplicateWeekends'); if (wkChk) wkChk.checked = false;
 
   openModal('modalShift');
+  updateShiftBookedNote();
 }
 
 function openEditShiftModal(shiftId) {
@@ -5453,6 +5474,7 @@ function openEditShiftModal(shiftId) {
   };
 
   openModal('modalShift');
+  updateShiftBookedNote();
 }
 
 function populateShiftSelects(selectedSiteId, selectedOpId) {

@@ -1852,3 +1852,4 @@ body.finance-in-logic #navFinanceBtn, body.finance-in-logic #tabFinanceBtn { dis
 .dwrap input[type=date]::-webkit-date-and-time-value,.dwrap input[type=datetime-local]::-webkit-date-and-time-value{opacity:0}
 .dy-row>.dy-field{min-width:0}.dy-row .form-control{min-width:0}
 .sc-also{margin-top:3px;font-size:.68rem;font-weight:700;color:#fbbf24;line-height:1.2;white-space:normal}
+.shift-booked-note{margin:4px 0 12px;padding:10px 12px;border-radius:8px;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.5);color:#fbbf24;font-size:.88rem;font-weight:600;line-height:1.3}
