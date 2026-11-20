@@ -5959,8 +5959,7 @@ function openDiaryModal(entryId, presetDate = null) {
   const selected = new Set((entry ? entry.assignee_ids || [] : []).map(String));
   document.getElementById('diaryAssigneeList').innerHTML = allUsers
     .filter(u => u.status === 'Active' && (isManagementUser(u) || selected.has(String(u.id))))
-    .map(u => `<label style="display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer;">
-      <input type="checkbox" class="diary-assignee" value="${diaryEsc(u.id)}"${selected.has(String(u.id)) ? ' checked' : ''}> ${diaryEsc(u.full_name)} <span style="color: var(--text-muted);">(${diaryEsc(u.role)})</span></label>`).join('');
+    .map(u => `<label class="dy-chip"><input type="checkbox" class="diary-assignee" value="${diaryEsc(u.id)}"${selected.has(String(u.id)) ? ' checked' : ''}><span>${diaryEsc(u.full_name)}<small>${diaryEsc(u.role)}</small></span></label>`).join('');
 
   document.getElementById('btnDeleteDiary').style.display = entry ? '' : 'none';
   openModal('modalDiary');
