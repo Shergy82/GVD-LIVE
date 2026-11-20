@@ -1871,6 +1871,7 @@ function renderPlannerView() {
               <span class="sc-seen ${s.seen_at ? 'seen' : 'not-seen'}" title="${seenText}">${s.seen_at ? '✓' : '○'}</span>
             </div>
             <div class="sc-task">${s.task}</div>
+            ${alsoBookedNote(s)}
           </div>
         `;
       }).join('');
@@ -2127,6 +2128,7 @@ function renderMobilePlannerView(weekDays) {
                     ${periodBadge}
                   </div>
                   <div class="shift-task-desc">${s.task}</div>
+                  ${alsoBookedNote(s)}
                   <div class="shift-seen-status ${s.seen_at ? 'seen' : 'not-seen'}">${seenText}</div>
                   <div style="margin-top: 8px; display: flex; gap: 8px;">
                     <button class="btn btn-outline btn-sm edit-shift-btn" data-shift-id="${s.id}">Edit / Move</button>
@@ -5370,6 +5372,16 @@ async function handleCreateSite(e) {
   }
 }
 
+// A note for a shift box when the same person is also booked on another job that day (in an overlapping part of the day). It only informs; nothing is blocked.
+function alsoBookedNote(s) {
+  if (!s || s.is_drying_day || !s.operative_id) return '';
+  const per = x => x.shift_period === 'am' || x.shift_period === 'pm' ? x.shift_period : 'all_day';
+  const others = allShifts.filter(o => o.id !== s.id && !o.is_drying_day && String(o.operative_id) === String(s.operative_id) && o.shift_date === s.shift_date
+    && parseInt(o.site_id) !== parseInt(s.site_id) && (per(o) === 'all_day' || per(s) === 'all_day' || per(o) === per(s)));
+  if (!others.length) return '';
+  const names = [...new Set(others.map(o => { const st = allSites.find(x => parseInt(x.id) === parseInt(o.site_id)); const a = st ? String(st.address || '').split(',')[0].trim() : 'another site'; const p = per(o); return a + (p === 'all_day' ? '' : ' (' + p.toUpperCase() + ')'); }))];
+  return `<div class="sc-also" title="Also booked on another job at the same time">⚠ Also booked at ${diaryEsc(names.join(', '))}</div>`;
+}
 function openCreateShiftModal(siteId, opId = null, dateStr = null) {
   document.getElementById('modalShiftTitle').textContent = 'Assign New Shift';
   document.getElementById('shiftIdInput').value = '';
