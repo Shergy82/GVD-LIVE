@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://us-central1-gvd-hub.cloudfunctions.net" crossorigin>
   <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
   <link rel="preconnect" href="https://identitytoolkit.googleapis.com" crossorigin>
-  <link rel="stylesheet" href="/styles.css?v=51.0">
+  <link rel="stylesheet" href="/styles.css?v=52.0">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
@@ -944,19 +944,20 @@
         <h3 id="modalDiaryTitle">Add Diary Entry</h3>
         <button class="close-btn" data-close="modalDiary">&times;</button>
       </div>
-      <form id="diaryForm">
+      <form id="diaryForm" class="dy-form">
         <input type="hidden" id="diaryIdInput">
-        <div class="form-group">
-          <label for="diaryTitleInput">Title</label>
-          <input type="text" id="diaryTitleInput" class="form-control" required placeholder="e.g. Site visit - survey">
+        <div class="dy-field">
+          <label for="diaryTitleInput">What's happening</label>
+          <textarea id="diaryTitleInput" class="form-control dy-title" rows="2" required placeholder="e.g. Site visit - survey, or the site address"></textarea>
         </div>
-        <div class="form-group">
-          <label for="diaryDateInput">Date</label>
-          <input type="date" id="diaryDateInput" class="form-control" required>
-        </div>
-        <div class="form-group">
-          <label for="diaryTimeInput">Time slot (hourly or 2-hour window)</label>
-          <select id="diaryTimeInput" class="form-control">
+        <div class="dy-row">
+          <div class="dy-field">
+            <label for="diaryDateInput">Date</label>
+            <input type="date" id="diaryDateInput" class="form-control" required>
+          </div>
+          <div class="dy-field">
+            <label for="diaryTimeInput">Time</label>
+            <select id="diaryTimeInput" class="form-control">
             <option value="">No set time</option>
             <optgroup label="Hourly">
               <option value="06:00-07:00">6am - 7am</option>
@@ -984,27 +985,28 @@
               <option value="18:00-20:00">6pm - 8pm</option>
             </optgroup>
           </select>
+          </div>
         </div>
-        <div class="form-group">
-          <label for="diarySiteSelect">Site (optional)</label>
+        <div class="dy-field">
+          <label for="diarySiteSelect">Site <span class="dy-opt">optional</span></label>
           <select id="diarySiteSelect" class="form-control"></select>
         </div>
-        <div class="form-group">
-          <label>Site visit for (managers, admins &amp; owners)</label>
-          <div id="diaryAssigneeList" style="display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; margin-top: 6px;"></div>
+        <div class="dy-field">
+          <label>Who is going <span class="dy-opt">tap to pick</span></label>
+          <div id="diaryAssigneeList" class="dy-people"></div>
         </div>
-        <div class="form-group">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;">
-            <input type="checkbox" id="diaryReminderChk" checked> ⏰ Send a reminder at 7am on the day
-          </label>
+        <label class="dy-switch" for="diaryReminderChk">
+          <input type="checkbox" id="diaryReminderChk" checked>
+          <span class="dy-tick"></span>
+          <span>⏰ 7am reminder on the day</span>
+        </label>
+        <div class="dy-field">
+          <label for="diaryNotesInput">Notes <span class="dy-opt">optional</span></label>
+          <textarea id="diaryNotesInput" class="form-control" rows="3" placeholder="Anything they need to know"></textarea>
         </div>
-        <div class="form-group">
-          <label for="diaryNotesInput">Notes (optional)</label>
-          <textarea id="diaryNotesInput" class="form-control" rows="3"></textarea>
-        </div>
-        <div style="display: flex; gap: 10px; margin-top: 16px;">
-          <button type="submit" class="btn btn-primary">Save Entry</button>
+        <div class="dy-actions">
           <button type="button" class="btn btn-danger" id="btnDeleteDiary" style="display: none;">Delete</button>
+          <button type="submit" class="btn btn-primary">Save entry</button>
         </div>
       </form>
     </div>
@@ -1244,7 +1246,7 @@
   <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
-  <script defer src="/app.js?v=115.0"></script>
+  <script defer src="/app.js?v=116.0"></script>
   <script defer src="/reports.js?v=1.5"></script>
   <script defer src="/invoice-template.js?v=1.5"></script>
   <script defer src="/my-invoice.js?v=1.6"></script>
