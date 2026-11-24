@@ -2217,9 +2217,9 @@ function renderMyShiftsView() {
   document.getElementById('myShiftsSubtitle').textContent = myShiftsTab === 'today'
     ? formatDateShort(new Date()) : `${upcoming.length} upcoming shift${upcoming.length === 1 ? '' : 's'} in date order`;
 
-  // Automatically mark the shifts on screen as SEEN (not ones hidden on the other tab)
+  // Opening the app marks all their upcoming shifts as SEEN, including ones on the other tab (they are one tap away and they were told about them)
   const nowIso = new Date().toISOString();
-  myShifts.forEach(async (s) => {
+  upcoming.forEach(async (s) => {
     if (!s.seen_at || (s.updated_at && s.seen_at < s.updated_at)) {
       s.seen_at = nowIso;
       if (db) {
