@@ -2002,22 +2002,25 @@ async function applyShiftDrop(mode) {
     shift.draft_pending = isDraftPlanningMode;
   }
 
-  if (db) await db.collection('shifts').doc(String(target.id)).set(target);
+  const write = db ? db.collection('shifts').doc(String(target.id)).set({ ...target }) : Promise.resolve();
   deduplicateShifts();
   saveLocalStorageData();
   renderActiveView();
 
+  const draft = isDraftPlanningMode;
   const verb = mode === 'copy' ? 'Duplicated' : 'Moved';
-  if (drop.date >= todayStr && target.operative_id) {
-    if (isDraftPlanningMode) {
-      showGreenToast(`🛠️ Shift ${verb} (Draft Mode - Notifications Paused)`);
+  trackWrite(write, mode === 'copy' ? 'copied shift' : 'moved shift', () => {
+    if (drop.date >= todayStr && target.operative_id) {
+      if (draft) {
+        showGreenToast(`🛠️ Shift ${verb} (Draft Mode - Notifications Paused)`);
+      } else {
+        triggerShiftNotification(target, mode === 'copy' ? '⚡ Live Shift Assigned' : `📅 Shift Date Changed to ${drop.date}`);
+        showGreenToast(`⚡ Shift ${verb} - Operative Notified!`);
+      }
     } else {
-      triggerShiftNotification(target, mode === 'copy' ? '⚡ Live Shift Assigned' : `📅 Shift Date Changed to ${drop.date}`);
-      showGreenToast(`⚡ Shift ${verb} - Operative Notified!`);
+      showGreenToast(target.is_drying_day ? `⏳ Drying Day ${verb}` : `Shift ${verb}`);
     }
-  } else {
-    showGreenToast(target.is_drying_day ? `⏳ Drying Day ${verb}` : `Shift ${verb}`);
-  }
+  });
 }
 
 function dryingCardHtml(s) {
@@ -2036,20 +2039,21 @@ async function createDryingDay(siteId, dateStr) {
     task: '⏳ Drying Day', shift_period: 'all_day', is_drying_day: true,
     seen_at: null, draft_pending: false, created_at: new Date().toISOString()
   };
-  if (db) await db.collection('shifts').doc(String(id)).set(shift).catch(err => alert('Could not save: ' + err.message));
   allShifts.push(shift);
+  const write = db ? db.collection('shifts').doc(String(id)).set({ ...shift }) : Promise.resolve();
   deduplicateShifts();
   saveLocalStorageData();
   renderActiveView();
-  showGreenToast('⏳ Drying Day added');
+  trackWrite(write, 'drying day', () => showGreenToast('⏳ Drying Day added'));
 }
 
 async function removeDryingDay(shiftId) {
   if (!confirm('Remove this drying day?')) return;
-  if (db) await db.collection('shifts').doc(String(shiftId)).delete().catch(console.warn);
+  const write = db ? db.collection('shifts').doc(String(shiftId)).delete() : Promise.resolve();
   allShifts = allShifts.filter(x => parseInt(x.id) !== parseInt(shiftId));
   saveLocalStorageData();
   renderActiveView();
+  trackWrite(write, 'removed drying day');
 }
 
 function setupPlannerClickHandlers() {
@@ -5459,17 +5463,18 @@ function openEditShiftModal(shiftId) {
     e.stopPropagation();
     if (confirm('Remove this shift?')) {
       const todayStr = new Date().toISOString().split('T')[0];
-      if (shift.shift_date >= todayStr) {
-        triggerShiftNotification(shift, `❌ Shift Cancelled (${shift.shift_date})`);
-      }
-
-      if (db) await db.collection('shifts').doc(String(shift.id)).delete();
+      const removed = { ...shift };
+      const write = db ? db.collection('shifts').doc(String(shift.id)).delete() : Promise.resolve();
       allShifts = allShifts.filter(s => parseInt(s.id) !== shift.id);
       document.getElementById('shiftIdInput').value = '';
       saveLocalStorageData();
       closeModal('modalShift');
       renderActiveView();
-      showGreenToast('🗑️ Shift removed successfully');
+      trackWrite(write, 'removed shift', () => {
+        // the operative is told only once the shift really has gone
+        if (removed.shift_date >= todayStr) triggerShiftNotification(removed, `❌ Shift Cancelled (${removed.shift_date})`);
+        showGreenToast('🗑️ Shift removed successfully');
+      });
     }
   };
 
@@ -5492,6 +5497,62 @@ function populateShiftSelects(selectedSiteId, selectedOpId) {
 }
 
 let shiftSaving = false;
+// ---------------------------------------------------------------------------------------------------
+// Saving shifts without freezing the screen.
+// A Firestore write only "finishes" when the server confirms it. On a stalled connection (a laptop waking, a weak signal) that can take
+// minutes or never happen, so the screen must not wait for it. The change shows at once, we watch for the server's answer, restart the
+// connection if it is slow, and say plainly whether it was saved. Anything that tells other people (notifications) runs only after that.
+// ---------------------------------------------------------------------------------------------------
+const SYNC_SLOW_MS = 4000, SYNC_RECONNECT_MS = 8000, SYNC_RETRY_MS = 20000;
+const unconfirmed = new Set();
+let reconnecting = false, lastReconnect = 0;
+async function reconnectFirestore() {
+  if (!db || reconnecting || Date.now() - lastReconnect < 5000) return;
+  reconnecting = true; lastReconnect = Date.now();
+  try { await db.disableNetwork(); } catch (e) { console.warn('disableNetwork', e); }
+  try { await db.enableNetwork(); } catch (e) { console.warn('enableNetwork', e); }   // always turned back on; waiting writes are then sent again
+  reconnecting = false;
+}
+function syncBanner() {
+  let b = document.getElementById('syncBanner');
+  const slow = [...unconfirmed].filter(w => w.slow);
+  if (!slow.length) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement('div'); b.id = 'syncBanner'; b.setAttribute('role', 'status');
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:100000;padding:10px 14px;background:#f59e0b;color:#1a1200;font-weight:700;font-size:.9rem;text-align:center;padding-top:calc(10px + env(safe-area-inset-top));pointer-events:none';
+    document.body.appendChild(b);
+  }
+  b.textContent = `⏳ NOT SAVED YET: ${slow.length === 1 ? slow[0].label : slow.length + ' changes'} - waiting for the server. Keep GVD Live open.`;
+}
+// write: the promise from set/update/delete. onSaved runs only once the server has accepted it.
+function trackWrite(write, label, onSaved) {
+  const w = { label, slow: false }, timers = [];
+  unconfirmed.add(w);
+  timers.push(setTimeout(() => { w.slow = true; syncBanner(); }, SYNC_SLOW_MS));
+  timers.push(setTimeout(() => { reconnectFirestore(); timers.push(setInterval(reconnectFirestore, SYNC_RETRY_MS)); }, SYNC_RECONNECT_MS));
+  const finish = () => { timers.forEach(t => { clearTimeout(t); clearInterval(t); }); unconfirmed.delete(w); syncBanner(); };
+  return Promise.resolve(write).then(() => {
+    finish();
+    if (onSaved) onSaved(); else if (w.slow) showGreenToast('✅ Saved');
+    return true;
+  }, err => {
+    finish();
+    console.warn('Save refused:', label, err);
+    renderActiveView();
+    alert(`NOT SAVED: ${label}\n\n${err && err.message ? err.message : err}\n\nPlease close and reopen GVD Live, then try again.`);
+    return false;
+  });
+}
+window.addEventListener('beforeunload', e => { if (unconfirmed.size) { e.preventDefault(); e.returnValue = ''; } });
+// Coming back after a while, or the signal returning: start a fresh connection rather than trusting an old one
+let hiddenSince = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenSince = Date.now(); return; }
+  if (hiddenSince && Date.now() - hiddenSince > 5 * 60000) reconnectFirestore();
+  hiddenSince = 0;
+});
+window.addEventListener('online', () => reconnectFirestore());
+
 async function handleSaveShift(e) {
   e.preventDefault();
   // A double tap on a phone used to run this twice and create the shift twice
@@ -5526,21 +5587,31 @@ async function saveShiftFromForm() {
       shift.shift_period = shift_period;
       shift.seen_at = null; // Resets seen timestamp on update!
       shift.draft_pending = isDraftPlanningMode;
-      if (db) await db.collection('shifts').doc(String(shift.id)).set(shift);
       targetShift = shift;
     }
+    if (!targetShift) {   // someone else removed or replaced it while the box was open: say so rather than claim it saved
+      closeModal('modalShift');
+      renderActiveView();
+      alert('NOT SAVED: this shift is no longer in the planner (it may have been removed on another device). Please check the planner and add it again if needed.');
+      return;
+    }
+    const write = db ? db.collection('shifts').doc(String(targetShift.id)).set({ ...targetShift }) : Promise.resolve();
 
     deduplicateShifts();
     saveLocalStorageData();
     closeModal('modalShift');
     renderActiveView();
 
-    if (targetShift && shift_date >= todayStr && !isDraftPlanningMode) {
-      showGreenToast('✅ Shift updated & operative notified');
-      triggerShiftNotification(targetShift, '⚡ Live Shift Assigned').catch(console.warn);
-    } else {
-      showGreenToast(isDraftPlanningMode ? '✅ Draft shift updated (silent)' : '✅ Shift updated');
-    }
+    const notify = shift_date >= todayStr && !isDraftPlanningMode;
+    const draft = isDraftPlanningMode;
+    trackWrite(write, 'shift change', () => {
+      if (notify) {
+        showGreenToast('✅ Shift updated & operative notified');
+        triggerShiftNotification(targetShift, '⚡ Live Shift Assigned').catch(console.warn);
+      } else {
+        showGreenToast(draft ? '✅ Draft shift updated (silent)' : '✅ Shift updated');
+      }
+    });
   } else {
     // Creating Shift(s)
     const isDuplicate = document.getElementById('shiftDuplicateChk')?.checked;
@@ -5548,7 +5619,7 @@ async function saveShiftFromForm() {
 
     const [year, month, day] = shift_date.split('-').map(Number);
     let createdCount = 0, skippedDuplicates = 0;
-    const notifyShifts = [];
+    const notifyShifts = [], writes = [];
 
     const includeWeekends = !!document.getElementById('shiftDuplicateWeekends')?.checked;
     let dayOffset = -1;
@@ -5574,8 +5645,8 @@ async function saveShiftFromForm() {
         created_at: new Date().toISOString()
       };
 
-      if (db) await db.collection('shifts').doc(String(nextShiftId)).set(newShift);
       allShifts.push(newShift);
+      if (db) writes.push(db.collection('shifts').doc(String(nextShiftId)).set({ ...newShift }));
       createdCount++;
       if (!isDraftPlanningMode && currentDateStr >= todayStr) notifyShifts.push(newShift);
     }
@@ -5585,19 +5656,18 @@ async function saveShiftFromForm() {
     closeModal('modalShift');
     renderActiveView();
 
+    const draft = isDraftPlanningMode;
     if (skippedDuplicates && !createdCount) {
       showGreenToast('That shift already exists - nothing added');
-    } else if (createdCount > 1) {
-      showGreenToast(`✅ ${createdCount} shifts saved${includeWeekends ? '' : ' (Mon–Fri)'}${notifyShifts.length ? ' & operative notified' : ''}`);
-    } else if (isDraftPlanningMode) {
-      showGreenToast('✅ Draft shift saved (silent)');
-    } else if (notifyShifts.length) {
-      showGreenToast('✅ Shift saved & operative notified');
-    } else {
-      showGreenToast('✅ Shift saved');
+      return;
     }
-    // Notify in the background so the box is already closed
-    notifyShifts.forEach(sh => triggerShiftNotification(sh, '⚡ Live Shift Assigned').catch(console.warn));
+    trackWrite(Promise.all(writes), createdCount > 1 ? `${createdCount} new shifts` : 'new shift', () => {
+      if (createdCount > 1) showGreenToast(`✅ ${createdCount} shifts saved${includeWeekends ? '' : ' (Mon–Fri)'}${notifyShifts.length ? ' & operative notified' : ''}`);
+      else if (draft) showGreenToast('✅ Draft shift saved (silent)');
+      else if (notifyShifts.length) showGreenToast('✅ Shift saved & operative notified');
+      else showGreenToast('✅ Shift saved');
+      notifyShifts.forEach(sh => triggerShiftNotification(sh, '⚡ Live Shift Assigned').catch(console.warn));
+    });
   }
 }
 
