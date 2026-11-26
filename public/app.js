@@ -3042,7 +3042,7 @@ function renderProjectTabContent(site) {
       const canDelete = isManagementUser(currentUser) || String(p.uploader_id) === String(currentUser.id);
       return `
         <div class="photo-card" data-photo-id="${p.id}" style="cursor: pointer;">
-          <img src="${p.file_url || p.data_url}" class="photo-img" loading="lazy" alt="Project Photo" title="Click to enlarge & download">
+          <img src="${photoSrc(p)}" class="photo-img" loading="lazy" alt="Project Photo" title="Click to enlarge & download">
           <div class="photo-meta">
             <div>
               <strong>${p.uploader_name || 'Operative'}</strong><br>
@@ -3083,6 +3083,12 @@ function renderProjectTabContent(site) {
     });
   }
 
+// Where to show a photo from. Photos taken in Live carry their own address; ones sent across from GVD Logic only say where the file is
+// stored, so they are shown through /files/<id> (these used to appear as empty boxes).
+function photoSrc(p) {
+  return p.file_url || p.data_url || (p.storage_path ? `/files/${encodeURIComponent(p.id)}` : '');
+}
+
 function openPhotoLightbox(photo) {
   if (!photo) return;
 
@@ -3091,7 +3097,7 @@ function openPhotoLightbox(photo) {
   const dlBtn = document.getElementById('lightboxDownloadBtn');
   const delBtn = document.getElementById('lightboxDeleteBtn');
 
-  imgEl.src = photo.file_url || photo.data_url;
+  imgEl.src = photoSrc(photo);
   const filename = photo.original_name || photo.filename || `Site_Photo_${photo.id}.png`;
   
   dlBtn.onclick = (e) => {
