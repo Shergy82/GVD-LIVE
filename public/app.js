@@ -550,18 +550,30 @@ async function fetchRestFallback() {
 const HUB_ORIGIN = USE_EMULATOR ? 'http://localhost:5056' : 'https://gvd-hub.web.app';
 let ssoBusy = false;
 // While the Hub is handing over the sign-in, show a plain splash instead of flashing the login page
-let ssoSplashTimer = null;
+let ssoSplashTimer = null, ssoAskTimer = null;
 function showSsoSplash() {
   if (document.getElementById('ssoSplash')) return;
   const d = document.createElement('div');
   d.id = 'ssoSplash';
   d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#0b1020;color:#8a93b5;display:grid;place-items:center;font:15px -apple-system,BlinkMacSystemFont,sans-serif';
-  d.textContent = 'Signing you in…';
+  d.innerHTML = '<div id="ssoText">Signing you in…</div>';
+  d.style.alignContent = 'center'; d.style.gap = '16px'; d.style.padding = '24px'; d.style.textAlign = 'center';
   document.body.appendChild(d);
-  ssoSplashTimer = setTimeout(hideSsoSplash, 6000);   // never hide the login page for long if the Hub does not answer
+  // keep asking the Hub (a slow signal used to bring up the sign-in box after 6 seconds); offer the box only if it takes a long time
+  ssoAskTimer = setInterval(() => { if (!ssoBusy) window.parent.postMessage({ type: 'gvd-sso-ready' }, HUB_ORIGIN); }, 3000);
+  ssoSplashTimer = setTimeout(() => {
+    const t = document.getElementById('ssoText');
+    if (!t) return;
+    t.textContent = 'Still connecting. This can take a moment on a weak signal.';
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn btn-outline'; b.textContent = 'Sign in here instead'; b.style.width = 'auto'; b.style.justifySelf = 'center';
+    b.onclick = hideSsoSplash;
+    d.appendChild(b);
+  }, 15000);
 }
 function hideSsoSplash() {
   clearTimeout(ssoSplashTimer);
+  clearInterval(ssoAskTimer);
   const d = document.getElementById('ssoSplash');
   if (d) d.remove();
 }
@@ -595,7 +607,10 @@ function setupHubSso() {
       await signInWithServerSession(res);
       startSyncOnce();
       onUserAuthenticated();
-    } catch (err) { console.warn('Hub sign-in failed:', err.message); hideSsoSplash(); }
+    } catch (err) {
+      console.warn('Hub sign-in failed:', err.message);
+      if (err.code === 'permission-denied') hideSsoSplash();   // a real refusal; anything else (signal, server waking) is tried again
+    }
     finally { ssoBusy = false; }
   });
   window.parent.postMessage({ type: 'gvd-sso-ready' }, HUB_ORIGIN);
