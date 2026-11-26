@@ -1991,7 +1991,7 @@ async function applyShiftDrop(mode) {
   let target = shift;
 
   if (mode === 'copy') {
-    const newId = allShifts.length > 0 ? Math.max(...allShifts.map(s => parseInt(s.id) || 0)) + 1 : 1;
+    const newId = newShiftId();
     target = { ...shift, id: newId, site_id: drop.siteId, shift_date: drop.date, seen_at: null, last_notified_at: null,
       draft_pending: isDraftPlanningMode, created_at: new Date().toISOString() };
     allShifts.push(target);
@@ -2033,7 +2033,7 @@ function dryingCardHtml(s) {
 }
 
 async function createDryingDay(siteId, dateStr) {
-  const id = allShifts.length > 0 ? Math.max(...allShifts.map(x => parseInt(x.id) || 0)) + 1 : 1;
+  const id = newShiftId();
   const shift = {
     id, site_id: siteId, operative_id: null, shift_date: dateStr,
     task: '⏳ Drying Day', shift_period: 'all_day', is_drying_day: true,
@@ -5553,6 +5553,15 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('online', () => reconnectFirestore());
 
+// A new shift's number comes from the clock (plus three random digits), never from "highest number I can see + 1": two managers, or a planner
+// that is out of date, would pick the same number and one new shift would silently overwrite the other. Still a plain whole number.
+let lastShiftId = 0;
+function newShiftId() {
+  const id = Math.max(Date.now() * 1000 + (crypto.getRandomValues(new Uint16Array(1))[0] % 1000), lastShiftId + 1);
+  lastShiftId = id;
+  return id;
+}
+
 async function handleSaveShift(e) {
   e.preventDefault();
   // A double tap on a phone used to run this twice and create the shift twice
@@ -5631,7 +5640,7 @@ async function saveShiftFromForm() {
       
       // never create the same person / job / day / period twice
       if (allShifts.some(s => String(s.operative_id) === String(operative_id) && parseInt(s.site_id) === site_id && s.shift_date === currentDateStr && (s.shift_period || 'all_day') === shift_period && !s.is_drying_day)) { skippedDuplicates++; continue; }
-      const nextShiftId = allShifts.length > 0 ? Math.max(...allShifts.map(s => parseInt(s.id) || 0)) + 1 : 1;
+      const nextShiftId = newShiftId();
       const newShift = {
         id: nextShiftId,
         site_id,
