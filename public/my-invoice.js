@@ -25,21 +25,20 @@ const MI_MAX_EXPENSES = 8;
 function startMyInvoiceSync() {
   stopMyInvoiceSync();
   if (!db || !currentUser) return;
-  const warn = n => err => console.warn(`Firestore ${n} error:`, err);
   const me = String(currentUser.id);
   {
-    myInvUnsubs.push(db.collection('invoice_profiles').doc(me).onSnapshot(doc => {
+    myInvUnsubs.push(listenWithRetry('invoice_profiles', onErr => db.collection('invoice_profiles').doc(me).onSnapshot(doc => {
       myInvProfile = doc.exists ? doc.data() : null;
       if (!isTypingIn('myInvoiceBody')) renderMyInvoiceView();
-    }, warn('invoice_profiles')));
+    }, onErr)));
   }
   const q = isManagementUser(currentUser) ? db.collection('operative_invoices') : db.collection('operative_invoices').where('user_id', '==', me);
-  if (q) myInvUnsubs.push(q.onSnapshot(snap => {
+  if (q) myInvUnsubs.push(listenWithRetry('operative_invoices', onErr => q.onSnapshot(snap => {
     operativeInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     if (!isTypingIn('myInvoiceBody')) renderMyInvoiceView();
     renderInvoiceInbox();
     if (typeof renderLabourCheck === 'function' && document.getElementById('view-invoices').style.display !== 'none') renderLabourCheck();
-  }, warn('operative_invoices')));
+  }, onErr)));
 }
 function stopMyInvoiceSync() { myInvUnsubs.forEach(u => u()); myInvUnsubs = []; operativeInvoices = []; myInvProfile = null; }
 
