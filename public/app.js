@@ -347,22 +347,25 @@ function saveLocalStorageData() {
 // will not load the screen says so, with the reason.
 const waitingListeners = new Map();   // label -> run the retry now
 const CORE_DATA = ['sites', 'shifts'];
-function listenWithRetry(label, start) {
-  let tries = 0, timer = null;
+function listenWithRetry(label, start) {   // returns a function that stops it, retries included
+  let tries = 0, timer = null, unsub = null, stopped = false;
   const go = () => {
+    if (stopped) return;
     waitingListeners.delete(label);
-    start(async err => {
+    unsub = start(async err => {
+      if (stopped) return;
       console.warn('Firestore ' + label + ' error:', err);
       tries++;
       const retry = () => { clearTimeout(timer); timer = null; go(); };
       waitingListeners.set(label, retry);
       if (tries >= 3 && CORE_DATA.includes(label)) showDataProblem(label, err);
-      timer = setTimeout(retry, tries <= 6 ? 1200 * tries : 20000);
+      timer = setTimeout(retry, tries <= 6 ? 1200 * tries : tries <= 15 ? 20000 : 60000);
       if (tries === 4 && CORE_DATA.includes(label)) reconnectFirestore();
-      await renewSignIn(err);
+      if (tries <= 6) await renewSignIn(err);
     });
   };
   go();
+  return () => { stopped = true; clearTimeout(timer); waitingListeners.delete(label); if (unsub) unsub(); };
 }
 let renewing = false, lastRenew = 0;
 async function renewSignIn(err) {
@@ -389,14 +392,19 @@ async function showDataProblem(label, err) {
     document.getElementById('dataProblemReload').onclick = () => location.reload();
   }
   b.dataset.label = label;
-  document.getElementById('dataProblemWhy').textContent = `${label}: ${(err && (err.code || err.message)) || 'unknown'} \u00b7 ${who} \u00b7 ${navigator.onLine ? 'online' : 'offline'} \u00b7 v125`;
+  document.getElementById('dataProblemWhy').textContent = `${label}: ${(err && (err.code || err.message)) || 'unknown'} \u00b7 ${who} \u00b7 ${navigator.onLine ? 'online' : 'offline'} \u00b7 v126`;
 }
 function dataArrived(label) {
   const b = document.getElementById('dataProblem');
   if (b && CORE_DATA.includes(label) && !CORE_DATA.some(l => waitingListeners.has(l))) b.remove();
 }
 // a fresh or renewed sign-in: retry anything that is waiting straight away, rather than at its next turn
-if (auth) auth.onIdTokenChanged(u => { if (u && waitingListeners.size) setTimeout(() => [...waitingListeners.values()].forEach(retry => retry()), 600); });
+let lastKick = 0;   // at most once every half minute: renewing the sign-in also counts as a "new" one, and must not go round in circles
+if (auth) auth.onIdTokenChanged(u => {
+  if (!u || !waitingListeners.size || Date.now() - lastKick < 30000) return;
+  lastKick = Date.now();
+  setTimeout(() => [...waitingListeners.values()].forEach(retry => retry()), 600);
+});
 
 function initFirestoreSync() {
   if (!db) {
@@ -4177,12 +4185,12 @@ const fbDate = iso => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2
 
 function startFeedbackSync() {
   if (feedbackUnsub || !db || !currentUser) return;
-  feedbackUnsub = db.collection('feedback').onSnapshot(snapshot => {
+  feedbackUnsub = listenWithRetry('feedback', onErr => db.collection('feedback').onSnapshot(snapshot => {
     allFeedback = snapshot.docs.map(d => ({ ...d.data(), id: d.id }))
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
     const v = document.getElementById('view-feedback');
     if (v && v.style.display !== 'none') renderFeedbackView();
-  }, err => console.warn('Firestore feedback error:', err));
+  }, onErr));
 }
 
 function stopFeedbackSync() {
@@ -4444,7 +4452,7 @@ function chatFormatText(text) {
 function startChatSync() {
   if (chatUnsub || !db || !currentUser) return;
   chatFirstSnapshot = true;
-  chatUnsub = db.collection('group_chat').orderBy('created_at').limitToLast(300).onSnapshot(snapshot => {
+  chatUnsub = listenWithRetry('group_chat', onErr => db.collection('group_chat').orderBy('created_at').limitToLast(300).onSnapshot(snapshot => {
     chatMessages = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
     // first ever visit: start from now, so old history is not counted as unread
     if (!localStorage.getItem(chatSeenKey())) {
@@ -4465,7 +4473,7 @@ function startChatSync() {
     chatFirstSnapshot = false;
 
     if (v && v.style.display !== 'none') renderChatView(false); else updateChatBadge();
-  }, err => console.warn('Firestore group_chat error:', err));
+  }, onErr));
 }
 
 function stopChatSync() {
@@ -6063,11 +6071,11 @@ function diaryDateKey(d) {
 
 function startDiarySync() {
   if (diaryUnsub || !db || !currentUser || !isManagementUser(currentUser)) return;
-  diaryUnsub = db.collection('diary').onSnapshot(snapshot => {
+  diaryUnsub = listenWithRetry('diary', onErr => db.collection('diary').onSnapshot(snapshot => {
     allDiary = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     const el = document.getElementById('view-diary');
     if (el && el.style.display !== 'none') renderDiaryView();
-  }, err => console.warn('Firestore diary error:', err));
+  }, onErr));
 }
 
 function stopDiarySync() {
@@ -6446,7 +6454,7 @@ function startPOSync() {
   if (poUnsub || !db || !currentUser) return;
   const col = db.collection('purchase_orders');
   const query = isManagementUser(currentUser) ? col : col.where('requested_by_id', '==', String(currentUser.id));
-  poUnsub = query.onSnapshot(snapshot => {
+  poUnsub = listenWithRetry('purchase_orders', onErr => query.onSnapshot(snapshot => {
     allPOs = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
     if (activeSiteId) {
       const site = allSites.find(s => parseInt(s.id) === parseInt(activeSiteId));
@@ -6454,7 +6462,7 @@ function startPOSync() {
     }
     refreshFinanceViews();
     fsMarkReady('pos');
-  }, err => console.warn('Firestore purchase_orders error:', err));
+  }, onErr));
 }
 
 function stopPOSync() {
@@ -7565,29 +7573,28 @@ let financeUnsubs = [];
 
 function startFinanceSync() {
   if (financeUnsubs.length || !db || !currentUser || !isManagementUser(currentUser)) return;
-  const warn = name => err => console.warn(`Firestore ${name} error:`, err);
-  financeUnsubs.push(db.collection('finance_jobs').onSnapshot(snap => {
+  financeUnsubs.push(listenWithRetry('finance_jobs', onErr => db.collection('finance_jobs').onSnapshot(snap => {
     financeJobs = {};
     snap.docs.forEach(d => { financeJobs[d.id] = d.data(); });
     refreshFinanceViews();
     fsMarkReady('finance_jobs');
-  }, warn('finance_jobs')));
-  financeUnsubs.push(db.collection('finance_costs').onSnapshot(snap => {
+  }, onErr)));
+  financeUnsubs.push(listenWithRetry('finance_costs', onErr => db.collection('finance_costs').onSnapshot(snap => {
     financeCosts = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
     fsMarkReady('finance_costs');
-  }, warn('finance_costs')));
-  financeUnsubs.push(db.collection('finance_variations').onSnapshot(snap => {
+  }, onErr)));
+  financeUnsubs.push(listenWithRetry('finance_variations', onErr => db.collection('finance_variations').onSnapshot(snap => {
     financeVariations = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
     fsMarkReady('finance_variations');
-  }, warn('finance_variations')));
-  financeUnsubs.push(db.collection('customer_invoices').onSnapshot(snap => {
+  }, onErr)));
+  financeUnsubs.push(listenWithRetry('customer_invoices', onErr => db.collection('customer_invoices').onSnapshot(snap => {
     customerInvoices = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     refreshFinanceViews();
     fsMarkReady('customer_invoices');
-  }, warn('customer_invoices')));
-  financeUnsubs.push(db.collection('finance_rates').onSnapshot(snap => {
+  }, onErr)));
+  financeUnsubs.push(listenWithRetry('finance_rates', onErr => db.collection('finance_rates').onSnapshot(snap => {
     financeRates = {};
     financePay = {};
     financeHourly = {};
@@ -7607,7 +7614,7 @@ function startFinanceSync() {
     });
     refreshFinanceViews();
     fsMarkReady('finance_rates');
-  }, warn('finance_rates')));
+  }, onErr)));
 }
 
 function stopFinanceSync() {
