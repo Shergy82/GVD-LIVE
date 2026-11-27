@@ -342,16 +342,61 @@ function saveLocalStorageData() {
   }
 }
 
-// The live data listeners are started right after sign-in. If one is refused while the sign-in is still settling (the first load, which
-// used to leave the screen empty until a reload), try again a few times instead of giving up.
+// The live data listeners are started right after sign-in. A refused or dropped listener is NEVER given up on: it used to stop after six
+// tries, which left the whole app blank on a phone with nothing said. Each retry first renews the sign-in, and if the main lists still
+// will not load the screen says so, with the reason.
+const waitingListeners = new Map();   // label -> run the retry now
+const CORE_DATA = ['sites', 'shifts'];
 function listenWithRetry(label, start) {
-  let tries = 0;
-  const go = () => start(err => {
-    console.warn('Firestore ' + label + ' error:', err);
-    if (++tries <= 6) setTimeout(go, 1200 * tries);
-  });
+  let tries = 0, timer = null;
+  const go = () => {
+    waitingListeners.delete(label);
+    start(async err => {
+      console.warn('Firestore ' + label + ' error:', err);
+      tries++;
+      const retry = () => { clearTimeout(timer); timer = null; go(); };
+      waitingListeners.set(label, retry);
+      if (tries >= 3 && CORE_DATA.includes(label)) showDataProblem(label, err);
+      timer = setTimeout(retry, tries <= 6 ? 1200 * tries : 20000);
+      if (tries === 4 && CORE_DATA.includes(label)) reconnectFirestore();
+      await renewSignIn(err);
+    });
+  };
   go();
 }
+let renewing = false, lastRenew = 0;
+async function renewSignIn(err) {
+  if (renewing || !auth || Date.now() - lastRenew < 8000) return;
+  renewing = true; lastRenew = Date.now();
+  try {
+    if (!auth.currentUser) { if (window.parent !== window) window.parent.postMessage({ type: 'gvd-sso-ready' }, HUB_ORIGIN); }   // ask the Hub to sign us in again
+    else if (err && (err.code === 'permission-denied' || err.code === 'unauthenticated')) await auth.currentUser.getIdToken(true);
+  } catch (e) { console.warn('Could not renew the sign-in', e); }
+  finally { renewing = false; }
+}
+async function showDataProblem(label, err) {
+  let who = 'not signed in';
+  try {
+    if (auth && auth.currentUser) { const c = (await auth.currentUser.getIdTokenResult()).claims; who = `signed in, active ${c.active === true ? 'yes' : 'no'}, manager ${c.mgmt === true ? 'yes' : 'no'}`; }
+  } catch (e) { who = 'sign-in could not be read'; }
+  if (!waitingListeners.has(label)) return;   // it loaded while we were looking
+  let b = document.getElementById('dataProblem');
+  if (!b) {
+    b = document.createElement('div'); b.id = 'dataProblem'; b.setAttribute('role', 'alert');
+    b.style.cssText = 'position:fixed;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:100001;padding:14px;border-radius:12px;background:#b91c1c;color:#fff;font-size:.88rem;font-weight:600;line-height:1.35;box-shadow:0 8px 30px rgba(0,0,0,.45)';
+    b.innerHTML = '<div>Can\u2019t load your jobs yet. Still trying.</div><div id="dataProblemWhy" style="font-weight:400;font-size:.78rem;margin:6px 0 10px;opacity:.9"></div><button type="button" id="dataProblemReload" style="width:100%;padding:10px;border:0;border-radius:8px;background:#fff;color:#7f1d1d;font-weight:700">Try again now</button>';
+    document.body.appendChild(b);
+    document.getElementById('dataProblemReload').onclick = () => location.reload();
+  }
+  b.dataset.label = label;
+  document.getElementById('dataProblemWhy').textContent = `${label}: ${(err && (err.code || err.message)) || 'unknown'} \u00b7 ${who} \u00b7 ${navigator.onLine ? 'online' : 'offline'} \u00b7 v125`;
+}
+function dataArrived(label) {
+  const b = document.getElementById('dataProblem');
+  if (b && CORE_DATA.includes(label) && !CORE_DATA.some(l => waitingListeners.has(l))) b.remove();
+}
+// a fresh or renewed sign-in: retry anything that is waiting straight away, rather than at its next turn
+if (auth) auth.onIdTokenChanged(u => { if (u && waitingListeners.size) setTimeout(() => [...waitingListeners.values()].forEach(retry => retry()), 600); });
 
 function initFirestoreSync() {
   if (!db) {
@@ -7601,6 +7646,7 @@ let fsLast = null;   // site id -> signature of what is already stored
 const fsSig = o => JSON.stringify(Object.keys(o).sort().map(k => [k, o[k]]));
 const fs2 = n => n == null || isNaN(n) ? null : Math.round(n * 100) / 100;
 function fsMarkReady(name) {
+  dataArrived(arguments[0]);
   fsReady.add(name);
   if (!db || !currentUser || !isManagementUser(currentUser) || !FS_NEEDED.every(n => fsReady.has(n))) return;
   clearTimeout(fsTimer);
