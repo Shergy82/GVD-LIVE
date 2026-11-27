@@ -27,6 +27,9 @@ if (typeof firebase !== 'undefined' && firebase.apps) {
     firebase.initializeApp(firebaseConfig);
   }
   db = firebase.firestore();
+  // Safari, the Mac "GVD Hub" app, iPhone and iPad are all WebKit, where Firestore's streaming connection can stall and hold every save back.
+  // Long polling uses ordinary requests instead.
+  if (navigator.vendor === 'Apple Computer, Inc.') db.settings({ experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: false, merge: true });
 }
 
 // Sign-in is done by the `login` Cloud Function, which returns a Firebase custom token (role claims inside).
@@ -1659,16 +1662,12 @@ async function triggerShiftNotification(shift, title, body = null, forcePublish 
   // 1. Post real-time cloud notification payload to Firestore for targeted operative
   if (db) {
     try {
-      await db.collection('notifications').add({
-        target_user_id: String(shift.operative_id),
-        title: title,
-        body: messageBody,
-        site_id: shift.site_id,
-        shift_id: shift.id,
-        created_at: new Date().toISOString()
-      });
+      // the record that sends the phone alert: same safety net as the shift itself, with a fixed id so it can never be sent twice
+      const alertRef = db.collection('notifications').doc();
+      const alertData = { target_user_id: String(shift.operative_id), title: title, body: messageBody, site_id: shift.site_id, shift_id: shift.id, created_at: new Date().toISOString() };
+      await trackWrite(liveWrite(() => alertRef.set(alertData)), 'alert to ' + opName, () => {}, [{ col: 'notifications', id: alertRef.id, data: alertData }]);
 
-      await db.collection('notification_logs').doc(logId).set({
+      db.collection('notification_logs').doc(logId).set({
         id: logId,
         event_id: 'shift_evt_' + shift.id,
         shift_id: shift.id,
@@ -1680,7 +1679,7 @@ async function triggerShiftNotification(shift, title, body = null, forcePublish 
         attempts: 1,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
-      });
+      }).catch(console.warn);
     } catch (e) {
       console.warn('Error pushing notification payload to Firestore:', e);
     }
@@ -2017,7 +2016,8 @@ async function applyShiftDrop(mode) {
     shift.draft_pending = isDraftPlanningMode;
   }
 
-  const write = db ? db.collection('shifts').doc(String(target.id)).set({ ...target }) : Promise.resolve();
+  const saved = { ...target };
+  const write = db ? liveWrite(() => db.collection('shifts').doc(String(saved.id)).set({ ...saved })) : Promise.resolve();
   deduplicateShifts();
   saveLocalStorageData();
   renderActiveView();
@@ -2035,7 +2035,7 @@ async function applyShiftDrop(mode) {
     } else {
       showGreenToast(target.is_drying_day ? `⏳ Drying Day ${verb}` : `Shift ${verb}`);
     }
-  });
+  }, [{ id: saved.id, data: saved }]);
 }
 
 function dryingCardHtml(s) {
@@ -2055,20 +2055,21 @@ async function createDryingDay(siteId, dateStr) {
     seen_at: null, draft_pending: false, created_at: new Date().toISOString()
   };
   allShifts.push(shift);
-  const write = db ? db.collection('shifts').doc(String(id)).set({ ...shift }) : Promise.resolve();
+  const saved = { ...shift };
+  const write = db ? liveWrite(() => db.collection('shifts').doc(String(id)).set({ ...saved })) : Promise.resolve();
   deduplicateShifts();
   saveLocalStorageData();
   renderActiveView();
-  trackWrite(write, 'drying day', () => showGreenToast('⏳ Drying Day added'));
+  trackWrite(write, 'drying day', () => showGreenToast('⏳ Drying Day added'), [{ id, data: saved }]);
 }
 
 async function removeDryingDay(shiftId) {
   if (!confirm('Remove this drying day?')) return;
-  const write = db ? db.collection('shifts').doc(String(shiftId)).delete() : Promise.resolve();
+  const write = db ? liveWrite(() => db.collection('shifts').doc(String(shiftId)).delete()) : Promise.resolve();
   allShifts = allShifts.filter(x => parseInt(x.id) !== parseInt(shiftId));
   saveLocalStorageData();
   renderActiveView();
-  trackWrite(write, 'removed drying day');
+  trackWrite(write, 'removed drying day', null, [{ id: shiftId, data: null }]);
 }
 
 function setupPlannerClickHandlers() {
@@ -5485,7 +5486,7 @@ function openEditShiftModal(shiftId) {
     if (confirm('Remove this shift?')) {
       const todayStr = new Date().toISOString().split('T')[0];
       const removed = { ...shift };
-      const write = db ? db.collection('shifts').doc(String(shift.id)).delete() : Promise.resolve();
+      const write = db ? liveWrite(() => db.collection('shifts').doc(String(shift.id)).delete()) : Promise.resolve();
       allShifts = allShifts.filter(s => parseInt(s.id) !== shift.id);
       document.getElementById('shiftIdInput').value = '';
       saveLocalStorageData();
@@ -5495,7 +5496,7 @@ function openEditShiftModal(shiftId) {
         // the operative is told only once the shift really has gone
         if (removed.shift_date >= todayStr) triggerShiftNotification(removed, `❌ Shift Cancelled (${removed.shift_date})`);
         showGreenToast('🗑️ Shift removed successfully');
-      });
+      }, [{ id: removed.id, data: null }]);
     }
   };
 
@@ -5524,15 +5525,43 @@ let shiftSaving = false;
 // minutes or never happen, so the screen must not wait for it. The change shows at once, we watch for the server's answer, restart the
 // connection if it is slow, and say plainly whether it was saved. Anything that tells other people (notifications) runs only after that.
 // ---------------------------------------------------------------------------------------------------
-const SYNC_SLOW_MS = 4000, SYNC_RECONNECT_MS = 8000, SYNC_RETRY_MS = 20000;
+const SYNC_DIRECT_MS = 3000, SYNC_SLOW_MS = 6000, SYNC_RECONNECT_MS = 20000, SYNC_RETRY_MS = 10000;
 const unconfirmed = new Set();
 let reconnecting = false, lastReconnect = 0;
 async function reconnectFirestore() {
-  if (!db || reconnecting || Date.now() - lastReconnect < 5000) return;
+  if (!db || reconnecting || Date.now() - lastReconnect < 60000) return;
   reconnecting = true; lastReconnect = Date.now();
   try { await db.disableNetwork(); } catch (e) { console.warn('disableNetwork', e); }
   try { await db.enableNetwork(); } catch (e) { console.warn('enableNetwork', e); }   // always turned back on; waiting writes are then sent again
   reconnecting = false;
+}
+// The second way to save: one ordinary request to the database's web address, signed in as this person and checked by the same security
+// rules. It does not depend on the live connection at all, so a stalled connection cannot hold a save back.
+function restValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') return Number.isSafeInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(restValue) } };
+  if (typeof v === 'object') return { mapValue: { fields: restFields(v) } };
+  return { stringValue: String(v) };
+}
+function restFields(o) { return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined).map(([k, v]) => [k, restValue(v)])); }
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timed out')), ms))]);
+async function directShiftWrite(op) {   // op: { id, data } to save the whole shift, or { id, data: null } to remove it
+  const token = await withTimeout(auth.currentUser.getIdToken(), 8000);
+  const base = USE_EMULATOR ? 'http://127.0.0.1:8080/v1' : 'https://firestore.googleapis.com/v1';
+  const stop = new AbortController(), t = setTimeout(() => stop.abort(), 12000);
+  try {
+    const res = await fetch(`${base}/projects/${firebaseConfig.projectId}/databases/(default)/documents/${op.col || 'shifts'}/${encodeURIComponent(op.id)}`, {
+      method: op.data ? 'PATCH' : 'DELETE', signal: stop.signal,
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: op.data ? JSON.stringify({ fields: restFields(op.data) }) : undefined
+    });
+    if (res.ok) return;
+    const err = new Error(((await res.json().catch(() => ({}))).error || {}).message || ('Server answered ' + res.status));
+    err.refused = res.status === 400 || res.status === 403;   // a real "no"; anything else is worth trying again
+    throw err;
+  } finally { clearTimeout(t); }
 }
 function syncBanner() {
   let b = document.getElementById('syncBanner');
@@ -5543,25 +5572,43 @@ function syncBanner() {
     b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:100000;padding:10px 14px;background:#f59e0b;color:#1a1200;font-weight:700;font-size:.9rem;text-align:center;padding-top:calc(10px + env(safe-area-inset-top));pointer-events:none';
     document.body.appendChild(b);
   }
-  b.textContent = `⏳ NOT SAVED YET: ${slow.length === 1 ? slow[0].label : slow.length + ' changes'} - waiting for the server. Keep GVD Live open.`;
+  const why = slow.map(w => w.why).find(Boolean);
+  b.textContent = `⏳ NOT SAVED YET: ${slow.length === 1 ? slow[0].label : slow.length + ' changes'} - still trying. Keep GVD Live open.${why ? ' (' + why + ')' : ''}`;
 }
-// write: the promise from set/update/delete. onSaved runs only once the server has accepted it.
-function trackWrite(write, label, onSaved) {
-  const w = { label, slow: false }, timers = [];
+// write: the promise from the live connection. ops: the same change, for the direct way. onSaved runs once, when the server has accepted it.
+function liveWrite(start) { try { return start(); } catch (e) { console.warn('Live connection could not take the save', e); return new Promise(() => {}); } }   // left to the direct way
+function trackWrite(write, label, onSaved, ops) {
+  const w = { label, slow: false, why: '' };
   unconfirmed.add(w);
-  timers.push(setTimeout(() => { w.slow = true; syncBanner(); }, SYNC_SLOW_MS));
-  timers.push(setTimeout(() => { reconnectFirestore(); timers.push(setInterval(reconnectFirestore, SYNC_RETRY_MS)); }, SYNC_RECONNECT_MS));
-  const finish = () => { timers.forEach(t => { clearTimeout(t); clearInterval(t); }); unconfirmed.delete(w); syncBanner(); };
-  return Promise.resolve(write).then(() => {
-    finish();
-    if (onSaved) onSaved(); else if (w.slow) showGreenToast('✅ Saved');
-    return true;
-  }, err => {
-    finish();
-    console.warn('Save refused:', label, err);
-    renderActiveView();
-    alert(`NOT SAVED: ${label}\n\n${err && err.message ? err.message : err}\n\nPlease close and reopen GVD Live, then try again.`);
-    return false;
+  return new Promise(resolve => {
+    let done = false; const timers = [];
+    const finish = (ok, err) => {
+      if (done) return;
+      done = true; timers.forEach(clearTimeout); unconfirmed.delete(w); syncBanner();
+      if (ok) { if (onSaved) onSaved(); else if (w.slow) showGreenToast('✅ Saved'); }
+      else {
+        console.warn('Save refused:', label, err);
+        renderActiveView();
+        alert(`NOT SAVED: ${label}\n\n${err && err.message ? err.message : err}\n\nPlease close and reopen GVD Live, then try again.`);
+      }
+      resolve(ok);
+    };
+    const direct = async () => {
+      if (done || !ops || !ops.length || !auth || !auth.currentUser) return;
+      try { for (const op of ops) { if (done) return; await directShiftWrite(op); } finish(true); }
+      catch (err) {
+        if (done) return;
+        if (err.refused) return finish(false, err);
+        console.warn('Direct save failed, will try again:', label, err);
+        w.why = err.name === 'AbortError' || err.message === 'timed out' ? 'no answer from the server' : String(err.message || err).slice(0, 80);
+        syncBanner();
+        timers.push(setTimeout(direct, SYNC_RETRY_MS));
+      }
+    };
+    timers.push(setTimeout(direct, SYNC_DIRECT_MS));
+    timers.push(setTimeout(() => { w.slow = true; syncBanner(); }, SYNC_SLOW_MS));
+    timers.push(setTimeout(reconnectFirestore, SYNC_RECONNECT_MS));
+    Promise.resolve(write).then(() => finish(true), err => finish(false, err));
   });
 }
 window.addEventListener('beforeunload', e => { if (unconfirmed.size) { e.preventDefault(); e.returnValue = ''; } });
@@ -5625,7 +5672,8 @@ async function saveShiftFromForm() {
       alert('NOT SAVED: this shift is no longer in the planner (it may have been removed on another device). Please check the planner and add it again if needed.');
       return;
     }
-    const write = db ? db.collection('shifts').doc(String(targetShift.id)).set({ ...targetShift }) : Promise.resolve();
+    const saved = { ...targetShift };
+    const write = db ? liveWrite(() => db.collection('shifts').doc(String(saved.id)).set({ ...saved })) : Promise.resolve();
 
     deduplicateShifts();
     saveLocalStorageData();
@@ -5641,7 +5689,7 @@ async function saveShiftFromForm() {
       } else {
         showGreenToast(draft ? '✅ Draft shift updated (silent)' : '✅ Shift updated');
       }
-    });
+    }, [{ id: saved.id, data: saved }]);
   } else {
     // Creating Shift(s)
     const isDuplicate = document.getElementById('shiftDuplicateChk')?.checked;
@@ -5649,7 +5697,7 @@ async function saveShiftFromForm() {
 
     const [year, month, day] = shift_date.split('-').map(Number);
     let createdCount = 0, skippedDuplicates = 0;
-    const notifyShifts = [], writes = [];
+    const notifyShifts = [], writes = [], ops = [];
 
     const includeWeekends = !!document.getElementById('shiftDuplicateWeekends')?.checked;
     let dayOffset = -1;
@@ -5676,7 +5724,7 @@ async function saveShiftFromForm() {
       };
 
       allShifts.push(newShift);
-      if (db) writes.push(db.collection('shifts').doc(String(nextShiftId)).set({ ...newShift }));
+      if (db) { const copy = { ...newShift }; ops.push({ id: nextShiftId, data: copy }); writes.push(liveWrite(() => db.collection('shifts').doc(String(nextShiftId)).set({ ...copy }))); }
       createdCount++;
       if (!isDraftPlanningMode && currentDateStr >= todayStr) notifyShifts.push(newShift);
     }
@@ -5697,7 +5745,7 @@ async function saveShiftFromForm() {
       else if (notifyShifts.length) showGreenToast('✅ Shift saved & operative notified');
       else showGreenToast('✅ Shift saved');
       notifyShifts.forEach(sh => triggerShiftNotification(sh, '⚡ Live Shift Assigned').catch(console.warn));
-    });
+    }, ops);
   }
 }
 
