@@ -327,15 +327,27 @@ function loadLocalStorageData() {
   }
 }
 
+// The copy kept on the device (it is what lets the app open instantly). Many lists arrive together, so it is written once they settle
+// rather than a dozen times over, and without files embedded in records: megabytes that made every save slow and could overfill a phone.
+let cacheTimer = null;
 function saveLocalStorageData() {
+  clearTimeout(cacheTimer);
+  cacheTimer = setTimeout(writeLocalCache, 700);
+}
+function flushLocalCache() { if (cacheTimer) { clearTimeout(cacheTimer); writeLocalCache(); } }
+window.addEventListener('pagehide', flushLocalCache);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushLocalCache(); });
+const withoutFiles = list => list.map(r => (r && r.data_url ? { ...r, data_url: undefined } : r));
+function writeLocalCache() {
+  cacheTimer = null;
   try {
     deduplicateSites();
     deduplicateShifts();
     localStorage.setItem('gvd_users', JSON.stringify(allUsers));
     localStorage.setItem('gvd_sites', JSON.stringify(allSites));
     localStorage.setItem('gvd_shifts', JSON.stringify(allShifts));
-    localStorage.setItem('gvd_photos', JSON.stringify(allPhotos));
-    localStorage.setItem('gvd_pdfs', JSON.stringify(allPdfs));
+    localStorage.setItem('gvd_photos', JSON.stringify(withoutFiles(allPhotos)));
+    localStorage.setItem('gvd_pdfs', JSON.stringify(withoutFiles(allPdfs)));
     localStorage.setItem('gvd_settings', JSON.stringify(appSettings));
   } catch (e) {
     console.error('Error saving local storage:', e);
@@ -392,7 +404,7 @@ async function showDataProblem(label, err) {
     document.getElementById('dataProblemReload').onclick = () => location.reload();
   }
   b.dataset.label = label;
-  document.getElementById('dataProblemWhy').textContent = `${label}: ${(err && (err.code || err.message)) || 'unknown'} \u00b7 ${who} \u00b7 ${navigator.onLine ? 'online' : 'offline'} \u00b7 v126`;
+  document.getElementById('dataProblemWhy').textContent = `${label}: ${(err && (err.code || err.message)) || 'unknown'} \u00b7 ${who} \u00b7 ${navigator.onLine ? 'online' : 'offline'} \u00b7 v127`;
 }
 function dataArrived(label) {
   const b = document.getElementById('dataProblem');
@@ -449,7 +461,7 @@ function initFirestoreSync() {
 
     saveLocalStorageData();
     updatePendingUsersBadge();
-    renderActiveView();
+    renderSoon();
   }, onErr));
 
   // Real-time Sites Collection Sync (with deduplication)
@@ -464,7 +476,7 @@ function initFirestoreSync() {
       loadCustomerPublicView(currentCustomerToken);
       return;
     }
-    renderActiveView();
+    renderSoon();
     fsMarkReady('sites');
   }, onErr));
 
@@ -484,7 +496,7 @@ function initFirestoreSync() {
       loadCustomerPublicView(currentCustomerToken);
       return;
     }
-    renderActiveView();
+    renderSoon();
     if (typeof refreshFinanceViews === 'function') refreshFinanceViews();
     fsMarkReady('shifts');
   }, onErr));
@@ -660,6 +672,11 @@ function setupHubSso() {
     try {
       const res = await callFn('liveSsoSession', { idToken: e.data.idToken });
       if (currentUser && String(currentUser.id) === String(res.user.id) && auth.currentUser) { hideSsoSplash(); return; } // already this person
+      if (currentUser && String(currentUser.id) !== String(res.user.id)) {   // the Hub is signed in as someone else
+        await signInWithServerSession(res);
+        window.location.reload();
+        return;
+      }
       await signInWithServerSession(res);
       startSyncOnce();
       onUserAuthenticated();
@@ -706,7 +723,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restore a signed-in session: Firebase keeps the sign-in, and we ask the server for fresh role claims.
   const fbUser = await new Promise(resolve => { const off = auth.onAuthStateChanged(u => { off(); resolve(u); }); });
   const storedUserId = localStorage.getItem('gvd_current_user_id');
+  if (currentUser) return;   // the Hub signed us in while we were waiting
   if (fbUser && storedUserId && fbUser.uid === storedUserId) {
+    // Open at once with the saved details and lists; the server is asked behind the scenes. (The database rules still decide what
+    // can really be read or changed, so nothing is trusted just because it is saved on the device.)
+    const known = allUsers.find(u => String(u.id) === String(storedUserId));
+    if (known && known.status === 'Active' && !known.must_change_password) {
+      currentUser = known;
+      startSyncOnce();
+      onUserAuthenticated();
+      confirmSessionBehind(storedUserId);
+      return;
+    }
     try {
       const res = await callFn('refreshSession');
       await signInWithServerSession(res);
@@ -740,6 +768,30 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   showView('view-login');
 });
+
+// The check that used to hold the app back on every opening: a fresh sign-in with up-to-date permissions, without making anyone wait
+async function confirmSessionBehind(userId, attempt = 0) {
+  try {
+    const res = await callFn('refreshSession');
+    if (!currentUser || String(currentUser.id) !== String(userId)) return;   // signed out, or someone else, meanwhile
+    const before = currentUser;
+    await signInWithServerSession(res);
+    currentUser = { ...before, ...res.user };
+    if (res.user.status !== 'Active' || res.user.role !== before.role || res.must_change_password) {   // something real changed: start again properly
+      // the saved copy must say so before reloading, or the next opening would "discover" the same change again, over and over
+      allUsers = allUsers.map(u => (String(u.id) === String(userId) ? { ...u, ...res.user, must_change_password: !!res.must_change_password } : u));
+      saveLocalStorageData(); flushLocalCache();
+      window.location.reload();
+    }
+  } catch (err) {
+    console.warn('Session check:', err.message);
+    if (err.code === 'unauthenticated' || err.code === 'permission-denied') {
+      await auth.signOut().catch(() => {});
+      localStorage.removeItem('gvd_current_user_id');
+      window.location.reload();
+    } else if (attempt < 5) setTimeout(() => confirmSessionBehind(userId, attempt + 1), 5000 * (attempt + 1));   // no signal yet
+  }
+}
 
 function onUserAuthenticated() {
   if (!currentUser) return;
@@ -923,6 +975,13 @@ function ensureAccidentFrame() {
   else sendAccidentToken();
 }
 window.addEventListener('message', ev => { if (ev.origin === ACCIDENT_ORIGIN && ev.data && ev.data.type === 'gvd-sso-ready') sendAccidentToken(); });
+
+// Several lists arrive within moments of each other on opening: draw the screen once for the lot
+let renderQueued = null;
+function renderSoon() {
+  if (renderQueued) return;
+  renderQueued = setTimeout(() => { renderQueued = null; renderActiveView(); }, 60);
+}
 
 function renderActiveView() {
   const activeViewEl = document.querySelector('.app-view:not([style*="display: none"])');
